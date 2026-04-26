@@ -274,6 +274,61 @@ add_subdirectory(libultraship ${CMAKE_CURRENT_SOURCE_DIR}/libultraship)
 add_dependencies(${PROJECT_NAME} libultraship)
 target_link_libraries(${PROJECT_NAME} PRIVATE libultraship)
 
+# Some libultraship transitive dep currently pulls tinyxml2 in as a SHARED FetchContent target
+# (the vcpkg static one would normally win, but a pkgRedirects entry hijacks find_package).
+# Until that's untangled upstream, ensure the runtime dll lands next to Starship.exe.
+if(TARGET tinyxml2 AND CMAKE_SYSTEM_NAME STREQUAL "Windows")
+    get_target_property(_tinyxml2_type tinyxml2 TYPE)
+    if(_tinyxml2_type STREQUAL "SHARED_LIBRARY")
+        add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    $<TARGET_FILE:tinyxml2> $<TARGET_FILE_DIR:${PROJECT_NAME}>
+            COMMENT "Copying tinyxml2.dll next to Starship executable"
+        )
+    endif()
+endif()
+
+#=================== PRISM (accessibility / TTS) ===================
+# Built via ExternalProject_Add so PRISM's CMake target name `prism` does not
+# collide with libultraship's unrelated `prism` target (KiritoDv/prism-processor,
+# a Fast3D shader template processor). The two libraries share a name but are
+# different projects.
+if(NOT CMAKE_SYSTEM_NAME STREQUAL "NintendoSwitch")
+    include(ExternalProject)
+    set(PRISM_INSTALL_DIR ${CMAKE_BINARY_DIR}/PrismExternal/install)
+    if(MSVC)
+        set(PRISM_IMPORT_LIB ${PRISM_INSTALL_DIR}/lib/prism.lib)
+        set(PRISM_RUNTIME_LIB ${PRISM_INSTALL_DIR}/bin/prism.dll)
+    else()
+        set(PRISM_IMPORT_LIB ${PRISM_INSTALL_DIR}/lib/${CMAKE_SHARED_LIBRARY_PREFIX}prism${CMAKE_SHARED_LIBRARY_SUFFIX})
+        set(PRISM_RUNTIME_LIB ${PRISM_IMPORT_LIB})
+    endif()
+    ExternalProject_Add(PrismExternal
+        PREFIX            ${CMAKE_BINARY_DIR}/PrismExternal
+        GIT_REPOSITORY    https://github.com/ethindp/prism.git
+        GIT_TAG           585e19f72d91a2e7e97879ff531b661c2b3e98ca
+        CMAKE_ARGS
+            -DCMAKE_INSTALL_PREFIX=${PRISM_INSTALL_DIR}
+            -DCMAKE_BUILD_TYPE=$<CONFIG>
+            -DBUILD_SHARED_LIBS=ON
+            -DPRISM_ENABLE_GDEXTENSION=OFF
+            -DPRISM_ENABLE_TESTS=OFF
+            -DPRISM_ENABLE_DEMOS=OFF
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=$<$<CONFIG:Debug>:MultiThreadedDebug>$<$<NOT:$<CONFIG:Debug>>:MultiThreaded>
+        BUILD_BYPRODUCTS  ${PRISM_IMPORT_LIB} ${PRISM_RUNTIME_LIB}
+    )
+    add_dependencies(${PROJECT_NAME} PrismExternal)
+    file(MAKE_DIRECTORY ${PRISM_INSTALL_DIR}/include)  # so target_include_directories doesn't error before first build
+    target_include_directories(${PROJECT_NAME} PRIVATE ${PRISM_INSTALL_DIR}/include)
+    target_link_libraries(${PROJECT_NAME} PRIVATE ${PRISM_IMPORT_LIB})
+    target_compile_definitions(${PROJECT_NAME} PRIVATE HAVE_PRISM)
+    add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                ${PRISM_RUNTIME_LIB} $<TARGET_FILE_DIR:${PROJECT_NAME}>
+        COMMENT "Copying prism shared library next to Starship executable"
+    )
+endif()
+
 if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
     target_compile_definitions(${PROJECT_NAME} PRIVATE
         "$<$<CONFIG:Debug>:"

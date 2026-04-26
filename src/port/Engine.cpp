@@ -40,6 +40,7 @@
 #include "audio/GameAudio.h"
 #include "port/patches/DisplayListPatch.h"
 #include "port/mods/PortEnhancements.h"
+#include "port/accessibility/Accessibility.h"
 
 #include <Fast3D/interpreter.h>
 #include <filesystem>
@@ -302,9 +303,13 @@ void GameEngine::Create() {
     osSetTime(0);
 #endif
     PortEnhancements_Init();
+
+    Accessibility_Init();
+    Accessibility_Speak("Starship accessibility check", false);
 }
 
 void GameEngine::Destroy() {
+    Accessibility_Shutdown();
     PortEnhancements_Exit();
     AudioExit();
     for (auto ptr : MemoryPool) {
