@@ -7,8 +7,9 @@ extern "C" {
 #endif
 
 void Accessibility_Init(void);
-void Accessibility_Shutdown(void);
-void Accessibility_Speak(const char* text, bool interrupt);
+void Accessibility_Exit(void);
+
+bool Accessibility_IsScreenReaderEnabled(void);
 
 #ifdef __cplusplus
 }

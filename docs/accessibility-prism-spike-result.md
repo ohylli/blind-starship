@@ -8,10 +8,12 @@ Companion to `accessibility-prism-spike.md`. Records what shipped and the surpri
 
 ## What's in the build
 
-- `src/port/accessibility/Accessibility.h` — three C-callable entry points (`Init`, `Speak`, `Shutdown`).
-- `src/port/accessibility/Accessibility.cpp` — wraps `PrismContext*` + `PrismBackend*` lifecycle. `#ifdef HAVE_PRISM` real path, `#else` no-op stubs.
-- `src/port/Engine.cpp` — `Accessibility_Init()` + `Accessibility_Speak("Starship accessibility check", false)` at the end of `GameEngine::GameEngine()` (after `PortEnhancements_Init()`); `Accessibility_Shutdown()` at top of `GameEngine::Destroy()`.
-- `CMakeLists.txt` — `ExternalProject_Add(PrismExternal …)` block after `add_subdirectory(libultraship)`. POST_BUILD copies `prism.dll` next to `Starship.exe`.
+Two-layer split: a port-level **TTS transport** that wraps PRISM, and a **consumer mod** that decides what to say and gates it on a CVar. The transport knows nothing about Star Fox; the mod knows nothing about PRISM.
+
+- `src/port/accessibility/Tts.{h,cpp}` — TTS transport. Four C-callable entry points (`Tts_Init`, `Tts_Shutdown`, `Tts_Speak`, `Tts_IsAvailable`). Wraps `PrismContext*` + `PrismBackend*` lifecycle. `#ifdef HAVE_PRISM` real path, `#else` no-op stubs.
+- `src/port/mods/Accessibility.{c,h}` — consumer mod, mirroring `PortEnhancements.{c,h}`. Exposes `Accessibility_Init` / `Accessibility_Exit`. Currently just plays the startup announcement gated by `gAccessibilityScreenReader` (default 1). Future event listeners and per-screen narration calls go here.
+- `src/port/Engine.cpp` — `Tts_Init()` then `Accessibility_Init()` at the end of `GameEngine::Create()` (after `PortEnhancements_Init()`); `Accessibility_Exit()` then `Tts_Shutdown()` at top of `GameEngine::Destroy()`.
+- `CMakeLists.txt` — `ExternalProject_Add(PrismExternal …)` block after `add_subdirectory(libultraship)`. POST_BUILD copies `prism.dll` next to `Starship.exe`. No file-list changes needed for new sources — `src/port/**/*.{c,cpp,h}` is globbed.
 
 ## Surprises (the ones that matter)
 
@@ -27,18 +29,18 @@ Companion to `accessibility-prism-spike.md`. Records what shipped and the surpri
 
 Logger isn't fully wired until late in `GameEngine::GameEngine()`. If you ever see "no Accessibility log line at all" rather than a real error, calls have been moved too early in the constructor. Keep them after `PortEnhancements_Init()`.
 
-The wrapper logs one of:
+The transport logs one of:
 
-- `Accessibility: PRISM backend '<name>' ready` — happy path.
-- `Accessibility: prism_init returned NULL; TTS disabled`
-- `Accessibility: no PRISM backend available; TTS disabled`
-- `Accessibility: prism_backend_speak failed (<error>)`
+- `Tts: PRISM backend '<name>' ready` — happy path.
+- `Tts: prism_init returned NULL; TTS disabled`
+- `Tts: no PRISM backend available; TTS disabled`
+- `Tts: prism_backend_speak failed (<error>)`
 
 Logs land in `build/Release/logs/Starship.log`.
 
 ## Out of scope (still)
 
-Event listeners (`src/port/hooks/`), ImGui menubar entry, CVars (enable),
+Event listeners (`src/port/hooks/`), ImGui menubar entry, additional CVars,
 per-screen narration calls, macOS/Linux verification (not high priority), release packaging. These
-are the follow-up mod work. The spike's API surface
-(`Accessibility_{Init,Speak,Shutdown}`) is stable enough to layer them on.
+are the follow-up mod work, all in `src/port/mods/Accessibility.c`. The transport API
+(`Tts_{Init,Shutdown,Speak,IsAvailable}`) is stable enough to layer them on.
