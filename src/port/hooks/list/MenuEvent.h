@@ -4,4 +4,4 @@
 #include "port/hooks/impl/EventSystem.h"
 
 DEFINE_EVENT(TitleSequenceStartEvent);
-DEFINE_EVENT(TitlePressStartReadyEvent);
+DEFINE_EVENT(TitleScreenReadyEvent);
