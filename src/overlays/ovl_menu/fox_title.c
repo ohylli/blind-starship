@@ -12,6 +12,7 @@
 #include "assets/ast_text.h"
 #include "port/interpolation/FrameInterpolation.h"
 #include "port/mods/PortEnhancements.h"
+#include "port/hooks/list/MenuEvent.h"
 
 f32 D_menu_801B7BB0;
 f32 D_menu_801B7BB4;
@@ -162,6 +163,8 @@ u16* sGralPepperMsg[5] = {
 };
 
 void Title_Setup(void) {
+    CALL_EVENT(TitleSequenceStartEvent);
+
     gVIsPerFrame = 2;
     gGameFrameCount = 0;
     gTitleState = TITLE_UPDATE_ENTRY;
@@ -204,6 +207,7 @@ void Title_Setup(void) {
     if ((gMainController == -1) || gGoToTitle) {
         AUDIO_SET_SPEC(SFXCHAN_0, AUDIOSPEC_23);
         sCutsceneState = TITLE_SCREEN;
+        CALL_EVENT(TitlePressStartReadyEvent);
         gGoToTitle = false;
     } else {
         AUDIO_SET_SPEC(SFXCHAN_0, AUDIOSPEC_22);
@@ -2155,6 +2159,7 @@ void Title_CsTakeOffSpace_Update(void) {
             gDrawMode = DRAW_NONE;
             sCutsceneState = TITLE_SCREEN;
             AUDIO_SET_SPEC(SFXCHAN_0, AUDIOSPEC_23);
+            CALL_EVENT(TitlePressStartReadyEvent);
             break;
     }
 
@@ -3390,6 +3395,7 @@ void Title_NextState_TitleScreen(void) {
                 sSceneState = 0;
                 gDrawMode = DRAW_NONE;
                 sCutsceneState = TITLE_SCREEN;
+                CALL_EVENT(TitlePressStartReadyEvent);
                 gControllerLock = 30;
                 sWipeHeight = 0;
                 sLevelStartState = 0;

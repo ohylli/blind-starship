@@ -482,6 +482,10 @@ void PortEnhancements_Register() {
 
     REGISTER_EVENT(PlayerActionPreBombEvent);
     REGISTER_EVENT(PlayerActionPostBombEvent);
+
+    // Register menu events
+    REGISTER_EVENT(TitleSequenceStartEvent);
+    REGISTER_EVENT(TitlePressStartReadyEvent);
 }
 
 void PortEnhancements_Exit() {

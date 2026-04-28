@@ -4,3 +4,4 @@
 #include "list/ActorEvent.h"
 #include "list/ItemEvent.h"
 #include "list/ActionEvent.h"
+#include "list/MenuEvent.h"
