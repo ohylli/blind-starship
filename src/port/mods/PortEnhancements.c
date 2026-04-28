@@ -486,6 +486,8 @@ void PortEnhancements_Register() {
     // Register menu events
     REGISTER_EVENT(TitleSequenceStartEvent);
     REGISTER_EVENT(TitleScreenReadyEvent);
+    REGISTER_EVENT(MainMenuReadyEvent);
+    REGISTER_EVENT(MainMenuCursorEvent);
 }
 
 void PortEnhancements_Exit() {

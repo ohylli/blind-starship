@@ -15,6 +15,7 @@
 #include "assets/ast_map.h"
 #include "port/interpolation/FrameInterpolation.h"
 #include "port/mods/PortEnhancements.h"
+#include "port/hooks/Events.h"
 
 extern s32 gRankingTeamAlive[][3];
 extern Gfx gMapVenomCloudDL[];
@@ -883,6 +884,7 @@ void Option_MainMenu_Update(void) {
             Option_MainMenu_Setup();
             if (!sMainMenuFromCancel) {
                 sMainMenuState++;
+                CALL_EVENT(MainMenuReadyEvent);
             } else {
                 sOptionCardCurTextPosX[0] = D_menu_801AE5E8[sExpertModeCursor];
                 sOptionCardCurTextPosY[0] = D_menu_801AE5F0[sExpertModeCursor];
@@ -924,6 +926,7 @@ void Option_MainMenu_Update(void) {
                 sDrawCursor = true;
                 gBlurAlpha = 255;
                 sMainMenuState = 1;
+                CALL_EVENT(MainMenuReadyEvent);
             }
             break;
 
@@ -931,12 +934,14 @@ void Option_MainMenu_Update(void) {
             // clang-format off
             if (Option_Input_MoveCursor_Y(&sMainMenuCursor, ARRAY_COUNT(sOptionCardList) - 1, 1, 0, 20, 5, 4, gMainController, &D_menu_801B9180)) { \
                 AUDIO_PLAY_SFX(NA_SE_ARWING_CURSOR, gDefaultSfxSource, 4);
+                CALL_EVENT(MainMenuCursorEvent);
             }
             // clang-format on
 
             if ((sMainMenuCursor == OPTION_MAP) && sExpertModesEnabled &&
                 Option_Input_MoveCursor_Y(&sExpertModeCursor, 1, 0, 0, 20, 5, 4, gMainController, &D_menu_801B9190)) {
                 AUDIO_PLAY_SFX(NA_SE_ARWING_CURSOR, gDefaultSfxSource, 4);
+                CALL_EVENT(MainMenuCursorEvent);
                 if (sExpertModeCursor) {
                     sOptionCardList[OPTION_MAP].tex.texture = aExpertCardTex;
                     sOptionCardList[OPTION_MAP].tex.width = 80;
@@ -956,6 +961,7 @@ void Option_MainMenu_Update(void) {
             if ((sMainMenuCursor == OPTION_SOUND) && sExpertModesEnabled &&
                 Option_Input_MoveCursor_Y(&sExpertSoundCursor, 1, 0, 0, 20, 5, 4, gMainController, &D_menu_801B9198)) {
                 AUDIO_PLAY_SFX(NA_SE_ARWING_CURSOR, gDefaultSfxSource, 4);
+                CALL_EVENT(MainMenuCursorEvent);
                 if (sExpertSoundCursor) {
                     sOptionCardList[OPTION_SOUND].tex.texture = aExpertCardTex;
                     sOptionCardList[OPTION_SOUND].tex.width = 80;
