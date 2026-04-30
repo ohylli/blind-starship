@@ -40,7 +40,7 @@ static const char* Accessibility_MainMenuLabel(void) {
         case OPTION_DATA:
             return "Data";
         default:
-            return "";
+            return "unknown option";
     }
 }
 
