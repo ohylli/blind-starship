@@ -1376,6 +1376,8 @@ void Option_Sound_Setup(void) {
 
     D_menu_801B9268.unk_0 = 0;
     D_menu_801B9268.unk_4 = 0;
+
+    CALL_EVENT(SoundMenuReadyEvent);
 }
 
 void Option_Sound_Update(void) {
@@ -1384,6 +1386,7 @@ void Option_Sound_Update(void) {
     if (Option_Input_MoveCursor_Y(&D_menu_801B9288, 3, 1, 0, 20, 5, 4, gMainController, &D_menu_801B9250)) {
         D_menu_801B9270[sp34] = 255.0f;
         AUDIO_PLAY_SFX(NA_SE_CURSOR, gDefaultSfxSource, 4);
+        CALL_EVENT(SoundMenuCursorEvent);
     }
 
     if (D_menu_801B9288 == 0) {
@@ -1401,6 +1404,7 @@ void Option_Sound_Update(void) {
     if (gControllerPress[gMainController].button & A_BUTTON) {
         AUDIO_PLAY_SFX(NA_SE_DECIDE, gDefaultSfxSource, 4);
         D_menu_801B9288 = (D_menu_801B9288 + 1) % 4U;
+        CALL_EVENT(SoundMenuCursorEvent);
     }
 
     if (gControllerPress[gMainController].button & B_BUTTON) {
@@ -1429,15 +1433,18 @@ void Option_Sound_SetSoundMode(void) {
         }
         gSaveFile.save.data.soundMode = gOptionSoundMode;
         SEQCMD_SET_SOUND_MODE(sSoundMode[gOptionSoundMode]);
+        CALL_EVENT(SoundMenuValueChangedEvent);
     }
 }
 
 void Option_Sound_SetVolumeLevels(void) {
     s32 volume;
+    s32 oldVolume;
 
     D_menu_801B924C = D_menu_801AE99C[D_menu_801B9288 - 1];
 
     if (Option_Input_Sound_X(&(D_menu_801AEB48[D_menu_801B9288 - 1].xPos), 146.0f, 245.0f, &D_menu_801B9268)) {
+        oldVolume = gVolumeSettings[D_menu_801B9288 - 1];
         volume = D_menu_801AEB48[D_menu_801B9288 - 1].xPos - 146.0f;
 
         gVolumeSettings[D_menu_801B9288 - 1] = volume;
@@ -1460,6 +1467,10 @@ void Option_Sound_SetVolumeLevels(void) {
                 break;
         }
         Audio_SetVolume(D_menu_801B924C, volume);
+
+        if (oldVolume != volume) {
+            CALL_EVENT(SoundMenuValueChangedEvent);
+        }
     }
 }
 
