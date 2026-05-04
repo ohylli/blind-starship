@@ -70,7 +70,12 @@ The codebase has two distinct halves wired together by `src/port/Engine.{h,cpp}`
 
 ## Accessibility fork
 
-This fork is exploring an accessibility mod for blind players (the maintainer is blind/low-vision). Currently shipped: a screen-reader announcement layer using PRISM (https://github.com/ethindp/prism). Future work: positional audio cues for hazards, lock-on, altitude, etc., leveraging the existing 3D-positional audio system rather than building new DSP.
+This fork is exploring an accessibility mod for blind players (the maintainer is
+blind/low-vision). Currently shipped: a screen-reader announcement layer using
+PRISM (https://github.com/ethindp/prism). Future work: positional audio cues for
+hazards, lock-on, altitude, etc., leveraging the existing 3D-positional audio
+system rather than building new DSP (see docs/audio-system.md for details about
+the port's audio system).
 
 **Two-layer split.** A port-level **TTS transport** at `src/port/accessibility/` wraps PRISM and knows nothing about Star Fox. A **consumer mod** at `src/port/mods/Accessibility.{c,h}` mirrors the `PortEnhancements` pattern — CVar-gated, knows what to say and when, knows nothing about PRISM. The transport's PRISM init/shutdown belongs at process start/end, which is why it sits at the port level rather than inside the mod. Future accessibility features (audio cues) should be separate consumer mods over the existing audio system, not extensions of the TTS layer.
 
