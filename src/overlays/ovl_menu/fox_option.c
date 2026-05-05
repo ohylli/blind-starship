@@ -1439,12 +1439,10 @@ void Option_Sound_SetSoundMode(void) {
 
 void Option_Sound_SetVolumeLevels(void) {
     s32 volume;
-    s32 oldVolume;
 
     D_menu_801B924C = D_menu_801AE99C[D_menu_801B9288 - 1];
 
     if (Option_Input_Sound_X(&(D_menu_801AEB48[D_menu_801B9288 - 1].xPos), 146.0f, 245.0f, &D_menu_801B9268)) {
-        oldVolume = gVolumeSettings[D_menu_801B9288 - 1];
         volume = D_menu_801AEB48[D_menu_801B9288 - 1].xPos - 146.0f;
 
         gVolumeSettings[D_menu_801B9288 - 1] = volume;
@@ -1468,9 +1466,7 @@ void Option_Sound_SetVolumeLevels(void) {
         }
         Audio_SetVolume(D_menu_801B924C, volume);
 
-        if (oldVolume != volume) {
-            CALL_EVENT(SoundMenuValueChangedEvent);
-        }
+        CALL_EVENT(SoundMenuValueChangedEvent);
     }
 }
 

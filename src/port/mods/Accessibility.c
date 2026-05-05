@@ -1,7 +1,5 @@
 #include "Accessibility.h"
 
-#include <stdio.h>
-
 #include "global.h"
 #include "fox_option.h"
 #include "port/accessibility/Tts.h"
