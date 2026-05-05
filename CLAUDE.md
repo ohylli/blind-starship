@@ -75,7 +75,8 @@ blind/low-vision). Currently shipped: a screen-reader announcement layer using
 PRISM (https://github.com/ethindp/prism). Future work: positional audio cues for
 hazards, lock-on, altitude, etc., leveraging the existing 3D-positional audio
 system rather than building new DSP (see docs/audio-system.md for details about
-the port's audio system).
+the port's audio system, and docs/game-world.md for how the game models
+environment, enemies, and items — the producer side of cue work).
 
 **Two-layer split.** A port-level **TTS transport** at `src/port/accessibility/` wraps PRISM and knows nothing about Star Fox. A **consumer mod** at `src/port/mods/Accessibility.{c,h}` mirrors the `PortEnhancements` pattern — CVar-gated, knows what to say and when, knows nothing about PRISM. The transport's PRISM init/shutdown belongs at process start/end, which is why it sits at the port level rather than inside the mod. Future accessibility features (audio cues) should be separate consumer mods over the existing audio system, not extensions of the TTS layer.
 
