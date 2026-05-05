@@ -104,7 +104,7 @@ static void Accessibility_OnSoundMenuReady(IEvent* event) {
     if (!Accessibility_IsScreenReaderEnabled()) {
         return;
     }
-    Tts_Speak("Sound menu", false);
+    Tts_Speak("Sound menu, press R to toggle sound test.", false);
     Tts_Speak(Accessibility_SoundMenuRowLabel(), false);
     Accessibility_SpeakSoundMenuValue(false);
 }
