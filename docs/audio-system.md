@@ -469,6 +469,8 @@ What the system does **not** give us:
 - Positional behavior on `SFX_BANK_SYSTEM` sounds. They always play center, full volume.
 - Arbitrary samples without going through the asset pipeline.
 
+If those limitations become a real blocker for cue work, alternatives to the SF64 audio engine that we have already considered (SDL_mixer for asset / iteration pain, OpenAL Soft + dr_libs for HRTF) are sketched in [audio-backend-alternatives.md](audio-backend-alternatives.md).
+
 ---
 
 ## 10. Reading guide for accessibility-cue work
