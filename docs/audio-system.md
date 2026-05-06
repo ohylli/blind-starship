@@ -146,7 +146,16 @@ The source vector is `f32[3]` = `[x, y, z]`, **in camera space**:
 - **Y**: positive = above the camera, negative = below.
 - **Z**: positive = in front of the camera, negative = behind.
 
-This matches SF64's world-space convention: the player flies in the world's +Z direction (the path direction), and `Object_SetSfxSourceToPos` rotates the world delta by camera yaw/pitch with no axis flip, so view-space +Z is also "forward". (This is the opposite of the OpenGL convention where −Z is forward — the engine does not use that convention.)
+Note that this is the convention for the **source vector**, *not* for SF64's world Z. In world space the player flies in the **−Z** direction — objects ahead of the player are at *more negative* world Z (see `Object_Load` at `src/engine/fox_enmy.c:216` and `docs/game-world.md` §4). `Object_SetSfxSourceToPos` does the world→source conversion via `src.z = pos->z + gPathProgress - gPlayCamEye.z`, where the `+ gPathProgress` term accounts for the cumulative path offset accumulated as the player flies forward. X and Y are straightforward `pos − camEye` deltas. The Z sign of the resulting source vector is mostly moot in stereo (the stereo pan formula uses only `|z|` and is insensitive to sign — see `Audio_GetSfxPan` at `audio_general.c:466`); it only matters for 5.1 placement, where forward/back distinction is real.
+
+⚠ **Unverified — has not been empirically tested.** The "+Z = in front of the camera" claim in the source-vector bullet above, and the matching "+Z = ahead of Arwing" sign convention used in the §6 player-relative formula, are based on reasoning about the existing code and have *not* been verified by listening to the game. Two specific reasons to suspect the Z sign might actually be inverted in surround:
+
+- The 5.1 pan path computes `atan2f(xPos, -zPos)` (`audio_general.c:483`), which treats **−Z** as the angle-0 forward axis. If `Object_SetSfxSourceToPos` really produces +Z = forward in source space, the 5.1 path would mis-place forward sources behind the listener — i.e. the engine would have an internal sign mismatch that's invisible in stereo and audible only in surround.
+- Tracing the values that `src.z = pos->z + gPathProgress - gPlayCamEye.z` produces against world-Z conventions (player at trueZpos ≈ −10000, gPathProgress ≈ +10000, gPlayCamEye.z ≈ trueZpos + small) doesn't obviously land at "+Z = ahead" with magnitudes that match the actual world distance — suggesting either the formula or one of the assumed sign conventions is being misread here.
+
+In stereo this never surfaces — `|z|` only. The X and Y conventions (right = +X, up = +Y) are not in question; only Z. Before relying on the Z sign for 5.1 cue placement, listen to a known-forward and known-behind source on a 5.1 setup and confirm the engine puts them where they belong. If the convention turns out to be inverted, both `Object_SetSfxSourceToPos` callers and the §6 player-relative formula would need to flip their Z sign to match — and this doc should be updated.
+
+Note: "camera space" is a convention enforced by `Object_SetSfxSourceToPos` and friends, not by the audio engine itself. `Audio_GetSfxPan` and `Audio_GetSfxFalloff` operate on whatever `[x, y, z]` triple you hand them — they don't know or care what frame it's in. For accessibility cues, §6 explains why camera space is actually the *wrong* frame in on-rails mode, and feeding the engine player-relative coordinates produces panning that matches what the player would expect.
 
 ### Pan: where the sound sits in left/right (or surround) — the `pan` field, 0..127
 
@@ -276,6 +285,52 @@ Things to be aware of:
 - **Y does not contribute to pan.** It contributes to falloff only (and even there, ÷ 2.5). To convey "above vs below" we map Y onto pitch — see Section 8.
 - **SFX outside max range are silently dropped.** Set `SFX_FLAG_22` on the cue if it must be audible regardless of distance.
 
+### Camera-space is the wrong frame for on-rails accessibility cues
+
+`Object_SetSfxSourceToPos` builds its vector relative to **`gPlayCamEye`** and rotates by **`gPlayer[0].camYaw` / `camPitch`** — neither the Arwing's position nor its facing. The engine then pans according to that camera-relative vector. For most game-internal SFX (lasers firing from the player's screen position, on-screen explosions) this is exactly right — the panning matches what is on screen.
+
+For accessibility cues it isn't. A blind player wants to know where a target is **relative to the Arwing**, not where it appears on screen.
+
+The two frames diverge most in **on-rails mode**. The camera mostly stays on the path centre while the Arwing has its own movement box (a few hundred units in X, less in Y). Concretely:
+
+- Target at world X = 0 (path centre).
+- Arwing at world X = −300 (drifted left).
+- Camera at world X ≈ 0 (still on the path).
+- `Object_SetSfxSourceToPos` produces sfx X ≈ 0 → **center pan**.
+- The player expects **right pan** (the target is +300 to their right).
+
+In **all-range mode** the camera is a chase-cam that tracks the Arwing closely, so camera space and player space are roughly aligned and `Object_SetSfxSourceToPos` produces the right answer.
+
+#### The fix: bypass the converter, compute player-relative offset
+
+Since the engine doesn't enforce a frame (see §4), feed it player-relative coordinates instead and the pan / falloff math is correct from the player's perspective:
+
+```c
+sfxSrc[0] =  obj->pos.x - gPlayer[0].pos.x;          // +X = right of Arwing
+sfxSrc[1] =  obj->pos.y - gPlayer[0].pos.y;          // +Y = above Arwing
+sfxSrc[2] = -(obj->pos.z - gPlayer[0].trueZpos);     // +Z = ahead of Arwing
+                                                     //   (sign flipped: world forward is −Z;
+                                                     //   engine pan convention is +Z = ahead)
+```
+
+Note `gPlayer[0].trueZpos`, not `pos.z` — `pos.z` is the path-scroll position and stays near zero in on-rails mode (see `docs/game-world.md` §10).
+
+#### Mode-aware approach
+
+`gLevelMode` (declared `extern LevelMode gLevelMode;` in `include/sf64context.h:19`; enum values in `include/sf64player.h:62`) discriminates `LEVELMODE_ON_RAILS` from `LEVELMODE_ALL_RANGE`. For accessibility cue work:
+
+- `LEVELMODE_ALL_RANGE`: camera tracks the Arwing → `Object_SetSfxSourceToPos` is fine.
+- `LEVELMODE_ON_RAILS`: camera stays on path → bypass and compute player-relative.
+
+A cue mod can branch on `gLevelMode` once per update tick and pick the right transform.
+
+#### Caveats once you bypass the converter
+
+- **Banking roll.** When the Arwing tilts on hard turns, you probably *don't* want the cue to roll with it (a target on your right shouldn't migrate to "above" because you banked left). For the pure-translation snippet above this is a non-issue — you're not rotating at all. If a future refinement rotates by Arwing yaw/pitch (e.g. to use player-facing rather than camera-facing in all-range), rotate by yaw/pitch only, never roll.
+- **The pan clamp at ±1200 still applies.** `Audio_GetSfxPan` saturates X past 1200 regardless of which frame fed it. For fine directional discrimination across long distances, clamp X to a smaller window before passing it in.
+- **Split-screen multiplayer "just works" — partly.** The zero-out flagged a few bullets up only happens *inside* `Object_SetSfxSourceToPos`. If you bypass it, source positions are no longer trapped behind that `gCamCount != 1` guard. You still need to think about which Arwing the cue is "for" (`gPlayer[0]` may not be the right player to read in 2P+), but the audio path itself is no longer the blocker.
+- **Clamping is on you.** `Object_SetSfxSourceToPos` clamps to ±5000 X/Z and ±2000 Y; if you bypass it, call `Object_ClampSfxSource(sfxSrc)` directly (it's exposed in `fox_edisplay.c:1557`) or apply equivalent clamping yourself.
+
 ---
 
 ## 7. The audio thread, timing, and per-frame hooks
@@ -318,6 +373,10 @@ The headers a cue mod typically needs: `global.h` (umbrella for game C code, bri
 ### Triggering vs ticking
 
 Following the project's event-driven announcement pattern (see `CLAUDE.md`'s "Accessibility fork" section): use the event bus to **start and stop** cues at semantic transitions, and use `GamePostUpdateEvent` (or `PlayerPostUpdateEvent`) to **refresh per-frame state** (position vec3, pitch from Y, etc.) for any active cue. Don't poll game state to detect the trigger — fire a `DEFINE_EVENT(...)` at the precise transition and listen for it. If the trigger you want doesn't yet have an event, follow CLAUDE.md's recipe: add `DEFINE_EVENT` in the appropriate `src/port/hooks/list/*.h`, `REGISTER_EVENT` in `PortEnhancements_Register()`, and `CALL_EVENT` at the producer site.
+
+### Camera space vs player space in these examples
+
+The examples below use `Object_SetSfxSourceToPos` for brevity, which produces a **camera-relative** source vector. That's fine for all-range mode but wrong for on-rails mode — see §6 "Camera-space is the wrong frame for on-rails accessibility cues" for why and for the player-relative replacement. A real cue mod should branch on `gLevelMode` and pick the right transform; the snippets here illustrate the SFX pipeline rather than the final cue pattern.
 
 ### Example: a one-shot positional cue
 
@@ -405,7 +464,8 @@ What the system does **not** give us:
 
 - Elevation cue (Y → ear). No HRTF, no high-shelf-from-above. Y feeds into distance only. Encoding "above/below" requires a second cue dimension we drive ourselves; pitch is the natural fit.
 - A front/back distinction in stereo. Headphones-only listeners get no front/back cue; 5.1 covers it.
-- Reliable behavior in split-screen multiplayer. Source positions get zeroed in 2P+.
+- Reliable behavior in split-screen multiplayer when using `Object_SetSfxSourceToPos`. Source positions get zeroed in 2P+. (Bypassable — see §6 "Camera-space is the wrong frame…" — but you still need to choose which player the cue is for.)
+- A camera-relative converter that's correct for cues in on-rails mode. `Object_SetSfxSourceToPos` follows the camera, not the Arwing, so it pans relative to what's on screen rather than where the player is. §6 has the player-relative replacement.
 - Positional behavior on `SFX_BANK_SYSTEM` sounds. They always play center, full volume.
 - Arbitrary samples without going through the asset pipeline.
 
@@ -419,7 +479,7 @@ When the next task is "play a positional cue when X happens," the reading order 
 2. `src/audio/audio_general.c:1280` — `Audio_PlaySfx` and the request queue.
 3. `src/audio/audio_general.c:455` — `Audio_GetSfxPan` to know what your X/Z position will mean.
 4. `src/audio/audio_general.c:388` — `Audio_GetSfxFalloff` for what your distance will mean.
-5. `src/engine/fox_edisplay.c:1578` — `Object_SetSfxSourceToPos` for the world-to-camera-space conversion.
+5. `src/engine/fox_edisplay.c:1578` — `Object_SetSfxSourceToPos` for the world-to-camera-space conversion. **But see §6 "Camera-space is the wrong frame for on-rails accessibility cues"** — for cue work you'll likely bypass this in on-rails mode and compute a player-relative offset directly.
 6. `src/port/hooks/list/EngineEvent.h` and `src/port/hooks/list/ActorEvent.h` — pick a per-frame event to register on (usually `GamePostUpdateEvent`, since `PlayUpdateEvent` fires before the camera updates).
 7. `src/port/mods/PortEnhancements.{c,h}` and `src/port/mods/Accessibility.{c,h}` — worked examples of CVar-gated, listener-registered mods that match the pattern positional cues should follow.
 8. `src/mods/sfxjukebox.c` — a worked example of calling `AUDIO_PLAY_SFX` from a port-level mod.
