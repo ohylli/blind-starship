@@ -35,7 +35,7 @@ extern "C" void Tts_Speak(const char* text, bool interrupt) {
     if (g_backend == nullptr || text == nullptr) {
         return;
     }
-    PrismError err = prism_backend_speak(g_backend, text, interrupt);
+    PrismError err = prism_backend_output(g_backend, text, interrupt);
     if (err != 0) {
         SPDLOG_WARN("Tts: prism_backend_speak failed ({})", prism_error_string(err));
     }
