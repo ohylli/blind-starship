@@ -2,9 +2,7 @@
 
 #include "global.h"
 #include "port/accessibility/Tts.h"
-#include "accessibility/AccessibilityScreens.h"
-
-// Listeners fire synchronously on the CALL_EVENT thread; Tts_Speak is main-thread-only (see Tts.h).
+#include "accessibility_screens/AccessibilityScreens.h"
 
 void Accessibility_Init(void) {
     CVarRegisterInteger("gAccessibilityScreenReader", 1);
