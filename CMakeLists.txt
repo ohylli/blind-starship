@@ -299,9 +299,11 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "NintendoSwitch")
     if(MSVC)
         set(PRISM_IMPORT_LIB ${PRISM_INSTALL_DIR}/lib/prism.lib)
         set(PRISM_RUNTIME_LIB ${PRISM_INSTALL_DIR}/bin/prism.dll)
+        set(PRISM_BUILD_BYPRODUCTS ${PRISM_IMPORT_LIB} ${PRISM_RUNTIME_LIB})
     else()
         set(PRISM_IMPORT_LIB ${PRISM_INSTALL_DIR}/lib/${CMAKE_SHARED_LIBRARY_PREFIX}prism${CMAKE_SHARED_LIBRARY_SUFFIX})
         set(PRISM_RUNTIME_LIB ${PRISM_IMPORT_LIB})
+        set(PRISM_BUILD_BYPRODUCTS ${PRISM_IMPORT_LIB})
     endif()
     ExternalProject_Add(PrismExternal
         PREFIX            ${CMAKE_BINARY_DIR}/PrismExternal
@@ -315,7 +317,7 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "NintendoSwitch")
             -DPRISM_ENABLE_TESTS=OFF
             -DPRISM_ENABLE_DEMOS=OFF
             -DCMAKE_MSVC_RUNTIME_LIBRARY=$<$<CONFIG:Debug>:MultiThreadedDebug>$<$<NOT:$<CONFIG:Debug>>:MultiThreaded>
-        BUILD_BYPRODUCTS  ${PRISM_IMPORT_LIB} ${PRISM_RUNTIME_LIB}
+        BUILD_BYPRODUCTS  ${PRISM_BUILD_BYPRODUCTS}
     )
     add_dependencies(${PROJECT_NAME} PrismExternal)
     file(MAKE_DIRECTORY ${PRISM_INSTALL_DIR}/include)  # so target_include_directories doesn't error before first build
@@ -661,10 +663,37 @@ add_custom_command(
 
 if(NOT CMAKE_SYSTEM_NAME STREQUAL "NintendoSwitch")
 include(ExternalProject)
+
+# On macOS the spdlog version Torch fetches (commit 7e635fca) bundles fmt 10.2.1
+# which fails to compile under AppleClang 21 (consteval strictness). Download
+# spdlog v1.15.1 (bundles fmt 11) at configure time and redirect Torch's
+# FetchContent to that source so the standalone build gets a working copy.
+if(APPLE)
+    set(SPDLOG_TORCH_SRC "${CMAKE_BINARY_DIR}/spdlog-torch-src")
+    if(NOT EXISTS "${SPDLOG_TORCH_SRC}/CMakeLists.txt")
+        message(STATUS "Downloading spdlog v1.15.1 for Torch standalone build...")
+        execute_process(
+            COMMAND git clone --depth 1 --branch v1.15.1
+                    https://github.com/gabime/spdlog.git
+                    "${SPDLOG_TORCH_SRC}"
+            RESULT_VARIABLE GIT_RESULT
+        )
+        if(NOT GIT_RESULT EQUAL 0)
+            message(WARNING "Failed to clone spdlog v1.15.1; Torch build may fail on macOS")
+        endif()
+    endif()
+    set(TORCH_EXTRA_CMAKE_ARGS "-DFETCHCONTENT_SOURCE_DIR_SPDLOG=${SPDLOG_TORCH_SRC}")
+endif()
+
 ExternalProject_Add(TorchExternal
 	PREFIX TorchExternal
     SOURCE_DIR ${CMAKE_SOURCE_DIR}/tools/Torch
     CMAKE_ARGS -DCMAKE_INSTALL_PREFIX=${CMAKE_BINARY_DIR}/Torch
+               ${TORCH_EXTRA_CMAKE_ARGS}
+               -DBUILD_SM64=OFF
+               -DBUILD_MK64=OFF
+               -DBUILD_FZERO=OFF
+               -DBUILD_MARIO_ARTIST=OFF
 )
 ExternalProject_Get_Property(TorchExternal install_dir)
 if (MSVC)
