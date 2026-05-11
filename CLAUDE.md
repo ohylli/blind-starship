@@ -70,21 +70,28 @@ The codebase has two distinct halves wired together by `src/port/Engine.{h,cpp}`
 
 ## Accessibility fork
 
-This fork is exploring an accessibility mod for blind players (the maintainer is
-blind/low-vision). Currently shipped: a screen-reader announcement layer using
-PRISM (https://github.com/ethindp/prism). Future work: positional audio cues for
-hazards, lock-on, altitude, etc., leveraging the existing 3D-positional audio
-system rather than building new DSP (see docs/audio-system.md for details about
-the port's audio system, and docs/game-world.md for how the game models
-environment, enemies, and items — the producer side of cue work).
+This fork is exploring an accessibility mod for blind players (the maintainer is blind/low-vision).
 
-**Two-layer split.** A port-level **TTS transport** at `src/port/accessibility/` wraps PRISM and knows nothing about Star Fox. A **consumer mod** at `src/port/mods/Accessibility.{c,h}` mirrors the `PortEnhancements` pattern — CVar-gated, knows what to say and when, knows nothing about PRISM. The transport's PRISM init/shutdown belongs at process start/end, which is why it sits at the port level rather than inside the mod. Future accessibility features (audio cues) should be separate consumer mods over the existing audio system, not extensions of the TTS layer.
+**Current status:**
+- Screen-reader announcement layer via PRISM (https://github.com/ethindp/prism), toggled by the `gAccessibilityScreenReader` CVar
+- Title screen — entry announcement
+- Main menu — entry announcement + cursor navigation
+- Sound menu — entry announcement + cursor navigation + value changes
+
+Future work: positional audio cues for gameplay (hazards, lock-on, altitude, etc.), leveraging the existing 3D-positional audio system rather than building new DSP (see `docs/audio-system.md` for the port's audio system, and `docs/game-world.md` for how the game models environment, enemies, and items — the producer side of cue work).
+
+**Three-layer split.**
+- **TTS transport** at `src/port/accessibility/` wraps PRISM and knows nothing about Star Fox. PRISM init/shutdown lives here because it belongs at process start/end.
+- **Consumer mod entry point** at `src/port/mods/Accessibility.{c,h}` mirrors the `PortEnhancements` pattern — owns the screen-reader CVar and dispatches to per-screen registrars. Knows nothing about PRISM.
+- **Per-screen listeners** at `src/port/mods/accessibility_screens/` — one file per screen, each registering its own event listeners and owning its announcement strings. New screens get a new file here plus one call from `Accessibility_Init`; the entry point and transport do not change.
+
+Future accessibility features (audio cues) should be separate consumer mods over the existing audio system, not extensions of the TTS layer.
 
 **PRISM integration caveat.** PRISM is built via `ExternalProject_Add`, not `FetchContent`. Its CMake target is named `prism`, which collides with libultraship's unrelated `prism` target (the Fast3D shader template processor `KiritoDv/prism-processor`). FetchContent puts both in the same CMake graph and breaks libultraship's compilation. See `docs/accessibility-prism-spike-result.md` for the full set of integration surprises (toolchain floor, backend init quirk, the tinyxml2 dynamic-build issue triggered alongside).
 
-**Event-driven announcements.** Screen-reader announcements are wired through the in-process event bus (`src/port/hooks/`), not by polling game state from `Accessibility.c`. Game code fires a semantic event at the precise transition (`CALL_EVENT(...)`); the consumer mod registers a listener and decides what to speak. The motivation is *not* that game state is unreachable — despite the `s` prefix, most `s*` file-scope variables in the decomp actually have external linkage, and `src/mods/sfxjukebox.c` shows the established pattern of adding ad-hoc `extern` declarations to read them from a port-level mod. Events win because transitions are *semantic*: the producer already knows the exact moment a screen becomes "ready," and a single state value often covers several distinct entry paths that all want the same announcement. Pushing that knowledge into the producer keeps the consumer free of per-frame edge detection and per-screen state-machine logic. Menu/screen events live in `src/port/hooks/list/MenuEvent.h`; new domains should get their own `hooks/list/*.h`. Game-side and port-side callers should `#include "port/hooks/Events.h"` (the umbrella) rather than the per-domain list header.
+**Event-driven announcements.** Screen-reader announcements are wired through the in-process event bus (`src/port/hooks/`), not by polling game state from the consumer mod. Game code fires a semantic event at the precise transition (`CALL_EVENT(...)`); a per-screen listener decides what to speak. The motivation is *not* that game state is unreachable — despite the `s` prefix, most `s*` file-scope variables in the decomp actually have external linkage, and `src/mods/sfxjukebox.c` shows the established pattern of adding ad-hoc `extern` declarations to read them from a port-level mod. Events win because transitions are *semantic*: the producer already knows the exact moment a screen becomes "ready," and a single state value often covers several distinct entry paths that all want the same announcement. Pushing that knowledge into the producer keeps the consumer free of per-frame edge detection and per-screen state-machine logic. Menu/screen events live in `src/port/hooks/list/MenuEvent.h`; new domains should get their own `hooks/list/*.h`. Game-side and port-side callers should `#include "port/hooks/Events.h"` (the umbrella) rather than the per-domain list header.
 
-**Recipe for adding a new announcement.** (1) `DEFINE_EVENT(NameEvent[, fields])` in `MenuEvent.h` (or another `hooks/list/*.h` if it belongs to a different domain). (2) `REGISTER_EVENT(NameEvent)` in `PortEnhancements_Register()`. (3) `CALL_EVENT(NameEvent[, args])` at the precise transition point in game code; include `port/hooks/Events.h`. (4) Static listener callback + unconditional `REGISTER_LISTENER(...)` in `Accessibility_Init()`; the callback itself early-returns on `!Accessibility_IsScreenReaderEnabled()` and otherwise calls `Tts_Speak(text, false)`. Gating happens at fire time, not at registration, so the screen-reader CVar can be toggled at runtime without restart. No new CVars or polling needed.
+**Adding a new announcement.** Follow the pattern in any existing file under `src/port/mods/accessibility_screens/`: define the event(s) in the appropriate `hooks/list/*.h`, register them in `PortEnhancements_Register()`, fire them from the precise transition point in game code, and add a new `<Screen>.c` with a `Register` function called from `Accessibility_Init`. Listeners early-return on `!Accessibility_IsScreenReaderEnabled()` so the CVar can be toggled at runtime without restart. No new CVars needed per screen.
 
 ## Things to know before editing
 
