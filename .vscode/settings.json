@@ -151,9 +151,13 @@
     "prevent_bss_reordering3.h": "c",
     "ast_a_ti.h": "c",
     "fox_co.h": "c",
-    "ast_map.h": "c"
+    "ast_map.h": "c",
     "xmemory": "c",
     "iosfwd": "c"
   },
-  "C_Cpp_Runner.msvcBatchPath": ""
+  "C_Cpp_Runner.msvcBatchPath": "",
+  "cmake.buildDirectory": "${workspaceFolder}/build/x64",
+  "cmake.configureEnvironment": {
+    "VCPKG_ROOT": "${workspaceFolder}/build/x64/vcpkg"
+  }
 }
