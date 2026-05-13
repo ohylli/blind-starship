@@ -6,11 +6,7 @@
 
 void Accessibility_Init(void) {
     CVarRegisterInteger("gAccessibilityScreenReader", 1);
-
-    if (Accessibility_IsScreenReaderEnabled()) {
-        Tts_Speak("Starship accessibility check", false);
-    }
-
+    
     AccessibilityTitleScreen_Register();
     AccessibilityMainMenu_Register();
     AccessibilitySoundMenu_Register();
