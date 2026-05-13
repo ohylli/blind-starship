@@ -157,6 +157,7 @@
   },
   "C_Cpp_Runner.msvcBatchPath": "",
   "cmake.buildDirectory": "${workspaceFolder}/build/x64",
+  "cmake.toolset": "v143",
   "cmake.configureEnvironment": {
     "VCPKG_ROOT": "${workspaceFolder}/build/x64/vcpkg"
   }
