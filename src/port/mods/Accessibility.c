@@ -3,16 +3,20 @@
 #include "global.h"
 #include "port/accessibility/Tts.h"
 #include "accessibility_screens/AccessibilityScreens.h"
+#include "AccessibilityCues.h"
 
 void Accessibility_Init(void) {
     CVarRegisterInteger("gAccessibilityScreenReader", 1);
-    
+
     AccessibilityTitleScreen_Register();
     AccessibilityMainMenu_Register();
     AccessibilitySoundMenu_Register();
+
+    AccessibilityCues_Init();
 }
 
 void Accessibility_Exit(void) {
+    AccessibilityCues_Exit();
 }
 
 bool Accessibility_IsScreenReaderEnabled(void) {
