@@ -41,6 +41,15 @@ After building, the executable expects `sf64.o2r`, `starship.o2r`, `config.yml`,
 
 `tools/format.py` runs clang-format-14 + clang-tidy-14 over `src*/**/*.c` (excluding `assets/`) and adds final newlines. `tools/check_format.sh` is the CI gate — it runs `format.py -j` and fails if `git status` changes. Style rules are in `.clang-format` (4-space indent, 120 cols, attached braces, left pointer alignment, `SortIncludes: false`). There is no test suite to run; correctness is verified by playing the game.
 
+## Logging
+
+Logging goes through spdlog, configured by libultraship in `libultraship/src/Context.cpp`. Two sinks: stdout (terminal on Linux/macOS; a dedicated console window only in Windows `_DEBUG` builds) and a rotating file sink at `logs/Starship.log` next to the executable (10 MB × 10 files). Async logger, safe to call from any thread. Output pattern is `[date time.ms] [file:line] [level] message`. Levels in increasing severity: trace, debug, info, warn, error, critical. Runtime threshold is `trace` in `_DEBUG` builds and `debug` in release, so `SPDLOG_TRACE` calls are silently dropped in release builds — but note that spdlog also compile-time gates trace/debug via `SPDLOG_ACTIVE_LEVEL`, so trace lines may not even be emitted in a release build regardless of runtime level.
+
+- **C++ (port layer)** — `#include <spdlog/spdlog.h>` and use `SPDLOG_TRACE/DEBUG/INFO/WARN/ERROR/CRITICAL` with fmt-style `{}` placeholders. Examples throughout `src/port/`.
+- **C (game/decomp side)** — `#include "log/luslog.h"` and use `LUSLOG_TRACE/DEBUG/INFO/WARN/ERROR/CRITICAL` with printf-style `%s`/`%d`. These funnel into the same spdlog pipeline. The decomp still has many raw `printf` calls that bypass the log file — prefer `LUSLOG_*` for new game-side instrumentation.
+
+Severity convention: info for sparse high-level milestones, debug for diagnostic detail when investigating, trace for firehose per-frame / per-iteration detail meant to stay in the code as opt-in instrumentation.
+
 ## Architecture
 
 The codebase has two distinct halves wired together by `src/port/Engine.{h,cpp}`.
