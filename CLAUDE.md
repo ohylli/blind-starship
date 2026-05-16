@@ -86,8 +86,9 @@ This fork is exploring an accessibility mod for blind players (the maintainer is
 - Title screen — entry announcement
 - Main menu — entry announcement + cursor navigation
 - Sound menu — entry announcement + cursor navigation + value changes
+- Positional audio cue guiding players to the next training ring, toggled by the `gAccessibilityAudioCues` CVar — scoped to Training mode for this first test. Lives at `src/port/mods/AccessibilityCues.{c,h}`; the engine handles pan (from X) and volume (from distance) and the mod drives pitch from altitude relative to the Arwing. Tuning knobs documented in `docs/accessibility-cues-tuning.md`.
 
-Future work: positional audio cues for gameplay (hazards, lock-on, altitude, etc.), leveraging the existing 3D-positional audio system rather than building new DSP (see `docs/audio-system.md` for the port's audio system, and `docs/game-world.md` for how the game models environment, enemies, and items — the producer side of cue work).
+Future work: more positional audio cues for gameplay (hazards, lock-on, enemies, etc.) across the on-rails levels, leveraging the existing 3D-positional audio system rather than building new DSP (see `docs/audio-system.md` for the port's audio system, and `docs/game-world.md` for how the game models environment, enemies, and items — the producer side of cue work).
 
 **Three-layer split.**
 - **TTS transport** at `src/port/accessibility/` wraps PRISM and knows nothing about Star Fox. PRISM init/shutdown lives here because it belongs at process start/end.
