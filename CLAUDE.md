@@ -87,6 +87,7 @@ This fork is exploring an accessibility mod for blind players (the maintainer is
 - Main menu — entry announcement + cursor navigation
 - Sound menu — entry announcement + cursor navigation + value changes
 - Positional audio cue guiding players to the next training ring, toggled by the `gAccessibilityAudioCues` CVar — scoped to Training mode for this first test. Lives at `src/port/mods/AccessibilityCues.{c,h}`; the engine handles pan (from X) and volume (from distance) and the mod drives pitch from altitude relative to the Arwing. Tuning knobs documented in `docs/accessibility-cues-tuning.md`.
+- Training simplification for cue testing, toggled by the `gAccessibilityTrainingMinimal` CVar (default on) — strips enemies and collidable obstacles from the on-rails portion of Training so the player only has to follow ring cues; all-range phase, items, and radio messages are preserved. Lives at `src/port/mods/AccessibilityTrainingMinimal.{c,h}`.
 
 Future work: more positional audio cues for gameplay (hazards, lock-on, enemies, etc.) across the on-rails levels, leveraging the existing 3D-positional audio system rather than building new DSP (see `docs/audio-system.md` for the port's audio system, and `docs/game-world.md` for how the game models environment, enemies, and items — the producer side of cue work).
 

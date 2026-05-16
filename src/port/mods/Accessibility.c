@@ -4,6 +4,7 @@
 #include "port/accessibility/Tts.h"
 #include "accessibility_screens/AccessibilityScreens.h"
 #include "AccessibilityCues.h"
+#include "AccessibilityTrainingMinimal.h"
 
 void Accessibility_Init(void) {
     CVarRegisterInteger("gAccessibilityScreenReader", 1);
@@ -13,6 +14,7 @@ void Accessibility_Init(void) {
     AccessibilitySoundMenu_Register();
 
     AccessibilityCues_Init();
+    AccessibilityTrainingMinimal_Init();
 }
 
 void Accessibility_Exit(void) {
