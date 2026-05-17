@@ -2,6 +2,7 @@ name: GenerateBuilds
 
 on:
   push:
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -64,6 +65,7 @@ jobs:
           mkdir starship-release
           mv build/x64/Release/Starship.exe starship-release/
           mv build/x64/Release/starship.o2r starship-release/
+          mv build/x64/Release/prism.dll starship-release/
           mv config.yml starship-release/
           mv assets starship-release/
           Invoke-WebRequest -Uri "https://raw.githubusercontent.com/mdqinc/SDL_GameControllerDB/master/gamecontrollerdb.txt" -OutFile "starship-release/gamecontrollerdb.txt"
@@ -72,6 +74,38 @@ jobs:
         with:
           name: starship-windows
           path: starship-release
+
+  release-alpha-windows:
+    needs: build-windows
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: starship-windows
+          path: starship-release
+      - name: Zip package
+        run: |
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          echo "SHORT_SHA=$SHORT_SHA" >> "$GITHUB_ENV"
+          ZIP_NAME="Starship-windows-alpha-${SHORT_SHA}.zip"
+          echo "ZIP_NAME=$ZIP_NAME" >> "$GITHUB_ENV"
+          (cd starship-release && zip -r "../$ZIP_NAME" .)
+      - name: Replace alpha release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete alpha --cleanup-tag --yes --repo "$GITHUB_REPOSITORY" || true
+          gh release create alpha \
+            --repo "$GITHUB_REPOSITORY" \
+            --prerelease \
+            --target "${{ github.sha }}" \
+            --title "Alpha (rolling) — ${SHORT_SHA}" \
+            --generate-notes \
+            "${ZIP_NAME}"
 
   build-macos:
     needs: generate-port-o2r
