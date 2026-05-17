@@ -108,6 +108,7 @@ jobs:
             "${ZIP_NAME}"
 
   build-macos:
+    if: false  # disabled: upstream macOS build is broken; re-enable when fixed
     needs: generate-port-o2r
     runs-on: macos-14
     steps:
@@ -232,6 +233,7 @@ jobs:
             gamecontrollerdb.txt
 
   build-switch:
+    if: false  # disabled: upstream Switch build is broken; re-enable when fixed
     needs: generate-port-o2r
     runs-on: ubuntu-latest
     container:
