@@ -120,6 +120,12 @@ endif()
 
 configure_file( ${CMAKE_CURRENT_SOURCE_DIR}/properties.h.in ${CMAKE_CURRENT_SOURCE_DIR}/properties.h @ONLY)
 
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/GenerateObjectIdNames.cmake)
+generate_object_id_names(
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/sf64object.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/port/mods/ObjectIdNames.generated.c
+)
+
 # Include directories
 include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}

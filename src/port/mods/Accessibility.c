@@ -5,6 +5,7 @@
 #include "accessibility_screens/AccessibilityScreens.h"
 #include "AccessibilityCues.h"
 #include "AccessibilityTrainingMinimal.h"
+#include "ObjectSpawnLog.h"
 
 void Accessibility_Init(void) {
     CVarRegisterInteger("gAccessibilityScreenReader", 1);
@@ -15,6 +16,7 @@ void Accessibility_Init(void) {
 
     AccessibilityCues_Init();
     AccessibilityTrainingMinimal_Init();
+    ObjectSpawnLog_Init();
 }
 
 void Accessibility_Exit(void) {
