@@ -113,6 +113,16 @@ static void ObjectSpawnLog_OnObjectUpdate(IEvent* event) {
     ObjectSpawnLog_Emit(e->type, e->object, false);
 }
 
+// EVENT_PRIORITY_HIGH so this runs after the TrainingMinimal filter (NORMAL)
+// and can read event->cancelled to report the PASSED/FILTERED tag.
+//
+// Output is at LUSLOG_TRACE, which is filtered by the gDeveloperTools.LogLevel
+// runtime threshold (defaults to debug — see CLAUDE.md Logging section).
+// Set the CVar to 0 / pick "trace" in the dev menu to actually see the lines.
+//
+// Readable names for `obj->id` come from ObjectId_GetName, defined in
+// ObjectIdNames.generated.c — produced at CMake configure time from
+// include/sf64object.h by cmake/GenerateObjectIdNames.cmake.
 void ObjectSpawnLog_Init(void) {
     CVarRegisterInteger("gObjectSpawnLog", 0);
     REGISTER_LISTENER(ObjectInitEvent, ObjectSpawnLog_OnObjectInit, EVENT_PRIORITY_HIGH);
