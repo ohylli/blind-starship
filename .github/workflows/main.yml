@@ -82,6 +82,7 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
       - name: Download windows artifact
         uses: actions/download-artifact@v4
         with:
@@ -98,13 +99,38 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # Capture the previous alpha's commit so we can give --generate-notes
+          # a starting point. Empty on the very first run.
+          PREV_SHA=$(gh release view alpha --repo "$GITHUB_REPOSITORY" --json targetCommitish -q .targetCommitish 2>/dev/null || true)
+
+          # Move the alpha-prev tag to that commit (create if missing) via the
+          # refs API, so we don't need full git history locally.
+          if [ -n "$PREV_SHA" ]; then
+            if gh api "repos/$GITHUB_REPOSITORY/git/refs/tags/alpha-prev" >/dev/null 2>&1; then
+              gh api -X PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/alpha-prev" \
+                -f sha="$PREV_SHA" -F force=true >/dev/null
+            else
+              gh api -X POST "repos/$GITHUB_REPOSITORY/git/refs" \
+                -f ref="refs/tags/alpha-prev" -f sha="$PREV_SHA" >/dev/null
+            fi
+          fi
+
           gh release delete alpha --cleanup-tag --yes --repo "$GITHUB_REPOSITORY" || true
+
+          NOTES_ARGS=(--generate-notes)
+          if [ -n "$PREV_SHA" ]; then
+            NOTES_ARGS+=(--notes-start-tag alpha-prev)
+          fi
+          if [ -f .github/alpha-release-notes.md ]; then
+            NOTES_ARGS+=(--notes-file .github/alpha-release-notes.md)
+          fi
+
           gh release create alpha \
             --repo "$GITHUB_REPOSITORY" \
             --prerelease \
             --target "${{ github.sha }}" \
             --title "Alpha (rolling) — ${SHORT_SHA}" \
-            --generate-notes \
+            "${NOTES_ARGS[@]}" \
             "${ZIP_NAME}"
 
   build-macos:
