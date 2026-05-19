@@ -83,6 +83,8 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Download windows artifact
         uses: actions/download-artifact@v4
         with:
@@ -103,16 +105,12 @@ jobs:
           # a starting point. Empty on the very first run.
           PREV_SHA=$(gh release view alpha --repo "$GITHUB_REPOSITORY" --json targetCommitish -q .targetCommitish 2>/dev/null || true)
 
-          # Move the alpha-prev tag to that commit (create if missing) via the
-          # refs API, so we don't need full git history locally.
+          # Move the alpha-prev tag to that commit (create if missing) via
+          # git push. The REST git/refs endpoint returns 403 for the workflow
+          # token even with contents: write, but `git push` of a tag works.
           if [ -n "$PREV_SHA" ]; then
-            if gh api "repos/$GITHUB_REPOSITORY/git/refs/tags/alpha-prev" >/dev/null 2>&1; then
-              gh api -X PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/alpha-prev" \
-                -f sha="$PREV_SHA" -F force=true >/dev/null
-            else
-              gh api -X POST "repos/$GITHUB_REPOSITORY/git/refs" \
-                -f ref="refs/tags/alpha-prev" -f sha="$PREV_SHA" >/dev/null
-            fi
+            git tag -f alpha-prev "$PREV_SHA"
+            git push origin -f "refs/tags/alpha-prev"
           fi
 
           gh release delete alpha --cleanup-tag --yes --repo "$GITHUB_REPOSITORY" || true
