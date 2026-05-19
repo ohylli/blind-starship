@@ -2,6 +2,8 @@ name: GenerateBuilds
 
 on:
   push:
+    branches:
+      - '**'
   workflow_dispatch:
 
 concurrency:
