@@ -83,8 +83,6 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
       - name: Download windows artifact
         uses: actions/download-artifact@v4
         with:
@@ -101,26 +99,34 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Capture the previous alpha's commit so we can give --generate-notes
-          # a starting point. Empty on the very first run.
-          PREV_SHA=$(gh release view alpha --repo "$GITHUB_REPOSITORY" --json targetCommitish -q .targetCommitish 2>/dev/null || true)
-
-          # Move the alpha-prev tag to that commit (create if missing) via
-          # git push. The REST git/refs endpoint returns 403 for the workflow
-          # token even with contents: write, but `git push` of a tag works.
-          if [ -n "$PREV_SHA" ]; then
-            git tag -f alpha-prev "$PREV_SHA"
-            git push origin -f "refs/tags/alpha-prev"
+          # Generate notes via REST BEFORE deleting the old alpha, while its
+          # tag still exists and can serve as previous_tag_name. We can't
+          # push an auxiliary tag (e.g. alpha-prev) from this workflow
+          # because GITHUB_TOKEN refuses to push refs pointing at commits
+          # that modify workflow files — only the release API has that
+          # exception, which is why `gh release create --target` still works.
+          : > generated-notes.md
+          GEN_ARGS=(-f tag_name=alpha -f target_commitish="${{ github.sha }}")
+          if gh release view alpha --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            GEN_ARGS+=(-f previous_tag_name=alpha)
           fi
+          gh api -X POST "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
+            "${GEN_ARGS[@]}" -q .body > generated-notes.md || true
+
+          # Combine: manual notes (if any) on top of generated body
+          : > release-notes.md
+          if [ -f .github/alpha-release-notes.md ]; then
+            cat .github/alpha-release-notes.md >> release-notes.md
+            echo "" >> release-notes.md
+          fi
+          cat generated-notes.md >> release-notes.md
 
           gh release delete alpha --cleanup-tag --yes --repo "$GITHUB_REPOSITORY" || true
 
-          NOTES_ARGS=(--generate-notes)
-          if [ -n "$PREV_SHA" ]; then
-            NOTES_ARGS+=(--notes-start-tag alpha-prev)
-          fi
-          if [ -f .github/alpha-release-notes.md ]; then
-            NOTES_ARGS+=(--notes-file .github/alpha-release-notes.md)
+          if [ -s release-notes.md ]; then
+            NOTES_ARGS=(--notes-file release-notes.md)
+          else
+            NOTES_ARGS=(--generate-notes)
           fi
 
           gh release create alpha \
