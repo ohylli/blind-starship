@@ -7,6 +7,7 @@ extern "C" {
 void ObjectSpawnLog_Init(void);
 
 const char* ObjectId_GetName(int id);
+const char* EventId_GetName(int id);
 
 #ifdef __cplusplus
 }

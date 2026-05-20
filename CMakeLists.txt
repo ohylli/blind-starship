@@ -126,6 +126,12 @@ generate_object_id_names(
     ${CMAKE_CURRENT_SOURCE_DIR}/src/port/mods/ObjectIdNames.generated.c
 )
 
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/GenerateEventIdNames.cmake)
+generate_event_id_names(
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/sf64event.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/port/mods/EventIdNames.generated.c
+)
+
 # Include directories
 include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}

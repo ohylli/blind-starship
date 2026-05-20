@@ -51,8 +51,25 @@ static const char* ObjectSpawnLog_LevelName(s32 level) {
     }
 }
 
+static bool ObjectSpawnLog_IsActorEvent(ObjectEventType type, Object* obj) {
+    return (type == OBJECT_TYPE_ACTOR) && (obj->id == OBJ_ACTOR_EVENT);
+}
+
 static void ObjectSpawnLog_Emit(ObjectEventType type, void* object, bool cancelled) {
     Object* obj = (Object*) object;
+    if (ObjectSpawnLog_IsActorEvent(type, obj)) {
+        s16 eventType = ((Actor*) object)->eventType;
+        LUSLOG_TRACE("[spawn] type=%s id=%d (%s) event=%s(%d) pos=(%.1f,%.1f,%.1f) hitbox=%s level=%s(%d) status=%s",
+                     ObjectSpawnLog_TypeName(type),
+                     obj->id,
+                     ObjectId_GetName(obj->id),
+                     EventId_GetName(eventType), eventType,
+                     obj->pos.x, obj->pos.y, obj->pos.z,
+                     Object_HasCollidableHitbox(type, object) ? "collidable" : "none",
+                     ObjectSpawnLog_LevelName(gCurrentLevel), gCurrentLevel,
+                     cancelled ? "FILTERED" : "PASSED");
+        return;
+    }
     LUSLOG_TRACE("[spawn] type=%s id=%d (%s) pos=(%.1f,%.1f,%.1f) hitbox=%s level=%s(%d) status=%s",
                  ObjectSpawnLog_TypeName(type),
                  obj->id,
@@ -63,15 +80,30 @@ static void ObjectSpawnLog_Emit(ObjectEventType type, void* object, bool cancell
                  cancelled ? "FILTERED" : "PASSED");
 }
 
-// Dedup bitmap for actor-event Update logging. ActorEvent_Load spawns into
-// OBJ_ACTIVE bypassing OBJ_INIT, so the only way to see one is via Update.
-// We log the first Update per actor-event slot and skip the rest; the bit
-// clears when the filter cancels the slot (typical end-of-life under the
-// training mod). Slots that die naturally (engine sets OBJ_FREE outside
-// our hooks) leave a stale bit; the next actor-event in that slot would be
-// missed. Acceptable for a diagnostic log — Init-based logging covers
-// every other type without this caveat.
-static bool sActorEventSeen[ARRAY_COUNT(gActors)];
+// Per-slot state for OBJ_ACTOR_EVENT logging.
+//
+// ActorEvent_Load (fox_enmy.c:396) spawns into OBJ_ACTIVE bypassing OBJ_INIT,
+// then calls Actor_Update on the same line. Inside Actor_Update the
+// ObjectUpdateEvent fires *before* Actor_Move runs (fox_enmy.c:2873-2880), so
+// at our ObjectUpdateEvent listener the actor's eventType is always EVID_FFF
+// — the script hasn't yet executed EVOP_INIT_ACTOR (fox_enmy2.c:1132-1134).
+// Logging there alone would never resolve eventType for actor events that
+// die inside their first frame (formation-trigger / spawn-leader style),
+// because there is no second ObjectUpdate tick.
+//
+// Two-stage scheme:
+//   1. ObjectUpdateEvent sets sActorEventSeenThisFrame[slot] = true.
+//   2. GamePostUpdateEvent (fox_game.c:614, fires once per tick after
+//      Play_Update) scans, reads each seen slot's now-resolved eventType,
+//      and logs if it differs from the last logged value.
+//
+// sActorEventLoggedType uses -1 as "never logged" sentinel so the first
+// observation of any real eventType (including EVID_FFF, in the rare case a
+// script truly never resolved) emits a line. Idle slots (not seen this
+// frame) reset to -1 so a fresh occupant always re-logs — even if its
+// eventType happens to match the previous occupant's last value.
+static bool sActorEventSeenThisFrame[ARRAY_COUNT(gActors)];
+static s32 sActorEventLoggedType[ARRAY_COUNT(gActors)];
 
 static void ObjectSpawnLog_OnObjectInit(IEvent* event) {
     if (!ObjectSpawnLog_IsEnabled()) {
@@ -93,28 +125,46 @@ static void ObjectSpawnLog_OnObjectUpdate(IEvent* event) {
     if (obj->id != OBJ_ACTOR_EVENT) {
         return;
     }
-
     s32 slot = (s32) (((Actor*) e->object) - gActors);
     if ((slot < 0) || (slot >= (s32) ARRAY_COUNT(gActors))) {
         return;
     }
-
-    if (event->cancelled) {
-        if (!sActorEventSeen[slot]) {
-            ObjectSpawnLog_Emit(e->type, e->object, true);
-        }
-        sActorEventSeen[slot] = false;
-        return;
-    }
-    if (sActorEventSeen[slot]) {
-        return;
-    }
-    sActorEventSeen[slot] = true;
-    ObjectSpawnLog_Emit(e->type, e->object, false);
+    sActorEventSeenThisFrame[slot] = true;
 }
 
-// EVENT_PRIORITY_HIGH so this runs after the TrainingMinimal filter (NORMAL)
-// and can read event->cancelled to report the PASSED/FILTERED tag.
+static void ObjectSpawnLog_OnGamePostUpdate(IEvent* event) {
+    (void) event;
+    if (!ObjectSpawnLog_IsEnabled()) {
+        return;
+    }
+    for (s32 i = 0; i < (s32) ARRAY_COUNT(gActors); i++) {
+        if (!sActorEventSeenThisFrame[i]) {
+            // Slot wasn't active this frame; clear tracker so a future
+            // occupant always logs fresh, even if its eventType matches
+            // the previous occupant.
+            sActorEventLoggedType[i] = -1;
+            continue;
+        }
+        sActorEventSeenThisFrame[i] = false;
+        Actor* a = &gActors[i];
+        if (a->obj.id != OBJ_ACTOR_EVENT) {
+            // Slot was actor-event during the frame but has been re-purposed
+            // before post-update (unusual). Reset and skip.
+            sActorEventLoggedType[i] = -1;
+            continue;
+        }
+        s32 eventType = a->eventType;
+        if (eventType == sActorEventLoggedType[i]) {
+            continue;
+        }
+        sActorEventLoggedType[i] = eventType;
+        ObjectSpawnLog_Emit(OBJECT_TYPE_ACTOR, a, false);
+    }
+}
+
+// EVENT_PRIORITY_HIGH so the Init listener runs after the TrainingMinimal
+// filter (NORMAL) and can read event->cancelled to report the PASSED/FILTERED
+// tag.
 //
 // Output is at LUSLOG_TRACE, which is filtered by the gDeveloperTools.LogLevel
 // runtime threshold (defaults to debug — see CLAUDE.md Logging section).
@@ -123,8 +173,16 @@ static void ObjectSpawnLog_OnObjectUpdate(IEvent* event) {
 // Readable names for `obj->id` come from ObjectId_GetName, defined in
 // ObjectIdNames.generated.c — produced at CMake configure time from
 // include/sf64object.h by cmake/GenerateObjectIdNames.cmake.
+// Readable names for OBJ_ACTOR_EVENT `eventType` come from EventId_GetName,
+// defined in EventIdNames.generated.c — produced from include/sf64event.h by
+// cmake/GenerateEventIdNames.cmake.
 void ObjectSpawnLog_Init(void) {
     CVarRegisterInteger("gObjectSpawnLog", 0);
+    for (s32 i = 0; i < (s32) ARRAY_COUNT(sActorEventLoggedType); i++) {
+        sActorEventLoggedType[i] = -1;
+        sActorEventSeenThisFrame[i] = false;
+    }
     REGISTER_LISTENER(ObjectInitEvent, ObjectSpawnLog_OnObjectInit, EVENT_PRIORITY_HIGH);
     REGISTER_LISTENER(ObjectUpdateEvent, ObjectSpawnLog_OnObjectUpdate, EVENT_PRIORITY_HIGH);
+    REGISTER_LISTENER(GamePostUpdateEvent, ObjectSpawnLog_OnGamePostUpdate, EVENT_PRIORITY_HIGH);
 }
