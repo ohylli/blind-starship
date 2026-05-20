@@ -51,10 +51,26 @@ Your ROM needs to be in .z64 format. If it's in .n64 format, use the following t
 
 # Configuration
 
-### Default keyboard configuration
-| N64 | A | B | Z | Start | Analog stick | C buttons | D-Pad |
-| - | - | - | - | - | - | - | - |
-| Keyboard | X | C | Z | Space | WASD | Arrow keys | TFGH |
+### Default controls
+
+Starship can be played with a keyboard, an Xbox-style gamepad, or any other controller SDL recognises. The table below lists each in-game action, its default key/button on keyboard and Xbox controllers, and the original Star Fox 64 (N64) control it stands in for. 
+
+| Action | Keyboard | Xbox controller | N64 controller |
+| - | - | - | - |
+| Steer the Arwing, move in menus | W / A / S / D | Left stick | Control Stick |
+| Fire blaster (hold to charge a lock-on shot), confirm menu selection | X | A | A |
+| Fire a bomb, back in menus | C | X | B |
+| Boost | Left arrow | Y, or right trigger | C-left |
+| Brake | Down arrow | B, or left trigger | C-down |
+| Tilt left for a sharper turn | Z | Left bumper (LB) | Z trigger |
+| Tilt right for a sharper turn | R | Right bumper (RB) | R trigger |
+| Barrel roll — deflects incoming enemy fire | double-tap Z or R | double-tap LB or RB | double-tap Z or R |
+| Somersault — flip backwards | Left arrow + S | (Y or right trigger) + left stick down | C-left + Control Stick down |
+| U-turn — reverse direction (all-range mode only) | Down arrow + S | (B or left trigger) + left stick down | C-down + Control Stick down |
+| Switch camera view | Up arrow | Right stick up | C-up |
+| Respond to an incoming radio message | Right arrow | Right stick right | C-right |
+| Pause / confirm a menu selection | Space | Start | Start |
+| Menu cursor (no Arwing function) | T / F / G / H | D-pad | D-Pad |
 
 ### Other shortcuts
 | Keys | Action |
