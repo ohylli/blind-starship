@@ -118,9 +118,10 @@ macro(_install_or_update_vcpkg)
         message(STATUS "Cloning vcpkg in ${VCPKG_ROOT}")
         execute_process(COMMAND git clone https://github.com/Microsoft/vcpkg.git ${VCPKG_ROOT})
 
-        # If a reproducible build is desired (and potentially old libraries are # ok), uncomment the
-        # following line and pin the vcpkg repository to a specific githash.
-        # execute_process(COMMAND git checkout 745a0aea597771a580d0b0f4886ea1e3a94dbca6 WORKING_DIRECTORY ${VCPKG_ROOT})
+        # Pin vcpkg to a known-good revision. A moving vcpkg HEAD changes every
+        # port's ABI hash, which defeats the CI binary cache (.github/workflows
+        # caches vcpkg's compiled dependencies). Bump this deliberately.
+        execute_process(COMMAND git checkout 6fad4fa784ab2506e35144a7c3d64738976445ea WORKING_DIRECTORY ${VCPKG_ROOT})
     else()
         # The following command has no effect if the vcpkg repository is in a detached head state.
         message(STATUS "Auto-updating vcpkg in ${VCPKG_ROOT}")
