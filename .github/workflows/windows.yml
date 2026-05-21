@@ -42,6 +42,11 @@ jobs:
           path: |
             build/x64/TorchExternal
             build/x64/Torch
+      # See main.yml's build-windows job: back-date the tools/Torch submodule
+      # source so the cached .obj files win MSBuild's incremental-build check.
+      - name: Back-date Torch sources for incremental build
+        shell: bash
+        run: find tools/Torch -type f -exec touch -d '2000-01-01' {} +
       - name: Build
         run: |
           cmake -S . -B "build/x64" -G "Visual Studio 17 2022" -T v143 -A x64 -DCMAKE_BUILD_TYPE=Release
