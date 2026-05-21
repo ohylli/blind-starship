@@ -104,6 +104,7 @@ jobs:
           echo "SHORT_SHA=$SHORT_SHA" >> "$GITHUB_ENV"
           ZIP_NAME="blind-starship-windows-alpha-${SHORT_SHA}.zip"
           echo "ZIP_NAME=$ZIP_NAME" >> "$GITHUB_ENV"
+          cp README.md starship-release/readme.txt
           (cd starship-release && zip -r "../$ZIP_NAME" .)
       - name: Replace alpha release
         env:
