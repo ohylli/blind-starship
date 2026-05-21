@@ -1,17 +1,57 @@
-[comment]: <> (Todo: Make Light Mode Image)
-[comment]: <> (Todo: Make Dark Mode Image)
+# Blind Starship
 
-# Starship
+## About
 
-Lead Developers: 
-* [SonicDcer](https://www.github.com/sonicdcer)
-* [Lywx](https://www.github.com/kiritodv)
+Blind Starship is a fork of the original [Starship
+project](https://github.com/HarbourMasters/Starship). It aims to explore making
+the game accessible to blind players via screen reader announcements, audio
+cues and possible other game modifications. The project is in very early
+development so how feasible most of this is is anybody's guess.
+
+## Current status
+
+There is a early proof-of-concept [alpha
+release](https://github.com/ohylli/blind-starship/releases/tag/alpha) that is
+kept up to date with the latest publicly released code. It has a screen reader
+integration via [PRISM](https://github.com/ethindp/prism). Currently used to
+make the game's main menu and sounds options accessible.
+
+For gameplay there is partial accessibility for the game's training
+mode. In training you practice maneuvering you ship by flying through rings.
+These rings have a sound cue where stereo pan indicates left / right and pitch
+above / below you. High pitch is above you lower below. Note: controls are
+typical fligth controls back / down on a stick makes you go up.
+
+Training has 2 phases. The first is on rails flying containing only rings and some item pick ups. So no obstacles or
+enemies. Second phase  is in all-range mode (you can freely fly around a small
+arena) with some enemies and obstacles with no accessibility features to help
+you. And in case you are familiar with the game and are thinking "wait that
+is not what I remember." you are absolutely right. Currently the first phase of training is
+simplified and all enemies and obstacles are removed (see the configuration
+section how to  bring them back). When more features are added like enemy audio
+cues, these simplifications will be removed.
+
+## Road map
+
+In no particular order planned features or things to investigate include:
+
+- Audio cues for enemies.
+- Audio cues for obstacles.
+- Making more game menus and screens accessible.
+- Adding screen reader announcements to gameplay: health, remaining lives,
+  number of bombs etc.
+- Making the ports own configuration UI accessed via F1 accessible.
+- Possibly simplifying some levels if there simply is too much stuff going
+  on that cannot be communicated via audio.
+- Adding audio description to cut scenes.
+- Including a Mac version to the release (already confirmed that Blind Starship
+  works on Mac.)
+- Verifying that Linux build works (needs a Linux tester)
 
 ## Discord
 
-Official Discord: https://discord.com/invite/shipofharkinian
-
-If you're having any trouble after reading through this `README`, feel free ask for help in the Starship Support text channels. Please keep in mind that we do not condone piracy.
+You can discuss Blind Starship and provide feedback on the game's channel on the Accessibility
+Disco server: https://discord.gg/QZMsMT2WsZ
 
 # Quick Start
 
@@ -30,30 +70,29 @@ Note: JP and EU versions of the game are not supported for the base asset O2R cr
 ### 2. Verify your ROM is in .z64 format
 Your ROM needs to be in .z64 format. If it's in .n64 format, use the following to convert it to a .z64: https://hack64.net/tools/swapper.php
 
-### 2. Download Starship from [Releases](https://github.com/HarbourMasters/Starship/releases)
+### 3. Download the Blind Starship [alpha release](https://github.com/ohylli/blind-starship/releases/tag/alpha)
 
-### 3. Generating the OTR from the ROM and Play!
+### 4. Generating the OTR from the ROM and Play!
 #### Windows
 * Extract every file from the zip into a folder of your choosing.
 * Run starship.exe and select your US 1.0 or US 1.1 ROM.
 
-#### Linux
+#### Linux (not currently supported)
 * Extract every file from the zip into a folder of your choosing.
 * Execute starship.appimage. You may have to chmod +x the appimage via terminal.
 
-#### MacOS
+#### MacOS (not currently supported)
 * Extract every file from the zip into a folder of your choosing.
 * Run starship and select your US 1.0 or US 1.1 ROM.
-
-#### Nintendo Switch
-* Run one of the PC releases to generate an `sf64.o2r` file. After launching the game on PC, you will be able to find these files in the same directory as `starship.exe` or `starship.appimage`.
-* Copy the files to your sd card
 
 # Configuration
 
 ### Default controls
 
-Starship can be played with a keyboard, an Xbox-style gamepad, or any other controller SDL recognises. The table below lists each in-game action, its default key/button on keyboard and Xbox controllers, and the original Star Fox 64 (N64) control it stands in for. 
+Starship can be played with a keyboard, an Xbox-style gamepad, or any other
+controller SDL recognises. The table below lists each in-game action, its
+default key/button on keyboard and Xbox controllers, and the original Nintendo
+64 control it stands in for. 
 
 | Action | Keyboard | Xbox controller | N64 controller |
 | - | - | - | - |
@@ -69,16 +108,28 @@ Starship can be played with a keyboard, an Xbox-style gamepad, or any other cont
 | U-turn — reverse direction (all-range mode only) | Down arrow + S | (B or left trigger) + left stick down | C-down + Control Stick down |
 | Switch camera view | Up arrow | Right stick up | C-up |
 | Respond to an incoming radio message | Right arrow | Right stick right | C-right |
-| Pause / confirm a menu selection | Space | Start | Start |
+| Pause / confirm a menu selection | Space | Start (menu) | Start |
 | Menu cursor (no Arwing function) | T / F / G / H | D-pad | D-Pad |
 
 ### Other shortcuts
 | Keys | Action |
 | - | - |
-| F1 | Toggle menubar |
+| F1 | Toggle menubar (not yet accessibile) |
 | F4 | Reset |
 | F11 | Fullscreen |
 | Tab | Toggle Alternate assets |
+
+### Simplified training mode
+
+As mentioned in current status by default the training mode is simplified. if
+you want the original training back you can do it by editing the game's settings
+file `starship.cfg.json` created after first launch to the same folder where
+you have the game. Change the value of `AccessibilityTrainingMinimal` from 1 to
+0 i.e. change 1 to 0 on the line tthat looks like:
+
+```
+"gAccessibilityTrainingMinimal": 1,
+```
 
 ### Graphics Backends
 Currently, there are three rendering APIs supported: DirectX11 (Windows), OpenGL (all platforms), and Metal (macOS). You can change which API to use in the `Settings` menu of the menubar, which requires a restart.  If you're having an issue with crashing, you can change the API in the `starship.cfg.json` file by finding the line `"Backend":{`... and changing the `id` value to `3` and set the `Name` to `OpenGL`. `DirectX 11` with id `2` is the default on Windows. `Metal` with id `4` is the default on macOS.
@@ -93,37 +144,4 @@ If you're interested in creating and/or packing your own custom asset `.o2r`/`.o
 # Development
 ### Building
 
-If you want to manually compile Starship, please consult the [building instructions](https://github.com/HarbourMasters/Starship/blob/main/docs/BUILDING.md).
-
-### Playtesting
-If you want to playtest a continuous integration build, you can find them at the links below. Keep in mind that these are for playtesting only, and you will likely encounter bugs and possibly crashes. 
-
-* [Windows](https://nightly.link/HarbourMasters/Starship/workflows/main/main/starship-windows.zip)
-* [macOS](https://nightly.link/HarbourMasters/Starship/workflows/main/main/Starship-mac.zip)
-* [Linux](https://nightly.link/HarbourMasters/Starship/workflows/main/main/Starship-linux.zip)
-* [Switch](https://nightly.link/HarbourMasters/Starship/workflows/main/main/Starship-switch.zip)
-
-<a href="https://github.com/Kenix3/libultraship/">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="./docs/poweredbylus.darkmode.png">
-    <img alt="Powered by libultraship" src="./docs/poweredbylus.lightmode.png">
-  </picture>
-</a>
-
-# Special Thanks:
-
-* [ZeldaRET](https://github.com/zeldaret) : for teaching me the fundamental knowledge of N64 decompilation.
-* [Decompals](https://github.com/decompals) : for helping in the initial disassembly and decompilation of the game.
-* [HM64 Team](https://github.com/harbourMasters) : for creating Libultraship and helping with various issues.
-
-* [DarioSamo](https://github.com/DarioSamo) : for providing important fixes to the renderer and information about the inner workings of the game graphics system.
-* [garrettjoecox](https://github.com/garrettjoecox) : for contributing with interpolation fixes to this port.
-* [inspectredc](https://github.com/inspectredc) : for contributing to the [SF64 decompilation project](https://github.com/sonicdcer/sf64).
-* [Lywx](https://github.com/KiritoDv) : for co-developing this port as a lead and creating [Torch](https://github.com/HarbourMasters/Torch) asset extraction system.
-* [m4xw](https://github.com/m4xw) : for helping with audio issues in this port.
-* [Malkierian](https://github.com/Malkierian) : for contributing with important fixes to this port.
-* [petrie911](https://github.com/petrie911) : for contributing to the [SF64 decompilation project](https://github.com/sonicdcer/sf64) as a lead.
-* [Ryan-Myers](https://github.com/Ryan-Myers) : for contributing to the [SF64 decompilation project](https://github.com/sonicdcer/sf64).
-* [Thar0](https://github.com/Thar0) : for contributing with an improved Starfield that can be interpolated to any framerate.
-* [TheBoy181](https://github.com/TheBoy181) : for contributing to this project with various widescreen enhancements such as level floors, an extended Starfield among other things.
-* [Wiseguy](https://github.com/Mr-Wiseguy) : for providing important information about the inner workings of the N64 platform, as well as helping with the decompilation process.
+If you want to manually compile Blind Starship, please consult the [building instructions](https://github.com/ohylli/blind-starship/blob/main/docs/BUILDING.md).

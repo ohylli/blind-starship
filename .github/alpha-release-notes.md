@@ -1,9 +1,14 @@
-**Rolling alpha — Windows x64 only.**
+**Rolling continuously updated alpha version — Windows x64 only.**
 
-This is an experimental fork of [Starship](https://github.com/HarbourMasters/Starship) exploring accessibility features for blind and low-vision players (screen-reader announcements via PRISM, positional audio cues, simplified Training mode). It is rebuilt automatically on every push to `main`; the download is replaced in place, so the link above always points at the latest commit.
+This is an early test version for an experimental fork of
+[Starship](https://github.com/HarbourMasters/Starship) exploring accessibility
+features for blind players (screen-reader announcements via PRISM, positional
+audio cues, simplified Training mode). It is rebuilt automatically on every push
+to `main`; the download is replaced in place, so this release always contains
+the latest version.
 
-**You need your own Star Fox 64 (US 1.0) ROM.** No game data ships with this build. On first launch, Starship will prompt you to locate `baserom.z64` and extract assets from it. The macOS, Linux, and Switch builds from the upstream workflow are currently disabled here — only Windows is produced.
-
-Expect rough edges. File issues at https://github.com/ohylli/blind-starship/issues if you hit something.
+For more information about features and how to get started see the projects
+readme on this repository's [front
+page](https://github.com/ohylli/blind-starship) or included in the release zip.
 
 ---
