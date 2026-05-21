@@ -20,15 +20,16 @@ jobs:
             ${{ runner.os }}-vcpkg-
           path: |
             ~/AppData/Local/vcpkg/archives
-      # See main.yml's build-windows job: caches the PRISM and Torch
-      # ExternalProject builds. This job builds Debug (the VS generator's
-      # default when cmake --build gets no --config), so the keys say Debug.
+      # See main.yml's build-windows job: caches the PRISM, Torch and
+      # libultraship builds. This job builds Debug (the VS generator's default
+      # when cmake --build gets no --config), so the keys say Debug.
       - name: Resolve dependency revisions
         id: deps
         shell: bash
         run: |
           echo "prism=$(grep -A1 'ethindp/prism' CMakeLists.txt | grep GIT_TAG | awk '{print $2}')" >> "$GITHUB_OUTPUT"
           echo "torch=$(git -C tools/Torch rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "libultraship=$(git -C libultraship rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - name: Cache PRISM build
         uses: actions/cache@v4
         with:
@@ -42,6 +43,13 @@ jobs:
           path: |
             build/x64/TorchExternal
             build/x64/Torch
+            build/x64/tools/Torch
+      - name: Cache libultraship build
+        uses: actions/cache@v4
+        with:
+          key: ${{ runner.os }}-libultraship-Debug-${{ steps.deps.outputs.libultraship }}
+          path: |
+            libultraship
       # See main.yml's build-windows job: back-date the tools/Torch submodule
       # source so the cached .obj files win MSBuild's incremental-build check.
       - name: Back-date Torch sources for incremental build
