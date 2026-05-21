@@ -102,7 +102,7 @@ jobs:
         run: |
           SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
           echo "SHORT_SHA=$SHORT_SHA" >> "$GITHUB_ENV"
-          ZIP_NAME="Starship-windows-alpha-${SHORT_SHA}.zip"
+          ZIP_NAME="blind-starship-windows-alpha-${SHORT_SHA}.zip"
           echo "ZIP_NAME=$ZIP_NAME" >> "$GITHUB_ENV"
           (cd starship-release && zip -r "../$ZIP_NAME" .)
       - name: Replace alpha release
@@ -131,7 +131,7 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --prerelease \
             --target "${{ github.sha }}" \
-            --title "Alpha (rolling) — ${SHORT_SHA}" \
+            --title "Blind Starship Alpha (rolling) — ${SHORT_SHA}" \
             "${NOTES_ARGS[@]}" \
             "${ZIP_NAME}"
 
