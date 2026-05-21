@@ -20,6 +20,28 @@ jobs:
             ${{ runner.os }}-vcpkg-
           path: |
             ~/AppData/Local/vcpkg/archives
+      # See main.yml's build-windows job: caches the PRISM and Torch
+      # ExternalProject builds. This job builds Debug (the VS generator's
+      # default when cmake --build gets no --config), so the keys say Debug.
+      - name: Resolve dependency revisions
+        id: deps
+        shell: bash
+        run: |
+          echo "prism=$(grep -A1 'ethindp/prism' CMakeLists.txt | grep GIT_TAG | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+          echo "torch=$(git -C tools/Torch rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Cache PRISM build
+        uses: actions/cache@v4
+        with:
+          key: ${{ runner.os }}-prism-Debug-${{ steps.deps.outputs.prism }}
+          path: |
+            build/x64/PrismExternal
+      - name: Cache Torch build
+        uses: actions/cache@v4
+        with:
+          key: ${{ runner.os }}-torch-Debug-${{ steps.deps.outputs.torch }}
+          path: |
+            build/x64/TorchExternal
+            build/x64/Torch
       - name: Build
         run: |
           cmake -S . -B "build/x64" -G "Visual Studio 17 2022" -T v143 -A x64 -DCMAKE_BUILD_TYPE=Release
