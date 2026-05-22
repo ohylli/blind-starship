@@ -68,22 +68,20 @@ jobs:
             ${{ runner.os }}-vcpkg-
           path: |
             ~/AppData/Local/vcpkg/archives
-      # The caches below restore the prebuilt third-party dependencies so most
-      # runs skip recompiling them. PRISM and the torch executable are built
-      # via ExternalProject_Add (stamp-driven: restored stamps mark each step
-      # done). The in-tree torch library and libultraship are add_subdirectory
-      # builds, restored as object directories that MSBuild's incremental build
-      # accepts as up-to-date. Exact-match keys, no restore-keys: a stale
-      # partial restore is worse than a clean miss. Each key tracks the
-      # dependency's pinned revision, so bumping the PRISM GIT_TAG or the
-      # libultraship / tools/Torch submodules forces a clean rebuild.
+      # PRISM and Torch are each built once via ExternalProject_Add. The two
+      # caches below restore their prefixes — clone/source, sub-build, stamp
+      # files and install dir — so later runs skip the ~4 min compile.
+      # ExternalProject is stamp-driven: restored stamp files mark every step
+      # done, so the sub-builds are never invoked. Exact-match keys (no
+      # restore-keys): a stale partial restore of stamps is worse than a clean
+      # miss. The keys track each dependency's pinned revision, so bumping the
+      # PRISM GIT_TAG or the tools/Torch submodule forces a clean rebuild.
       - name: Resolve dependency revisions
         id: deps
         shell: bash
         run: |
           echo "prism=$(grep -A1 'ethindp/prism' CMakeLists.txt | grep GIT_TAG | awk '{print $2}')" >> "$GITHUB_OUTPUT"
           echo "torch=$(git -C tools/Torch rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-          echo "libultraship=$(git -C libultraship rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - name: Cache PRISM build
         uses: actions/cache@v4
         with:
@@ -93,38 +91,17 @@ jobs:
       - name: Cache Torch build
         uses: actions/cache@v4
         with:
-          # Covers both Torch builds, keyed on the one tools/Torch submodule:
-          # the ExternalProject torch executable (TorchExternal + its install
-          # dir Torch) and the in-tree torch library linked into Starship
-          # (build/x64/tools/Torch). The -v2 suffix is a deliberate cache-key
-          # bump: build/x64/tools/Torch was added to the path after the cache
-          # already existed, and actions/cache never re-saves on an exact key
-          # hit — so the key must change for the new path to be picked up.
-          key: ${{ runner.os }}-torch-Release-v2-${{ steps.deps.outputs.torch }}
+          key: ${{ runner.os }}-torch-Release-${{ steps.deps.outputs.torch }}
           path: |
             build/x64/TorchExternal
             build/x64/Torch
-            build/x64/tools/Torch
-      - name: Cache libultraship build
-        uses: actions/cache@v4
-        with:
-          # libultraship builds in-source (CMakeLists.txt sets its binary dir
-          # to its own source dir), so objects are intermixed with the
-          # submodule source. Cache the whole directory: source and objects
-          # travel together with consistent timestamps, so MSBuild's
-          # incremental build accepts the cached objects as up-to-date — no
-          # separate back-dating needed (unlike Torch, whose source sits
-          # outside its build dir).
-          key: ${{ runner.os }}-libultraship-Release-${{ steps.deps.outputs.libultraship }}
-          path: |
-            libultraship
-      # Both Torch builds compile from the tools/Torch submodule, which
+      # Torch's ExternalProject source is the tools/Torch submodule, which
       # actions/checkout re-materialises with fresh timestamps every run. That
-      # makes the source look newer than the cached .obj files, so MSBuild
-      # recompiles despite the cache hit. Back-date the source so the cached
-      # objects win the incremental-build timestamp check. Safe: the cache key
-      # pins the submodule commit, so on a hit the source content is identical;
-      # on a miss Torch compiles from scratch regardless.
+      # makes the source look newer than the cached .obj files, so Torch's
+      # MSBuild recompiles despite the cache hit. Back-date the source so the
+      # cached objects win the incremental-build timestamp check. Safe: the
+      # cache key pins the submodule commit, so on a hit the source content is
+      # identical; on a miss Torch compiles from scratch regardless.
       - name: Back-date Torch sources for incremental build
         shell: bash
         run: find tools/Torch -type f -exec touch -d '2000-01-01' {} +
