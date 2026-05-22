@@ -96,8 +96,11 @@ jobs:
           # Covers both Torch builds, keyed on the one tools/Torch submodule:
           # the ExternalProject torch executable (TorchExternal + its install
           # dir Torch) and the in-tree torch library linked into Starship
-          # (build/x64/tools/Torch).
-          key: ${{ runner.os }}-torch-Release-${{ steps.deps.outputs.torch }}
+          # (build/x64/tools/Torch). The -v2 suffix is a deliberate cache-key
+          # bump: build/x64/tools/Torch was added to the path after the cache
+          # already existed, and actions/cache never re-saves on an exact key
+          # hit — so the key must change for the new path to be picked up.
+          key: ${{ runner.os }}-torch-Release-v2-${{ steps.deps.outputs.torch }}
           path: |
             build/x64/TorchExternal
             build/x64/Torch
