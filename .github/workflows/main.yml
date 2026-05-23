@@ -107,21 +107,44 @@ jobs:
       - name: Back-date Torch sources for incremental build
         shell: bash
         run: find tools/Torch -type f -exec touch -d '2000-01-01' {} +
+      # Ninja doesn't locate the MSVC toolchain on its own; this runs
+      # vcvars64.bat and exports the resulting env (PATH, INCLUDE, LIB, ...)
+      # into subsequent steps so cl.exe / link.exe are resolvable.
+      - name: Setup MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1.13.0
+        with:
+          arch: x64
+      # Installs sccache and points it at the GitHub Actions cache backend
+      # (SCCACHE_GHA_ENABLED below). Caches the per-translation-unit .obj
+      # files, complementing the stamp-driven PRISM / Torch / vcpkg caches
+      # above (which skip whole sub-builds rather than individual compiles).
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.10
       - name: Build
+        env:
+          SCCACHE_GHA_ENABLED: "true"
         run: |
-          cmake -S . -B "build/x64" -G "Visual Studio 17 2022" -T v143 -A x64 -DCMAKE_BUILD_TYPE=Release
-          cmake --build ./build/x64 --config Release --parallel 10
+          cmake -S . -B "build/x64" -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DSTARSHIP_MSVC_EMBEDDED_DEBUG=ON `
+            -DCMAKE_C_COMPILER_LAUNCHER=sccache `
+            -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
+          cmake --build ./build/x64 --parallel 10
+          sccache --show-stats
+      # Ninja is single-config, so the executable lands at build/x64/ rather
+      # than build/x64/Release/. starship.o2r and prism.dll follow the same
+      # location (prism.dll arrives via a POST_BUILD copy in CMakeLists.txt).
       - name: Download starship.o2r
         uses: actions/download-artifact@v4
         with:
           name: starship.o2r
-          path: ./build/x64/Release
+          path: ./build/x64
       - name: Create Package
         run: |
           mkdir starship-release
-          mv build/x64/Release/Starship.exe starship-release/
-          mv build/x64/Release/starship.o2r starship-release/
-          mv build/x64/Release/prism.dll starship-release/
+          mv build/x64/Starship.exe starship-release/
+          mv build/x64/starship.o2r starship-release/
+          mv build/x64/prism.dll starship-release/
           mv config.yml starship-release/
           mv assets starship-release/
           Invoke-WebRequest -Uri "https://raw.githubusercontent.com/mdqinc/SDL_GameControllerDB/master/gamecontrollerdb.txt" -OutFile "starship-release/gamecontrollerdb.txt"

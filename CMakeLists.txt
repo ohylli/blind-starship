@@ -494,7 +494,17 @@ if(MSVC)
           ${DEFAULT_CXX_EXCEPTION_HANDLING}
       )
       target_compile_options(${PROJECT_NAME} PRIVATE  $<$<CONFIG:Debug>:/ZI;>)
-      target_compile_options(${PROJECT_NAME} PRIVATE  $<$<CONFIG:Release>:/Zi;>)
+      # /Zi writes to a shared .pdb during compilation, which sccache cannot
+      # capture; STARSHIP_MSVC_EMBEDDED_DEBUG=ON swaps in /Z7 (debug info
+      # embedded per-obj) so CI's sccache run hits the cache. The linker still
+      # produces Starship.pdb either way.
+      option(STARSHIP_MSVC_EMBEDDED_DEBUG
+             "Use /Z7 instead of /Zi for the Starship Release build so sccache can cache compilations" OFF)
+      if(STARSHIP_MSVC_EMBEDDED_DEBUG)
+          target_compile_options(${PROJECT_NAME} PRIVATE $<$<CONFIG:Release>:/Z7>)
+      else()
+          target_compile_options(${PROJECT_NAME} PRIVATE $<$<CONFIG:Release>:/Zi>)
+      endif()
   elseif("${CMAKE_VS_PLATFORM_NAME}" STREQUAL "Win32")
       target_compile_options(${PROJECT_NAME} PRIVATE
           $<$<CONFIG:Debug>:
