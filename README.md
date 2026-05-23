@@ -14,7 +14,7 @@ There is a early proof-of-concept [alpha
 release](https://github.com/ohylli/blind-starship/releases/tag/alpha) that is
 kept up to date with the latest publicly released code. It has a screen reader
 integration via [PRISM](https://github.com/ethindp/prism). Currently used to
-make the game's main menu and sounds options accessible.
+make the game's main menu, sounds options and pause menu accessible.
 
 For gameplay there is partial accessibility for the game's training
 mode. In training you practice maneuvering you ship by flying through rings.

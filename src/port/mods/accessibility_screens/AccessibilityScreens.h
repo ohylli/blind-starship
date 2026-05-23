@@ -10,6 +10,7 @@ extern "C" {
 void AccessibilityTitleScreen_Register(void);
 void AccessibilityMainMenu_Register(void);
 void AccessibilitySoundMenu_Register(void);
+void AccessibilityPauseMenu_Register(void);
 
 #ifdef __cplusplus
 }

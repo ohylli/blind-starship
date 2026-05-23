@@ -10,3 +10,5 @@ DEFINE_EVENT(MainMenuCursorEvent);
 DEFINE_EVENT(SoundMenuReadyEvent);
 DEFINE_EVENT(SoundMenuCursorEvent);
 DEFINE_EVENT(SoundMenuValueChangedEvent);
+DEFINE_EVENT(PauseMenuReadyEvent);
+DEFINE_EVENT(PauseMenuCursorEvent);

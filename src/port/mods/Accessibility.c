@@ -13,6 +13,7 @@ void Accessibility_Init(void) {
     AccessibilityTitleScreen_Register();
     AccessibilityMainMenu_Register();
     AccessibilitySoundMenu_Register();
+    AccessibilityPauseMenu_Register();
 
     AccessibilityCues_Init();
     AccessibilityTrainingMinimal_Init();

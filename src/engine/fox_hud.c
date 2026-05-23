@@ -1456,6 +1456,7 @@ void HUD_PauseScreen_Update(void) {
                 sPauseScreenTimer[0] = 0;
                 sPauseScreenIwork[1] = 0;
                 sPauseScreenIwork[0] = 1;
+                CALL_EVENT(PauseMenuReadyEvent);
                 break;
 
             case 1:
@@ -1465,6 +1466,7 @@ void HUD_PauseScreen_Update(void) {
                     if (((ret > 0) && (sPauseScreenIwork[1] == 1)) || ((ret < 0) && (sPauseScreenIwork[1] == 0))) {
                         sPauseScreenIwork[1] ^= 1;
                         AUDIO_PLAY_SFX(NA_SE_CURSOR, gDefaultSfxSource, 4);
+                        CALL_EVENT(PauseMenuCursorEvent);
                     }
                 }
 
