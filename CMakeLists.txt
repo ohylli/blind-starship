@@ -708,8 +708,9 @@ ExternalProject_Add(TorchExternal
                -DBUILD_MARIO_ARTIST=OFF
 )
 ExternalProject_Get_Property(TorchExternal install_dir)
-if (MSVC)
-  set(TORCH_EXECUTABLE ${install_dir}/src/TorchExternal-build/$<CONFIGURATION>/torch)
+get_property(_torch_multi_config GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+if (_torch_multi_config)
+  set(TORCH_EXECUTABLE ${install_dir}/src/TorchExternal-build/$<CONFIG>/torch)
 else()
   set(TORCH_EXECUTABLE ${install_dir}/src/TorchExternal-build/torch)
 endif()

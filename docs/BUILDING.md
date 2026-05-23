@@ -25,6 +25,9 @@ _Note: Be sure to either clone with the ``--recursive`` flag or do ``git submodu
 2. After setup and initial build, use the built-in OTR extraction to make your sf64.o2r file.
 
 _Note: Instructions assume using powershell_
+
+_Note: If you're running from a Visual Studio "Developer PowerShell" or "Developer Command Prompt," that shell exports `VCPKG_ROOT` pointing at a non-git directory under the VS install, which causes `cmake/automate-vcpkg.cmake` to fail with `fatal: not a git repository` during configure. Clear it before running cmake: `Remove-Item env:VCPKG_ROOT` in PowerShell, or `set "VCPKG_ROOT="` in cmd.exe. Regular PowerShell / cmd are unaffected._
+
 ```powershell
 # Navigate to the starship repo within powershell. ie: cd "C:\yourpath\starship"
 cd starship
@@ -62,8 +65,25 @@ To build you'll need to follow the instructions from the building section.
 
 _Note: If you're using Visual Studio Code, the [cpack plugin](https://marketplace.visualstudio.com/items?itemName=ms-vscode.cmake-tools) makes it very easy to just press run and debug._
 
-_Experimental: You can also use another build system entirely rather than MSVC like [Ninja](https://ninja-build.org/) for possibly better performance._
+### Building with Ninja
+[Ninja](https://ninja-build.org/) can be used in place of MSBuild and tends to compile faster. Ninja doesn't locate the MSVC toolchain on its own, so the build needs to run from a shell that already has the x64 toolchain on PATH — the simplest options are the "x64 Native Tools Command Prompt for VS 2022", its PowerShell equivalent, or any shell where you've manually run `vcvars64.bat`.
 
+From that shell:
+```powershell
+# Configure with the Ninja generator (note: no -T / -A flags)
+& 'C:\Program Files\CMake\bin\cmake.exe' -S . -B "build/x64" -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+# Generate sf64.o2r
+& 'C:\Program Files\CMake\bin\cmake.exe' --build .\build\x64 --target ExtractAssets
+
+# Generate starship.o2r
+& 'C:\Program Files\CMake\bin\cmake.exe' --build .\build\x64 --target GeneratePortO2R
+
+# Compile
+& 'C:\Program Files\CMake\bin\cmake.exe' --build .\build\x64
+```
+
+Ninja is a single-config generator, so the executable lands at `build/x64/Starship.exe` with no `Release/` subfolder. Packaging via `cpack -G ZIP` from `build/x64` works the same as the MSBuild flow.
 
 ### Generating the distributable
 After compiling the project you can generate the distributable by running:
