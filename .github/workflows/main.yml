@@ -124,6 +124,16 @@ jobs:
         env:
           SCCACHE_GHA_ENABLED: "true"
         run: |
+          # vcvars64.bat (run by msvc-dev-cmd) exports VCPKG_ROOT pointing at
+          # the VS-shipped vcpkg directory, which isn't a git repo — that
+          # makes cmake/automate-vcpkg.cmake fail. Unset so the fallback
+          # path under build/x64/vcpkg is cloned instead.
+          Remove-Item env:VCPKG_ROOT -ErrorAction Ignore
+          # Make a failing cmake/ninja invocation actually fail the step,
+          # instead of being masked by a passing `sccache --show-stats` at
+          # the end (pwsh otherwise only checks the last command's exit).
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
           cmake -S . -B "build/x64" -G Ninja `
             -DCMAKE_BUILD_TYPE=Release `
             -DSTARSHIP_MSVC_EMBEDDED_DEBUG=ON `
