@@ -9,7 +9,7 @@ static void Accessibility_OnTitleSequenceStart(IEvent* event) {
     if (!Accessibility_IsScreenReaderEnabled()) {
         return;
     }
-    Tts_Speak("Star Fox 64", false);
+    Tts_Speak("Star Fox 64 test.", false);
 }
 
 static void Accessibility_OnTitleScreenReady(IEvent* event) {
