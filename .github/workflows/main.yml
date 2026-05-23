@@ -2,8 +2,8 @@ name: GenerateBuilds
 
 on:
   push:
-    branches:
-      - '**'
+    tags-ignore:
+      - 'alpha-prev'
   workflow_dispatch:
 
 concurrency:
