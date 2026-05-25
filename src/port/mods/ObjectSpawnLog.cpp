@@ -67,7 +67,7 @@ static void ObjectSpawnLog_Emit(ObjectEventType type, void* object, bool cancell
                      EventId_GetName(eventType), eventType,
                      obj->pos.x, obj->pos.y, obj->pos.z,
                      Object_HasCollidableHitbox(type, object) ? "collidable" : "none",
-                     ObjectSpawnLog_LevelName(gCurrentLevel), gCurrentLevel,
+                     ObjectSpawnLog_LevelName(gCurrentLevel), (int) gCurrentLevel,
                      cancelled ? "FILTERED" : "PASSED");
         return;
     }
@@ -77,7 +77,7 @@ static void ObjectSpawnLog_Emit(ObjectEventType type, void* object, bool cancell
                  ObjectId_GetName(obj->id),
                  obj->pos.x, obj->pos.y, obj->pos.z,
                  Object_HasCollidableHitbox(type, object) ? "collidable" : "none",
-                 ObjectSpawnLog_LevelName(gCurrentLevel), gCurrentLevel,
+                 ObjectSpawnLog_LevelName(gCurrentLevel), (int) gCurrentLevel,
                  cancelled ? "FILTERED" : "PASSED");
 }
 

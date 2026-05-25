@@ -353,6 +353,12 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
         "$<$<CONFIG:Release>:"
             "NDEBUG"
         ">"
+        # SPDLOG_* macros are compile-time gated: a call below this level is
+        # compiled to nothing. Match libultraship's policy so SPDLOG_TRACE /
+        # SPDLOG_DEBUG survive in Debug builds; runtime filtering then happens
+        # via gDeveloperTools.LogLevel (see Engine.cpp).
+        "$<$<CONFIG:Debug>:SPDLOG_ACTIVE_LEVEL=0>"
+        "$<$<NOT:$<CONFIG:Debug>>:SPDLOG_ACTIVE_LEVEL=1>"
         "INCLUDE_GAME_PRINTF;"
         "UNICODE;"
         "_UNICODE;"
