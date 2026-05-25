@@ -1,11 +1,12 @@
 #include "ObjectSpawnLog.h"
 
-#include "global.h"
+#include "port/CGameCompat.h"
 #include "ObjectQuery.h"
-#include "log/luslog.h"
 #include "port/hooks/Events.h"
 
-static bool ObjectSpawnLog_IsEnabled(void) {
+#include <spdlog/spdlog.h>
+
+static bool ObjectSpawnLog_IsEnabled() {
     return CVarGetInteger("gObjectSpawnLog", 0) == 1;
 }
 
@@ -59,7 +60,7 @@ static void ObjectSpawnLog_Emit(ObjectEventType type, void* object, bool cancell
     Object* obj = (Object*) object;
     if (ObjectSpawnLog_IsActorEvent(type, obj)) {
         s16 eventType = ((Actor*) object)->eventType;
-        LUSLOG_TRACE("[spawn] type=%s id=%d (%s) event=%s(%d) pos=(%.1f,%.1f,%.1f) hitbox=%s level=%s(%d) status=%s",
+        SPDLOG_TRACE("[spawn] type={} id={} ({}) event={}({}) pos=({:.1f},{:.1f},{:.1f}) hitbox={} level={}({}) status={}",
                      ObjectSpawnLog_TypeName(type),
                      obj->id,
                      ObjectId_GetName(obj->id),
@@ -70,7 +71,7 @@ static void ObjectSpawnLog_Emit(ObjectEventType type, void* object, bool cancell
                      cancelled ? "FILTERED" : "PASSED");
         return;
     }
-    LUSLOG_TRACE("[spawn] type=%s id=%d (%s) pos=(%.1f,%.1f,%.1f) hitbox=%s level=%s(%d) status=%s",
+    SPDLOG_TRACE("[spawn] type={} id={} ({}) pos=({:.1f},{:.1f},{:.1f}) hitbox={} level={}({}) status={}",
                  ObjectSpawnLog_TypeName(type),
                  obj->id,
                  ObjectId_GetName(obj->id),
@@ -176,7 +177,7 @@ static void ObjectSpawnLog_OnGamePostUpdate(IEvent* event) {
 // Readable names for OBJ_ACTOR_EVENT `eventType` come from EventId_GetName,
 // defined in EventIdNames.generated.c — produced from include/sf64event.h by
 // cmake/GenerateEventIdNames.cmake.
-void ObjectSpawnLog_Init(void) {
+void ObjectSpawnLog_Init() {
     CVarRegisterInteger("gObjectSpawnLog", 0);
     for (s32 i = 0; i < (s32) ARRAY_COUNT(sActorEventLoggedType); i++) {
         sActorEventLoggedType[i] = -1;

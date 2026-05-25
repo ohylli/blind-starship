@@ -1,16 +1,21 @@
 #include "AccessibilityScreens.h"
 
-#include "global.h"
+#include "port/CGameCompat.h"
 #include "fox_option.h"
 #include "port/mods/Accessibility.h"
 #include "port/accessibility/Tts.h"
 #include "port/hooks/Events.h"
 
+// Game-side file-scope variables (defined in fox_option.c). Wrap in extern "C"
+// so MSVC doesn't mangle the lookup name; GCC/Clang don't mangle plain globals
+// either way, but the explicit linkage spec is portable.
+extern "C" {
 extern s32 sMainMenuCursor;
 extern s32 sExpertModeCursor;
 extern s32 sExpertSoundCursor;
+}
 
-static const char* Accessibility_MainMenuLabel(void) {
+static const char* Accessibility_MainMenuLabel() {
     switch (sMainMenuCursor) {
         case OPTION_MAP:
             return sExpertModeCursor ? "Expert mode" : "Main game";
@@ -44,7 +49,7 @@ static void Accessibility_OnMainMenuCursor(IEvent* event) {
     Tts_Speak(Accessibility_MainMenuLabel(), true);
 }
 
-void AccessibilityMainMenu_Register(void) {
+void AccessibilityMainMenu_Register() {
     REGISTER_LISTENER(MainMenuReadyEvent, Accessibility_OnMainMenuReady, EVENT_PRIORITY_NORMAL);
     REGISTER_LISTENER(MainMenuCursorEvent, Accessibility_OnMainMenuCursor, EVENT_PRIORITY_NORMAL);
 }

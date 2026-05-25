@@ -1,6 +1,6 @@
 #include "AccessibilityScreens.h"
 
-#include "global.h"
+#include "port/CGameCompat.h"
 #include "port/mods/Accessibility.h"
 #include "port/accessibility/Tts.h"
 #include "port/hooks/Events.h"
@@ -19,7 +19,7 @@ static void Accessibility_OnTitleScreenReady(IEvent* event) {
     Tts_Speak("Title screen, press Start to continue", false);
 }
 
-void AccessibilityTitleScreen_Register(void) {
+void AccessibilityTitleScreen_Register() {
     REGISTER_LISTENER(TitleSequenceStartEvent, Accessibility_OnTitleSequenceStart, EVENT_PRIORITY_NORMAL);
     REGISTER_LISTENER(TitleScreenReadyEvent, Accessibility_OnTitleScreenReady, EVENT_PRIORITY_NORMAL);
 }

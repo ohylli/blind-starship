@@ -2,7 +2,7 @@
 
 #include <math.h>
 
-#include "global.h"
+#include "port/CGameCompat.h"
 #include "sfx.h"
 #include "port/hooks/Events.h"
 
@@ -34,11 +34,11 @@ static f32 sCueVolMod = 1.0f;
 static s8 sCueReverb = 0;
 static bool sCueActive = false;
 
-static bool AccessibilityCues_IsEnabled(void) {
+static bool AccessibilityCues_IsEnabled() {
     return CVarGetInteger("gAccessibilityAudioCues", 1) == 1;
 }
 
-static Item* AccessibilityCues_FindNextTrainingRing(void) {
+static Item* AccessibilityCues_FindNextTrainingRing() {
     Player* player = &gPlayer[0];
     Item* best = NULL;
     // dz < 0 means the ring is ahead of the player (player flies in -Z).
@@ -97,7 +97,7 @@ static void AccessibilityCues_StartCue(Item* ring) {
     sCueActive = true;
 }
 
-static void AccessibilityCues_StopCue(void) {
+static void AccessibilityCues_StopCue() {
     if (!sCueActive) {
         return;
     }
@@ -126,11 +126,11 @@ static void AccessibilityCues_OnGamePostUpdate(IEvent* event) {
     }
 }
 
-void AccessibilityCues_Init(void) {
+void AccessibilityCues_Init() {
     CVarRegisterInteger("gAccessibilityAudioCues", 1);
     REGISTER_LISTENER(GamePostUpdateEvent, AccessibilityCues_OnGamePostUpdate, EVENT_PRIORITY_NORMAL);
 }
 
-void AccessibilityCues_Exit(void) {
+void AccessibilityCues_Exit() {
     AccessibilityCues_StopCue();
 }

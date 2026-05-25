@@ -1,13 +1,14 @@
 #include "AccessibilityScreens.h"
 
-#include "global.h"
+#include "port/CGameCompat.h"
 #include "port/mods/Accessibility.h"
 #include "port/accessibility/Tts.h"
 #include "port/hooks/Events.h"
 
-extern s32 sPauseScreenIwork[10];
+// extern "C" so MSVC doesn't mangle the lookup; see MainMenu.cpp comment.
+extern "C" s32 sPauseScreenIwork[10];
 
-static const char* Accessibility_PauseMenuLabel(void) {
+static const char* Accessibility_PauseMenuLabel() {
     if (sPauseScreenIwork[1] == 0) {
         return "Continue";
     }
@@ -32,7 +33,7 @@ static void Accessibility_OnPauseMenuCursor(IEvent* event) {
     Tts_Speak(Accessibility_PauseMenuLabel(), true);
 }
 
-void AccessibilityPauseMenu_Register(void) {
+void AccessibilityPauseMenu_Register() {
     REGISTER_LISTENER(PauseMenuReadyEvent, Accessibility_OnPauseMenuReady, EVENT_PRIORITY_NORMAL);
     REGISTER_LISTENER(PauseMenuCursorEvent, Accessibility_OnPauseMenuCursor, EVENT_PRIORITY_NORMAL);
 }

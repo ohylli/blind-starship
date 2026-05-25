@@ -24,12 +24,22 @@ typedef struct {
     EventCallback function;
 } EventListener;
 
+// The event-ID variables are defined in PortEnhancements.c (C TU) and consumed
+// from both C and C++ TUs. C++ consumers need extern "C" so the unmangled name
+// resolves at link time; on MSVC at minimum, plain `extern uint32_t foo;` from
+// C++ produces a mangled lookup that doesn't match the C definition.
+#ifdef __cplusplus
+#define EVENT_ID_LINKAGE extern "C"
+#else
+#define EVENT_ID_LINKAGE
+#endif
+
 #ifdef INIT_EVENT_IDS
 #define DECLARE_EVENT(eventName) \
-    uint32_t eventName##ID = -1;
+    EVENT_ID_LINKAGE uint32_t eventName##ID = -1;
 #else
 #define DECLARE_EVENT(eventName) \
-    extern uint32_t eventName##ID;
+    EVENT_ID_LINKAGE extern uint32_t eventName##ID;
 #endif
 
 #define DEFINE_EVENT(eventName, ...) \
@@ -81,9 +91,13 @@ private:
     std::unordered_map<EventID, std::vector<EventListener>> mEventListeners;
     EventID mInternalEventID = 0;
 };
-#else
+
+extern "C" {
+#endif
 extern EventID EventSystem_RegisterEvent();
 extern ListenerID EventSystem_RegisterListener(EventID id, EventCallback callback, EventPriority priority);
 extern void EventSystem_UnregisterListener(EventID ev, ListenerID id);
 extern void EventSystem_CallEvent(EventID id, void* event);
+#ifdef __cplusplus
+}
 #endif

@@ -1,14 +1,17 @@
 #include "AccessibilityScreens.h"
 
-#include "global.h"
+#include <spdlog/fmt/fmt.h>
+
+#include "port/CGameCompat.h"
 #include "fox_option.h"
 #include "port/mods/Accessibility.h"
 #include "port/accessibility/Tts.h"
 #include "port/hooks/Events.h"
 
-extern s32 D_menu_801B9288; // sound-menu row cursor: 0=Mode, 1=Music, 2=Voice, 3=SE
+// extern "C" so MSVC doesn't mangle the lookup; see MainMenu.cpp comment.
+extern "C" s32 D_menu_801B9288; // sound-menu row cursor: 0=Mode, 1=Music, 2=Voice, 3=SE
 
-static const char* Accessibility_SoundMenuRowLabel(void) {
+static const char* Accessibility_SoundMenuRowLabel() {
     switch (D_menu_801B9288) {
         case 0:
             return "Mode";
@@ -23,7 +26,7 @@ static const char* Accessibility_SoundMenuRowLabel(void) {
     }
 }
 
-static const char* Accessibility_SoundModeLabel(void) {
+static const char* Accessibility_SoundModeLabel() {
     switch (gOptionSoundMode) {
         case OPTIONSOUND_STEREO:
             return "Stereo";
@@ -37,12 +40,10 @@ static const char* Accessibility_SoundModeLabel(void) {
 }
 
 static void Accessibility_SpeakSoundMenuValue(bool interrupt) {
-    char buf[16];
     if (D_menu_801B9288 == 0) {
         Tts_Speak(Accessibility_SoundModeLabel(), interrupt);
     } else {
-        snprintf(buf, sizeof(buf), "%d", gVolumeSettings[D_menu_801B9288 - 1]);
-        Tts_Speak(buf, interrupt);
+        Tts_Speak(fmt::format("{}", gVolumeSettings[D_menu_801B9288 - 1]).c_str(), interrupt);
     }
 }
 
@@ -70,7 +71,7 @@ static void Accessibility_OnSoundMenuValueChanged(IEvent* event) {
     Accessibility_SpeakSoundMenuValue(true);
 }
 
-void AccessibilitySoundMenu_Register(void) {
+void AccessibilitySoundMenu_Register() {
     REGISTER_LISTENER(SoundMenuReadyEvent, Accessibility_OnSoundMenuReady, EVENT_PRIORITY_NORMAL);
     REGISTER_LISTENER(SoundMenuCursorEvent, Accessibility_OnSoundMenuCursor, EVENT_PRIORITY_NORMAL);
     REGISTER_LISTENER(SoundMenuValueChangedEvent, Accessibility_OnSoundMenuValueChanged, EVENT_PRIORITY_NORMAL);

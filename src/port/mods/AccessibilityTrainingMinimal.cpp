@@ -1,6 +1,6 @@
 #include "AccessibilityTrainingMinimal.h"
 
-#include "global.h"
+#include "port/CGameCompat.h"
 #include "ObjectQuery.h"
 #include "port/hooks/Events.h"
 
@@ -35,11 +35,11 @@
 //     If a future session does want them gone, filter OBJECT_TYPE_ITEM where
 //     id != OBJ_ITEM_TRAINING_RING inside ShouldFilter.
 
-static bool AccessibilityTrainingMinimal_IsEnabled(void) {
+static bool AccessibilityTrainingMinimal_IsEnabled() {
     return CVarGetInteger("gAccessibilityTrainingMinimal", 1) == 1;
 }
 
-static bool AccessibilityTrainingMinimal_ScopeActive(void) {
+static bool AccessibilityTrainingMinimal_ScopeActive() {
     return AccessibilityTrainingMinimal_IsEnabled() &&
            (gCurrentLevel == LEVEL_TRAINING) &&
            (gLevelMode == LEVELMODE_ON_RAILS);
@@ -143,7 +143,7 @@ static void AccessibilityTrainingMinimal_OnGamePostUpdate(IEvent* event) {
     }
 }
 
-void AccessibilityTrainingMinimal_Init(void) {
+void AccessibilityTrainingMinimal_Init() {
     CVarRegisterInteger("gAccessibilityTrainingMinimal", 1);
     REGISTER_LISTENER(ObjectInitEvent, AccessibilityTrainingMinimal_OnObjectInit, EVENT_PRIORITY_NORMAL);
     REGISTER_LISTENER(ObjectUpdateEvent, AccessibilityTrainingMinimal_OnObjectUpdate, EVENT_PRIORITY_NORMAL);

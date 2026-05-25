@@ -1,13 +1,13 @@
 #include "Accessibility.h"
 
-#include "global.h"
+#include "port/CGameCompat.h"
 #include "port/accessibility/Tts.h"
 #include "accessibility_screens/AccessibilityScreens.h"
 #include "AccessibilityCues.h"
 #include "AccessibilityTrainingMinimal.h"
 #include "ObjectSpawnLog.h"
 
-void Accessibility_Init(void) {
+void Accessibility_Init() {
     CVarRegisterInteger("gAccessibilityScreenReader", 1);
 
     AccessibilityTitleScreen_Register();
@@ -20,10 +20,10 @@ void Accessibility_Init(void) {
     ObjectSpawnLog_Init();
 }
 
-void Accessibility_Exit(void) {
+void Accessibility_Exit() {
     AccessibilityCues_Exit();
 }
 
-bool Accessibility_IsScreenReaderEnabled(void) {
+bool Accessibility_IsScreenReaderEnabled() {
     return CVarGetInteger("gAccessibilityScreenReader", 1) == 1;
 }

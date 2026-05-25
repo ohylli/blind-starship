@@ -1,16 +1,6 @@
 #pragma once
 
-#include <stdbool.h>
+void Accessibility_Init();
+void Accessibility_Exit();
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-void Accessibility_Init(void);
-void Accessibility_Exit(void);
-
-bool Accessibility_IsScreenReaderEnabled(void);
-
-#ifdef __cplusplus
-}
-#endif
+bool Accessibility_IsScreenReaderEnabled();
