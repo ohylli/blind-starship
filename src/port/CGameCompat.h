@@ -35,9 +35,13 @@
 // that need game-side state. See src/port/mods/Accessibility*.cpp for examples.
 
 // Pre-include the C++ surface so STL/template headers are parsed with normal
-// `this`-keyword semantics.
+// `this`-keyword semantics AND outside any extern "C" linkage block. global.h
+// reaches into gfx_dimensions.h -> port/Engine.h, which pulls <vector>,
+// <Fast3D/interpreter.h>, and (transitively) <stack>. If those land inside the
+// extern "C" wrap below, GCC rejects STL templates with "template with C linkage."
 #include <libultraship.h>
 #include "port/interpolation/FrameInterpolation.h"
+#include "port/Engine.h"
 
 #define this self_
 extern "C" {
