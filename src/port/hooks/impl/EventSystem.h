@@ -28,10 +28,19 @@ typedef struct {
 // from both C and C++ TUs. C++ consumers need extern "C" so the unmangled name
 // resolves at link time; on MSVC at minimum, plain `extern uint32_t foo;` from
 // C++ produces a mangled lookup that doesn't match the C definition.
+//
+// EVENT_ID_LINKAGE alone is enough to mark a declaration as `extern` — in C++,
+// `extern "C" T x;` without an initializer is a declaration (not a definition)
+// per [dcl.link]/7. We deliberately do NOT add an extra `extern` keyword to the
+// non-init DECLARE_EVENT expansion: GCC 13 rejects `extern "C" extern T x;` as
+// "invalid use of 'extern' in linkage specification", even though the standard
+// allows it. MSVC accepts it, which is why this only fires on Linux. In C mode
+// EVENT_ID_LINKAGE expands to `extern` so the same macro yields a declaration
+// rather than a tentative definition.
 #ifdef __cplusplus
 #define EVENT_ID_LINKAGE extern "C"
 #else
-#define EVENT_ID_LINKAGE
+#define EVENT_ID_LINKAGE extern
 #endif
 
 #ifdef INIT_EVENT_IDS
@@ -39,7 +48,7 @@ typedef struct {
     EVENT_ID_LINKAGE uint32_t eventName##ID = -1;
 #else
 #define DECLARE_EVENT(eventName) \
-    EVENT_ID_LINKAGE extern uint32_t eventName##ID;
+    EVENT_ID_LINKAGE uint32_t eventName##ID;
 #endif
 
 #define DEFINE_EVENT(eventName, ...) \
