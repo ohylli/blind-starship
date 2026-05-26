@@ -12,7 +12,7 @@ For background on how the world is laid out (where enemies live, how to iterate 
 
 A continuous positional SFX attached to an enemy, conceptually the same shape as the ring cue: distance drives volume, lateral offset drives stereo pan, vertical offset drives a pitch shift. The difference from the ring cue is the coordinate frame the lateral/vertical offset is measured in (see next section).
 
-What exactly counts as "an enemy" and which SFX represents one is deferred — see "Open questions" below.
+Which SFX represents an enemy is deferred — see "Open questions" below.
 
 ---
 
@@ -48,6 +48,41 @@ It is not the right primitive for the cue:
 
 ---
 
+## Enemy detection criteria
+
+First-pass predicate, applied while walking `gActors[]`:
+
+```c
+actor->obj.status == OBJ_ACTIVE
+&& actor->obj.id != OBJ_ACTOR_EVENT
+&& actor->info.targetOffset != 0.0f
+```
+
+This is the same predicate the engine itself uses for laser lock-on — see `PlayerShot_FindLockTarget` (`src/engine/fox_beam.c:1741`) and the follow-up tracking pass at `:2152`. Both sites check exactly `actor->obj.status == OBJ_ACTIVE && actor->info.targetOffset != 0.0f`. By inheriting that predicate, the cue automatically picks up every dynamic adjustment the game already does to disable lock-on:
+
+- **Teammates in all-range** — `ActorAllRange_SpawnTeam` zeroes `info.targetOffset` for aiType ≤ AI360_PEPPY right after `Object_SetInfo` copies the default from `gObjectInfo[]` (`fox_360.c:421`). Fox/Falco/Slippy/Peppy never read as targets.
+- **Event handlers** — aiType `AI360_EVENT_HANDLER` actors get `info.targetOffset = 0.0f` every update tick (`fox_360.c:1300`).
+- **Defeated / downed states** — various per-level scripts zero `targetOffset` when an enemy transitions out of its hostile state (e.g. `fox_sz.c:842`, `fox_ka.c:2230`, `fox_ti.c:870`, `fox_fo.c:513`).
+
+The `OBJ_ACTOR_EVENT` exclusion is a separate concern: those slots run the level's scripted-event bytecode (`ActorEvent_Update`), have `gNoHitbox`, and are invisible. The master table has `targetOffset = 0.0f` for them (`fox_edata_info.c:319`) so they'd already be filtered, but the explicit id check makes the intent obvious to a reader and survives any future table change.
+
+Note that `actor->info` is the actor's *per-instance copy* of the per-class `ObjectInfo`, not a pointer back to the master table. `Object_SetInfo` (called from `Actor_Load`) does a struct copy at load time; subsequent dynamic writes like the ones above only affect that instance. This is why the engine's own lock-on check reads `actor->info.targetOffset` rather than `gObjectInfo[actor->obj.id].targetOffset`.
+
+### What this catches
+
+Standard "shoot me" enemies across all on-rails levels: Garudas, Skibots, HopBots, Desert Rovers, the Delphor *head*, Fekuda, ZBird, Z-Gulls, Troika, Tankers, Radar Buoys, Bolse shield reactors / laser cannons, Fortuna radars, seeking missiles, Andross laser emitters, etc. In all-range it also catches Star Wolf members (Wolf / Leon / Pigma / Andrew) — `OBJ_ACTOR_ALLRANGE` has `targetOffset = 1.0f` in the master table and only the teammate / event-handler branches zero it, so the Star Wolf instances stay lockable.
+
+### Known intentional misses (deferred, not bugs)
+
+- **Bosses in `gBosses[4]`.** Out of scope for now per the design lead. Bosses need per-encounter cues anyway (multiple parts, weak points, phase changes) and are tracked as separate future work.
+- **Boss-shaped actors stored in `gActors[]`.** A few large enemies live in the actor array but have `targetOffset = 0.0f` because the game uses a separate UI for them — Zoness's `OBJ_ACTOR_ZO_DODORA` (the sea-snake mini-boss) and Titania's `OBJ_ACTOR_TI_DELPHOR` body (the sand-worm; its head segment `TI_DELPHOR_HEAD` *is* lockable and will cue normally). Treat these the same as `gBosses[]`: case-by-case later.
+- **Non-lockable damage-dealing enemies.** A handful of small turret-style enemies have `damage > 0` but `targetOffset = 0.0f` — e.g. `OBJ_ACTOR_CO_RADAR`, `OBJ_ACTOR_ME_MORA`. They will not cue with the lock-on predicate. If play-testing shows they matter, they can be added by an explicit id allow-list later.
+- **Environmental hazards.** Landmines (`OBJ_ACTOR_TI_LANDMINE`, oddly lockable so it *is* caught) aside, the bulk of hazards have `damage > 0` and `targetOffset = 0.0f`: `MA_BOULDER`, `MA_FALLING_BOULDER`, `MA_BOMBDROP`, `MA_BARRIER`, `MA_*_LOCK_BAR`, `MA_TRAIN_CAR_*`, the Macbeth locomotive, `TI_BOULDER`, `TI_BOMB`, Venom 1 pillars, `AND_BRAIN_WASTE`, etc. These are deliberately out of the *enemy* cue's scope. A future "hazard cue" is a distinct feature category — different SFX (so the player can tell "enemy ahead" from "obstacle ahead"), probably different distance scaling, and the producer-side hook may also differ (most hazards spawn from `gLevelObjects` rather than dynamically, and many sit still). Lumping them into the enemy cue now would prejudge that design.
+
+A consequence of starting from the lock-on predicate: the *set of cueable enemies* is identical to the set the player could lock onto and missile, which is a meaningful gameplay set even before play-testing — it is the same set the game itself treats as "primary targets."
+
+---
+
 ## Implementation sketch
 
 The cue mod will live at `src/port/mods/AccessibilityEnemyCues.{cpp,h}` (sibling to the ring cue), gated by a new CVar (provisionally `gAccessibilityEnemyCues`), and registered the same way the ring cue is — a listener on `GamePostUpdateEvent` that early-returns if the CVar is off, picks a target enemy, computes the body-frame source vector, and keeps a positional SFX attached to it via `Audio_PlaySfx` + `Audio_KillSfxBySource`.
@@ -76,10 +111,11 @@ Decision for the first pass: keep the raw-distance form, matching the ring cue. 
 
 These are deliberately left unanswered for now. No speculation is recorded here; the next session that picks one up should start from scratch.
 
-- **Enemy detection criteria.** What predicate on a `gActors[]` slot (and possibly `gBosses[]`) makes it count as an enemy worth cueing. `gActors[]` holds many non-enemy entities (teammates, missiles, event scripts, cutscene props — see `docs/game-world.md` §3 and §6). The relevant raw signals are `obj.id`, `info.damage`, `info.targetOffset`, the `aiType` field, and the `OBJECT_TYPE_ACTOR_EVENT` distinction. Concrete criteria are TBD.
 - **Cue SFX choice.** Which `NA_SE_*` to use. The bank/range/flag constraints listed in `docs/accessibility-cues-tuning.md` apply unchanged. The choice should also be distinguishable from the ring cue so the two cues are not confused in levels where both could fire.
 - **Single vs. multiple simultaneous cues.** Whether to cue one enemy at a time (nearest? most threatening?) or several concurrently. TBD.
-- **All-range mode pass.** The math is mode-agnostic, but enemy detection in all-range may want different filters (Star Wolf fighters, teammates-vs-enemies distinction via `aiType`), and the higher enemy count may force the single-vs-multiple question to a head.
+- **All-range mode pass.** The math is mode-agnostic. The lock-on predicate already handles the teammates-vs-enemies distinction (teammate `targetOffset` is zeroed by the game), so all-range works without modification. The higher enemy count in all-range may force the single-vs-multiple question to a head.
+- **Coverage for non-lockable enemies and bosses.** Whether to extend past the lock-on predicate to include the deferred categories listed under "Known intentional misses" — boss-shaped actors (Dodora, Delphor body), non-lockable damage-dealers (CO_RADAR, ME_MORA), bosses in `gBosses[]`. Likely to grow into an explicit per-id allow-list rather than a broader predicate.
+- **Hazard cue.** A separate cue category for damage-dealing obstacles (boulders, mines, falling bombs, train cars, barriers, pillars). Distinct from the enemy cue in SFX, scaling, and likely producer-side hook. Out of scope for this design doc.
 
 ---
 
@@ -91,3 +127,6 @@ These are deliberately left unanswered for now. No speculation is recorded here;
 - Mod lives at `src/port/mods/AccessibilityEnemyCues.{cpp,h}`, mirrors the ring cue's structure and event wiring.
 - Pan magnitude is raw perpendicular distance, not angle, for the first pass.
 - The on-screen reticle global is not used.
+- Enemy predicate is the lock-on proxy: `status == OBJ_ACTIVE && id != OBJ_ACTOR_EVENT && info.targetOffset != 0.0f`, matching the engine's `PlayerShot_FindLockTarget` filter.
+- Star Wolf members (Wolf / Leon / Pigma / Andrew) *are* lockable and so are covered by the predicate; only the four playable teammates are explicitly zeroed.
+- Bosses (`gBosses[]`), boss-shaped actors with `targetOffset = 0` (Dodora, Delphor body), non-lockable damage-dealers (CO_RADAR, ME_MORA), and environmental hazards are deferred — not cued by the first pass.
