@@ -85,15 +85,26 @@ A consequence of starting from the lock-on predicate: the *set of cueable enemie
 
 ## Implementation sketch
 
-The cue mod will live at `src/port/mods/AccessibilityEnemyCues.{cpp,h}` (sibling to the ring cue), gated by a new CVar (provisionally `gAccessibilityEnemyCues`), and registered the same way the ring cue is — a listener on `GamePostUpdateEvent` that early-returns if the CVar is off, picks a target enemy, computes the body-frame source vector, and keeps a positional SFX attached to it via `Audio_PlaySfx` + `Audio_KillSfxBySource`.
+The enemy cue lives in the existing `src/port/mods/AccessibilityCues.{cpp,h}` alongside the ring cue rather than a sibling file. The two cues share enough shape — the Start/Stop pattern around `Audio_PlaySfx` + `Audio_KillSfxBySource`, the Y→freqMod math, and the gate-find-refresh-or-stop orchestration — that one TU with two parallel state blocks reads more naturally than two near-duplicate files. The file's name is already plural. A bigger separation-of-concerns pass can come later, once both cues work and the real common shape is visible from two concrete data points instead of one.
 
-Per-frame update shape, mirroring `AccessibilityCues_RefreshSource`:
+v1 reuses the existing `gAccessibilityAudioCues` master toggle for both cues. A finer-grained per-cue split (`gAccessibilityRingCue` / `gAccessibilityEnemyCue` / …) is deferred until someone wants independent control.
+
+The enemy cue gets its own file-static state block (`sEnemyCueSrc`, `sEnemyCueFreqMod`, …) because both cues can fire simultaneously, and its own `GamePostUpdateEvent` listener following the same shape as the ring cue's: early-return if disabled or out of context, pick a target enemy, refresh-or-start, stop if none. The ring cue's existing state will need a rename in the same pass (`sCueSrc` → `sRingCueSrc`, etc.) for disambiguation.
+
+Small shared bits worth factoring as the second cue lands — not before:
+
+- A `ComputeFreqModFromY(f32 y) → f32` helper. The six-line Y→octaves→`powf(2, ·)` math is identical for both cues.
+- Optionally an internal `CueState` struct (`src[3]`, `freqMod`, `volMod`, `reverb`, `active`) bundling the per-cue state so the two blocks stay visually parallel.
+
+Nothing more ambitious (base class, cue registry, polyphony manager) belongs in v1.
+
+Per-frame update math for the enemy cue, mirroring `AccessibilityCues_RefreshSource` but rotating into body frame:
 
 1. World delta from the Arwing: `dx = enemy.pos.x - player->pos.x`, `dy = enemy.pos.y - player->pos.y`, `dz = enemy.pos.z - player->trueZpos`. (Note `trueZpos`, not `pos.z` — see `docs/game-world.md` §10.)
 2. Build a calc matrix from the player's aim angles (yaw, then pitch — bank not needed) and apply it as the inverse rotation to the world delta to obtain `bodyDelta`. Equivalent to: rotate by `-yaw` around Y, then by `-pitch` around X. Implemented via the same `Matrix_RotateY` / `Matrix_RotateX` + `Matrix_MultVec3fNoTranslate` pattern used elsewhere in `fox_play.c`.
-3. Feed `bodyDelta.x` to `sCueSrc[0]` (pan), `bodyDelta.y` to `sCueSrc[1]` (drives the Y→pitch shift exactly as the ring cue does today), and the appropriate forward component to `sCueSrc[2]`. Then `Object_ClampSfxSource` and proceed as the ring cue does.
+3. Feed `bodyDelta.x` to the enemy cue's `src[0]` (pan), `bodyDelta.y` to `src[1]` (drives the Y→pitch shift exactly as the ring cue does today), and the appropriate forward component to `src[2]`. Then `Object_ClampSfxSource` and proceed as the ring cue does.
 
-The forward component for `sCueSrc[2]` needs a small note: the ring cue uses `-(enemy.pos.z - player->trueZpos)` because in on-rails the engine wants positive `sCueSrc[2]` to mean "ahead." With body-frame rotation, `bodyDelta.z` is already "ahead of aim" in the Arwing's own coordinates, so the sign convention may need a flip relative to the ring cue. To be confirmed at implementation time.
+The forward component for `src[2]` needs a small note: the ring cue uses `-(ring.pos.z - player->trueZpos)` because in on-rails the engine wants positive `src[2]` to mean "ahead." With body-frame rotation, `bodyDelta.z` is already "ahead of aim" in the Arwing's own coordinates, so the sign convention may need a flip relative to the ring cue. To be confirmed at implementation time.
 
 ---
 
@@ -124,7 +135,7 @@ These are deliberately left unanswered for now. No speculation is recorded here;
 - Cue panning uses aim-relative coordinates derived by rotating the world delta into the Arwing's body frame.
 - Same math handles on-rails and all-range; first implementation pass targets on-rails.
 - Distance is the unchanged length of the world delta (drives volume).
-- Mod lives at `src/port/mods/AccessibilityEnemyCues.{cpp,h}`, mirrors the ring cue's structure and event wiring.
+- Lives in the existing `src/port/mods/AccessibilityCues.{cpp,h}` alongside the ring cue, gated by the same `gAccessibilityAudioCues` CVar; structure deliberately parallel so small shared helpers (Y→freqMod, an internal `CueState` struct) can emerge once both cues work. A bigger split into separate files and/or per-cue CVars is deferred.
 - Pan magnitude is raw perpendicular distance, not angle, for the first pass.
 - The on-screen reticle global is not used.
 - Enemy predicate is the lock-on proxy: `status == OBJ_ACTIVE && id != OBJ_ACTOR_EVENT && info.targetOffset != 0.0f`, matching the engine's `PlayerShot_FindLockTarget` filter.
