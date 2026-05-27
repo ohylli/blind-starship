@@ -12,20 +12,28 @@
 // phase is intentionally out of scope.
 //
 // WHAT IT REMOVES:
-//   - Collidable scenery, bosses, and non-event actors with a real hitbox —
-//     the on-rails environmental obstacles (e.g. OBJ_SCENERY_TR_BUILDING).
-//     Caught by the hitbox check in ShouldFilter on both ObjectInit and
-//     ObjectUpdate.
+//   - Collidable scenery and bosses (e.g. OBJ_SCENERY_TR_BUILDING).
+//   - Actors with a collidable hitbox AND info.targetOffset == 0.0f — i.e.
+//     things the engine treats as non-lockable hazards. Catches the scripted
+//     training barrier (OBJ_ACTOR_EVENT / EVID_TR_BARRIER) and would catch
+//     any future non-event hazard actor. Predicate matches the engine's own
+//     lock-on check (PlayerShot_FindLockTarget, fox_beam.c) and what the
+//     enemy audio cue will use (docs/accessibility-enemy-cue.md).
+//   All filtered via ShouldFilter on both ObjectInit and ObjectUpdate.
 //
 // WHAT IT DELIBERATELY KEEPS:
-//   - OBJ_ACTOR_EVENT actors of every eventType. These cover both
-//     orchestration (EVID_EVENT_HANDLER drives ring placement and radio
-//     chatter via EVOP_PLAY_MSG / EVOP_SET_CALL) AND Training's scripted
-//     shooting fighters (Venom tanks, spy-eyes, tripods, ...). Enemies are
-//     kept alive — with their engine/firing SFX — so the enemy audio cue
-//     (docs/accessibility-enemy-cue.md) has targets to attach to. An earlier
-//     iteration killed non-handler actor-events via a GamePostUpdate sweep;
-//     that sweep was removed when the enemy cue work began.
+//   - Lockable actor enemies — non-zero info.targetOffset. In Training all
+//     enemies live in OBJ_ACTOR_EVENT slots (Venom tanks, spy-eyes, tripods,
+//     ...). Their engine/firing SFX are kept too, so the enemy audio cue
+//     has audible targets. An earlier iteration killed non-handler
+//     actor-events via a GamePostUpdate sweep; that sweep was removed when
+//     the enemy cue work began, and the targetOffset check replaced the
+//     coarse "skip all OBJ_ACTOR_EVENT" rule with one that re-strips the
+//     non-enemy actor-events like the training barrier.
+//   - EVID_EVENT_HANDLER actor-events. These have no collidable hitbox
+//     (gNoHitbox) so the hitbox check passes them through automatically.
+//     They drive ring placement and radio chatter via EVOP_PLAY_MSG /
+//     EVOP_SET_CALL — killing them would defeat the test.
 //   - All items, INCLUDING bonus items (bombs, lasers, silver/gold rings, wing
 //     repair). Note for future sessions: a few bonus items are placed at the
 //     exact coordinates of training rings, so flying the cue path collects
@@ -52,17 +60,27 @@ static bool AccessibilityTrainingMinimal_ShouldFilter(ObjectEventType type, void
     if ((type != OBJECT_TYPE_ACTOR) && (type != OBJECT_TYPE_SCENERY) && (type != OBJECT_TYPE_BOSS)) {
         return false;
     }
-    // OBJ_ACTOR_EVENT actors are always kept. The slot is either an event
-    // handler (EVID_EVENT_HANDLER — drives ring placement and radio chatter
-    // and must be preserved) or a scripted shooting fighter (Venom tank,
-    // spy-eye, tripod, ...). Enemies are wanted alive for the enemy audio
-    // cue (docs/accessibility-enemy-cue.md), and the hitbox check would
-    // otherwise catch them once their script runs EVOP_INIT_ACTOR and
-    // installs the collidable hitbox.
-    if ((type == OBJECT_TYPE_ACTOR) && (((Object*) object)->id == OBJ_ACTOR_EVENT)) {
+    if (!Object_HasCollidableHitbox(type, object)) {
         return false;
     }
-    return Object_HasCollidableHitbox(type, object);
+    // For actors (regular or OBJ_ACTOR_EVENT), distinguish enemies from
+    // environmental obstacles by info.targetOffset: enemies have a non-zero
+    // lock-on offset (same predicate the engine uses for missile lock-on in
+    // PlayerShot_FindLockTarget, fox_beam.c, and the predicate the upcoming
+    // enemy audio cue uses — see docs/accessibility-enemy-cue.md). Obstacles
+    // like EVID_TR_BARRIER (the training barrier) have targetOffset == 0.0f
+    // even though they have a collidable hitbox; those are exactly what we
+    // want to strip. For OBJ_ACTOR_EVENT actors info.targetOffset is the
+    // default 0.0f until the script runs EVOP_INIT_ACTOR (which also installs
+    // the real hitbox — see the second-tick note in Object_HasCollidableHitbox),
+    // so the hitbox and targetOffset land together and the check is consistent.
+    if (type == OBJECT_TYPE_ACTOR) {
+        Actor* a = (Actor*) object;
+        if (a->info.targetOffset != 0.0f) {
+            return false;
+        }
+    }
+    return true;
 }
 
 // Free the slot before cancelling: cancellation skips the engine's OBJ_INIT
@@ -82,9 +100,11 @@ static void AccessibilityTrainingMinimal_OnObjectInit(IEvent* event) {
 // OBJ_ACTIVE, bypassing OBJ_INIT entirely, so a collidable actor / scenery /
 // boss can slip past the ObjectInit hook. Cancelling Update skips the object's
 // motion and action callback for that tick; freeing the slot prevents any
-// further frames. OBJ_ACTOR_EVENT actors are not filtered here either —
-// ShouldFilter returns false for them so enemies (and the event handler) can
-// run to completion.
+// further frames. This is also the path that catches OBJ_ACTOR_EVENT
+// obstacles like EVID_TR_BARRIER, whose hitbox isn't installed until the
+// second update tick — by then ShouldFilter can read both info.hitbox and
+// info.targetOffset and discriminate against the barrier while leaving
+// enemies (non-zero targetOffset) alive.
 static void AccessibilityTrainingMinimal_OnObjectUpdate(IEvent* event) {
     ObjectUpdateEvent* e = (ObjectUpdateEvent*) event;
     if (!AccessibilityTrainingMinimal_ShouldFilter(e->type, e->object)) {
