@@ -16,27 +16,34 @@ kept up to date with the latest publicly released code. It has a screen reader
 integration via [PRISM](https://github.com/ethindp/prism). Currently used to
 make the game's main menu, sounds options and pause menu accessible.
 
-For gameplay there is partial accessibility for the game's training
-mode. In training you practice maneuvering you ship by flying through rings.
-These rings have a sound cue where stereo pan indicates left / right and pitch
-above / below you. High pitch is above you lower below. Note: controls are
-typical fligth controls back / down on a stick makes you go up.
+For gameplay there is partial accessibility for the game's training mode. In
+training you practice maneuvering you ship by flying through rings and fighting
+some enemies. These rings and enemies have their own sound cues where stereo pan
+indicates left / right and pitch above / below you. High pitch is above you
+lower below. The cue tracks the closest target. Note: controls are typical
+fligth controls back / down on a stick makes you go up.
 
-Training has 2 phases. The first is on rails flying containing only rings and some item pick ups. So no obstacles or
-enemies. Second phase  is in all-range mode (you can freely fly around a small
-arena) with some enemies and obstacles with no accessibility features to help
-you. And in case you are familiar with the game and are thinking "wait that
-is not what I remember." you are absolutely right. Currently the first phase of training is
-simplified and all enemies and obstacles are removed (see the configuration
-section how to  bring them back). When more features are added like enemy audio
-cues, these simplifications will be removed.
+Training has 2 phases. The first is on rails flying containing only rings,
+enemies and some item pick ups. So no obstacles. Second phase  is in all-range
+mode (you can freely fly around a small arena) with some enemies and obstacles
+with no accessibility features to help you. Note the enemy audio cue for now
+does not work here since it currently does not distinguish between in front /
+behind you. And in case you are familiar with the game and are thinking "wait
+that is not what I remember." you are absolutely right. Currently the first
+phase of training is simplified all obstacles are removed (see
+the configuration section how to bring them back). When more features are added
+like obstacle audio cues, these simplifications will be removed. The enemy audio
+cue works also in the main game though might not cover all enemies and does not
+include bosses. Also in general it probably needs more tuning to be useful.
 
 ## Road map
 
 In no particular order planned features or things to investigate include:
 
-- Audio cues for enemies.
+- Refine audio cues for enemies.
 - Audio cues for obstacles.
+- Add an audio cue glossary with both general sound effects and blind starship
+  audio cues.
 - Making more game menus and screens accessible.
 - Adding screen reader announcements to gameplay: health, remaining lives,
   number of bombs etc.
