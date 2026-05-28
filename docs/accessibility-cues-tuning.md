@@ -1,10 +1,13 @@
-# Tuning the accessibility audio cue
+# Tuning the accessibility audio cues
 
-The cue mod lives at `src/port/mods/AccessibilityCues.{c,h}`. It currently fires only in Training mode, attaching a continuous positional SFX to the next ring ahead of the Arwing and driving its pan from X, volume from distance, and pitch from altitude.
+The cue mod lives at `src/port/mods/AccessibilityCues.{cpp,h}` and now houses two cues sharing the `gAccessibilityAudioCues` CVar:
 
-This document lists the parts of the code that are intended as knobs — what each one does, what changing it costs, and where to find it.
+- **Ring cue** — attaches a continuous SFX to the next Training ring ahead of the Arwing (scoped to `LEVEL_TRAINING`).
+- **Enemy cue** — attaches a continuous SFX to the closest cueable enemy ahead of the Arwing's aim line, on any on-rails level. Coordinate frame is body-frame (rotated by the player's yaw + pitch) rather than world-frame; see `docs/accessibility-enemy-cue.md` for the derivation.
 
-For background on *why* the cue is shaped this way (player-relative coordinate frame, Y→pitch instead of Y→pan, bank/range constraints), see `docs/audio-system.md` and `docs/game-world.md`.
+Both cues drive pan from X, volume from distance, and pitch from altitude via the same `AccessibilityCues_ComputeFreqModFromY` helper. Almost every knob below applies to either cue — function and variable names are prefixed `Ring` or `Enemy` to disambiguate.
+
+For background on *why* the cues are shaped this way (player-relative coordinate frame, Y→pitch instead of Y→pan, bank/range constraints), see `docs/audio-system.md` and `docs/game-world.md`.
 
 ---
 
@@ -12,7 +15,7 @@ For background on *why* the cue is shaped this way (player-relative coordinate f
 
 ### The SFX itself
 
-`ACCESSIBILITY_CUE_SFX` macro near the top of `AccessibilityCues.c`. Alternative candidates considered are listed in a comment above the macro definition.
+`RING_CUE_SFX` (Training-ring cue) and `ENEMY_CUE_SFX` (enemy cue) macros near the top of `AccessibilityCues.cpp`. Alternative candidates considered for the ring cue are listed in a comment above the macro definition. When picking the enemy cue's SFX, favor a sound with a clearly different timbre from the ring cue's, so both can fire simultaneously on Training without blending into one sound.
 
 Constraints to keep in mind if reaching for another `NA_SE_*`:
 
@@ -23,40 +26,43 @@ Constraints to keep in mind if reaching for another `NA_SE_*`:
 
 ### Y→pitch sensitivity
 
-The `1000.0f` divisor in `AccessibilityCues_RefreshSource`. This is "how many world units of altitude difference equals one octave." Smaller = more aggressive pitch swing for small altitude changes.
+The `1000.0f` divisor in `AccessibilityCues_ComputeFreqModFromY` (shared by both cues). This is "how many world units of altitude difference equals one octave." Smaller = more aggressive pitch swing for small altitude changes.
 
 The `±1.0f` clamp on the following lines bounds how extreme the pitch ever gets. Raising the bounds (e.g. ±2) gives a wider expressive range at the cost of stretching the sample badly at the extremes.
 
+For the enemy cue, "altitude" is altitude relative to the Arwing's aim, not world-up — body-frame Y, computed in `AccessibilityCues_BuildWorldToBodyMatrix` + `Matrix_MultVec3fNoTranslate`. So the ring cue and enemy cue interpret "above" differently when the Arwing is pitched.
+
 ### Y→pitch direction
 
-Also in `AccessibilityCues_RefreshSource`: `octaves = sCueSrc[1] / 1000.0f`. Negate this to flip the mapping (lower pitch = higher altitude). Currently higher pitch = above.
+Also in `AccessibilityCues_ComputeFreqModFromY`: `octaves = y / 1000.0f`. Negate this to flip the mapping (lower pitch = higher altitude). Currently higher pitch = above. The change applies to both cues simultaneously.
 
 ### "Drop the cue when behind the player"
 
-`AccessibilityCues_FindNextTrainingRing`: `if (dz >= 0.0f) continue;`. As written, the moment a ring is at or behind the Arwing it stops contributing. Could be relaxed to `dz >= someThreshold` if you want a brief tail as you pass through — but in practice the engine's distance falloff already fades the trailing ring, and the next ring becomes the target on the very next tick.
+- Ring cue, `AccessibilityCues_FindNextTrainingRing`: `if (dz >= 0.0f) continue;` filters by world Z relative to `player->trueZpos`. As written, the moment a ring is at or behind the Arwing it stops contributing. Could be relaxed to `dz >= someThreshold` if you want a brief tail as you pass through — but in practice the engine's distance falloff already fades the trailing ring, and the next ring becomes the target on the very next tick.
+- Enemy cue, `AccessibilityCues_FindClosestEnemyAhead`: `if (bodyDelta.z >= 0.0f) continue;` filters by body-frame Z (i.e., behind the *aim line*, not behind world position). Relaxing this would mean cueing enemies behind the Arwing too; expect ambiguous-direction center-pan because the engine's stereo path uses `|z|` — pitch can still convey altitude.
 
 ### Volume and reverb the cue gets
 
-`sCueVolMod` (file static, default `1.0f`) and `sCueReverb` (default `0`). The engine reads these every audio frame.
+Per-cue: `sRingCueVolMod` / `sRingCueReverb` and `sEnemyCueVolMod` / `sEnemyCueReverb` (file statics, defaults `1.0f` / `0`). The engine reads these every audio frame.
 
-- Cue feels drowned out by gameplay SFX → bump `sCueVolMod` to ~1.5–2.0.
-- Cue feels too dry / disembodied → add small `sCueReverb` (e.g. 20–40 out of 127); gives it more "space."
+- A cue feels drowned out by gameplay SFX → bump its `*VolMod` to ~1.5–2.0.
+- A cue feels too dry / disembodied → add small `*Reverb` (e.g. 20–40 out of 127); gives it more "space."
 
 ### Pan saturation at distance
 
 Not a variable, but worth knowing: the engine internally clamps `|x|` to 1200 before computing pan, so anything past 1200 world units of lateral offset reads as "fully left/right." If a ring appears far to one side, pan is already pinned.
 
-To get finer directional discrimination at long distances, pre-clamp `sCueSrc[0]` to a smaller window (e.g. ±800) in `RefreshSource` so the engine's pan ramp stays in the useful compressing range rather than instantly saturating.
+To get finer directional discrimination at long distances, pre-clamp `sRingCueSrc[0]` / `sEnemyCueSrc[0]` to a smaller window (e.g. ±800) in the corresponding `RefreshRingSource` / `RefreshEnemySource` before calling `Object_ClampSfxSource`, so the engine's pan ramp stays in the useful compressing range rather than instantly saturating.
 
-### Which levels the cue fires in
+### Which levels the cues fire in
 
-`AccessibilityCues_OnGamePostUpdate`: `if (... gCurrentLevel != LEVEL_TRAINING) ...`. Currently hard-scoped to training. Broadening to other on-rails levels is just adding more allowed levels — though non-training levels have no training rings, so we'd also need to pick what to target (enemies, hazards, gold rings).
+- Ring cue, `AccessibilityCues_OnRingPostUpdate`: `if (... gCurrentLevel != LEVEL_TRAINING) ...`. Hard-scoped to Training because that's where rings live; broadening would also mean re-picking what to target outside Training.
+- Enemy cue, `AccessibilityCues_OnEnemyPostUpdate`: `if (... gLevelMode != LEVELMODE_ON_RAILS) ...`. Fires on every on-rails level. All-range is deferred but the body-frame math already works there — the gate is the only blocker.
 
 ### What counts as a target
 
-`AccessibilityCues_FindNextTrainingRing`. Currently: status `OBJ_ACTIVE`, id `OBJ_ITEM_TRAINING_RING`, `state == 0`.
-
-The state filter is the subtle one: state 1 means the ring is in its fly-to-player animation after collection. Excluding it prevents the cue from chasing the collection animation. If you ever want a faint background cue for *all* visible rings plus a louder cue for the nearest, this function is where that splits.
+- Ring cue, `AccessibilityCues_FindNextTrainingRing`: status `OBJ_ACTIVE`, id `OBJ_ITEM_TRAINING_RING`, `state == 0`. The state filter is the subtle one — state 1 means the ring is in its fly-to-player animation after collection, and excluding it prevents the cue from chasing the collection animation. If you ever want a faint background cue for *all* visible rings plus a louder cue for the nearest, this function is where that splits.
+- Enemy cue, `AccessibilityCues_IsCueableEnemy`: matches the engine's missile lock-on (`PlayerShot_FindLockTarget` in `fox_beam.c:1741`) — `status == OBJ_ACTIVE`, `id != OBJ_ACTOR_EVENT`, `info.targetOffset != 0.0f`. To extend coverage (bosses, hazards, non-lockable damage-dealers like `OBJ_ACTOR_CO_RADAR`), add an explicit allow-list here. See `docs/accessibility-enemy-cue.md` § "Enemy detection criteria" for the catalogue of intentional misses.
 
 ### CVar default
 

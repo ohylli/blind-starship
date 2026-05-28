@@ -4,6 +4,8 @@ This document is the working brief for adding a positional audio cue that helps 
 
 First scope is on-rails levels. All-range is a follow-up, but the design below was chosen so the same code works in both modes.
 
+**Status: implemented.** The first pass lives alongside the ring cue in `src/port/mods/AccessibilityCues.cpp`. SFX is `NA_SE_KA_UFO_ENGINE`, single closest enemy ahead of the aim line, fired on every `LEVELMODE_ON_RAILS` level. The sections below are the design rationale and remaining open questions; code is the source of truth for current behavior.
+
 For background on how the world is laid out (where enemies live, how to iterate them, hitbox/targetability fields), see `docs/game-world.md`. For how a positional SFX is emitted and which knobs the audio engine exposes, see `docs/audio-system.md` and `docs/accessibility-cues-tuning.md`.
 
 ---
@@ -106,6 +108,8 @@ Per-frame update math for the enemy cue, mirroring `AccessibilityCues_RefreshSou
 
 The forward component for `src[2]` needs a small note: the ring cue uses `-(ring.pos.z - player->trueZpos)` because in on-rails the engine wants positive `src[2]` to mean "ahead." With body-frame rotation, `bodyDelta.z` is already "ahead of aim" in the Arwing's own coordinates, so the sign convention may need a flip relative to the ring cue. To be confirmed at implementation time.
 
+**Resolved at implementation:** the cue keeps the ring cue's "positive src[2] = ahead" convention. The body-frame rotation is built *without* the `+180°` yaw that `Player_SetupArwingShot` applies to its laser-direction matrix — that choice flips the body Z axis so `bodyDelta.z < 0` means "ahead of aim" (matching the world convention where the player flies in `-Z`). The cue then feeds `src[2] = -bodyDelta.z`, exactly parallel to the ring cue's flip. Dropping the `+180°` also makes body `+X` equal "right of aim" without a second sign flip on the pan axis.
+
 ---
 
 ## A secondary judgment call: pan magnitude
@@ -120,11 +124,10 @@ Decision for the first pass: keep the raw-distance form, matching the ring cue. 
 
 ## Open questions (for future sessions)
 
-These are deliberately left unanswered for now. No speculation is recorded here; the next session that picks one up should start from scratch.
-
-- **Cue SFX choice.** Which `NA_SE_*` to use. The bank/range/flag constraints listed in `docs/accessibility-cues-tuning.md` apply unchanged. The choice should also be distinguishable from the ring cue so the two cues are not confused in levels where both could fire.
-- **Single vs. multiple simultaneous cues.** Whether to cue one enemy at a time (nearest? most threatening?) or several concurrently. TBD.
-- **All-range mode pass.** The math is mode-agnostic. The lock-on predicate already handles the teammates-vs-enemies distinction (teammate `targetOffset` is zeroed by the game), so all-range works without modification. The higher enemy count in all-range may force the single-vs-multiple question to a head.
+- **Cue SFX choice.** *Resolved (first pass):* `NA_SE_KA_UFO_ENGINE` — bank 1, range 3, no `SFX_FLAG_22/23`, importance 0x70, sustained UFO whir clearly distinct from the ring cue's beam-charge tone. Revisit if play-testing finds it competes with combat SFX or blends with engine drones.
+- **Single vs. multiple simultaneous cues.** *Resolved (first pass):* single closest enemy ahead of aim (3D Euclidean distance in body-frame coordinates). Revisit once all-range lands and the higher enemy density makes the trade-off concrete.
+- **All-range mode pass.** The math is mode-agnostic. The lock-on predicate already handles the teammates-vs-enemies distinction (teammate `targetOffset` is zeroed by the game), so all-range works without modification — the only gate is the `gLevelMode == LEVELMODE_ON_RAILS` check in `AccessibilityCues_OnEnemyPostUpdate`. The higher enemy count in all-range may force the single-vs-multiple question to a head.
+- **Forward-of-aim filter.** *Resolved (first pass):* drop enemies behind the aim line (`bodyDelta.z >= 0`). Reason: the engine's stereo pan uses `|z|`, so behind-aim sources pan center and are ambiguous with directly-ahead. Cost: blind to threats from behind. Revisit if "rear-attack awareness" reads as more important than the directional ambiguity.
 - **Coverage for non-lockable enemies and bosses.** Whether to extend past the lock-on predicate to include the deferred categories listed under "Known intentional misses" — boss-shaped actors (Dodora, Delphor body), non-lockable damage-dealers (CO_RADAR, ME_MORA), bosses in `gBosses[]`. Likely to grow into an explicit per-id allow-list rather than a broader predicate.
 - **Hazard cue.** A separate cue category for damage-dealing obstacles (boulders, mines, falling bombs, train cars, barriers, pillars). Distinct from the enemy cue in SFX, scaling, and likely producer-side hook. Out of scope for this design doc.
 
