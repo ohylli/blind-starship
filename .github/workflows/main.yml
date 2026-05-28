@@ -260,6 +260,7 @@ jobs:
             readme.txt
 
   build-linux:
+    if: false # Disabled since not needed for now.
     needs: generate-port-o2r
     runs-on: ubuntu-latest
     steps:
@@ -349,7 +350,7 @@ jobs:
             gamecontrollerdb.txt
 
   build-switch:
-    if: false  # disabled: upstream Switch build is broken; re-enable when fixed
+    if: false  # disabledd since not needed.
     needs: generate-port-o2r
     runs-on: ubuntu-latest
     container:
