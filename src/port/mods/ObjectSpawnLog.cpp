@@ -103,7 +103,21 @@ static void ObjectSpawnLog_Emit(ObjectEventType type, void* object, bool cancell
 // script truly never resolved) emits a line. Idle slots (not seen this
 // frame) reset to -1 so a fresh occupant always re-logs — even if its
 // eventType happens to match the previous occupant's last value.
+//
+// sActorEventFilteredThisFrame records whether a NORMAL-priority listener
+// (e.g. AccessibilityTrainingMinimal) cancelled this slot's update event
+// this frame. When set, GamePostUpdate emits a FILTERED line bypassing the
+// eventType-dedup check — otherwise the cancellation would be silent in
+// the log: cancellation happens on the second tick (after EVOP_INIT_ACTOR
+// resolved hitbox + targetOffset), by which time the eventType already
+// matches the value logged on the first tick.
+//
+// Side effect: actor-event slots that get filtered emit two lines — a
+// PASSED line on tick 1 (when the filter genuinely can't act yet because
+// hitbox/targetOffset aren't installed), then a FILTERED line on tick 2.
+// Accepted as a clarity tradeoff over a one-frame delayed emit.
 static bool sActorEventSeenThisFrame[ARRAY_COUNT(gActors)];
+static bool sActorEventFilteredThisFrame[ARRAY_COUNT(gActors)];
 static s32 sActorEventLoggedType[ARRAY_COUNT(gActors)];
 
 static void ObjectSpawnLog_OnObjectInit(IEvent* event) {
@@ -131,6 +145,9 @@ static void ObjectSpawnLog_OnObjectUpdate(IEvent* event) {
         return;
     }
     sActorEventSeenThisFrame[slot] = true;
+    if (event->cancelled) {
+        sActorEventFilteredThisFrame[slot] = true;
+    }
 }
 
 static void ObjectSpawnLog_OnGamePostUpdate(IEvent* event) {
@@ -144,9 +161,12 @@ static void ObjectSpawnLog_OnGamePostUpdate(IEvent* event) {
             // occupant always logs fresh, even if its eventType matches
             // the previous occupant.
             sActorEventLoggedType[i] = -1;
+            sActorEventFilteredThisFrame[i] = false;
             continue;
         }
         sActorEventSeenThisFrame[i] = false;
+        bool filtered = sActorEventFilteredThisFrame[i];
+        sActorEventFilteredThisFrame[i] = false;
         Actor* a = &gActors[i];
         if (a->obj.id != OBJ_ACTOR_EVENT) {
             // Slot was actor-event during the frame but has been re-purposed
@@ -155,6 +175,14 @@ static void ObjectSpawnLog_OnGamePostUpdate(IEvent* event) {
             continue;
         }
         s32 eventType = a->eventType;
+        if (filtered) {
+            // Emit a FILTERED line on the tick the filter actually fires,
+            // bypassing dedup — without this the cancellation is silent
+            // because eventType matches the value logged on tick 1.
+            sActorEventLoggedType[i] = eventType;
+            ObjectSpawnLog_Emit(OBJECT_TYPE_ACTOR, a, true);
+            continue;
+        }
         if (eventType == sActorEventLoggedType[i]) {
             continue;
         }
@@ -182,6 +210,7 @@ void ObjectSpawnLog_Init() {
     for (s32 i = 0; i < (s32) ARRAY_COUNT(sActorEventLoggedType); i++) {
         sActorEventLoggedType[i] = -1;
         sActorEventSeenThisFrame[i] = false;
+        sActorEventFilteredThisFrame[i] = false;
     }
     REGISTER_LISTENER(ObjectInitEvent, ObjectSpawnLog_OnObjectInit, EVENT_PRIORITY_HIGH);
     REGISTER_LISTENER(ObjectUpdateEvent, ObjectSpawnLog_OnObjectUpdate, EVENT_PRIORITY_HIGH);
