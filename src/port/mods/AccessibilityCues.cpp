@@ -6,6 +6,8 @@
 #include "sfx.h"
 #include "port/hooks/Events.h"
 
+#include <spdlog/spdlog.h>
+
 // Ring-cue SFX. Picked from a scan of bank-1/2/3 SFX in include/sfx.h:
 // range 3 (audible from ~6350 units, well beyond the ~3000-unit ring spawn
 // distance), no SFX_FLAG_22 so distance attenuation still applies, no
@@ -47,6 +49,21 @@ static bool sEnemyCueActive = false;
 static bool AccessibilityCues_IsEnabled() {
     return CVarGetInteger("gAccessibilityAudioCues", 1) == 1;
 }
+
+// Per-tick diagnostic trace for the enemy cue. Off by default. Even when on,
+// emitted lines still go through SPDLOG_TRACE, so the global log threshold
+// (gDeveloperTools.LogLevel) must also be at "trace" to actually appear in
+// the log. Pattern matches gObjectSpawnLog. Use ENEMY_CUE_TRACE(...) below.
+static bool AccessibilityCues_IsEnemyCueLogEnabled() {
+    return CVarGetInteger("gAccessibilityEnemyCueLog", 0) == 1;
+}
+
+#define ENEMY_CUE_TRACE(...)                              \
+    do {                                                  \
+        if (AccessibilityCues_IsEnemyCueLogEnabled()) {   \
+            SPDLOG_TRACE(__VA_ARGS__);                    \
+        }                                                 \
+    } while (0)
 
 // Shared Y->pitch mapping for both cues: higher source = higher pitch,
 // ±1 octave clamped at ±1000 world units. The 1000.0f divisor and the ±1
@@ -166,30 +183,53 @@ static void AccessibilityCues_BuildWorldToBodyMatrix(Player* player) {
     Matrix_RotateY(gCalcMatrix, -yaw * M_DTOR, MTXF_APPLY);
 }
 
-// Lock-on predicate. Matches PlayerShot_FindLockTarget (fox_beam.c:1741),
-// so the cue covers exactly the set of enemies the player could missile.
-// The explicit id != OBJ_ACTOR_EVENT check is redundant against the master
-// ObjectInfo table (event actors have targetOffset = 0 there) but documents
-// intent and survives any future table edit.
+// Lock-on predicate. Matches PlayerShot_FindLockTarget (fox_beam.c:1741):
+// status == OBJ_ACTIVE && info.targetOffset != 0. No `id != OBJ_ACTOR_EVENT`
+// here — the on-rails levels spawn essentially all gameplay enemies as
+// OBJ_ACTOR_EVENT (Venom tanks, Spy Eyes, etc.) and EVOP_INIT_ACTOR
+// (fox_enmy2.c:1132-1258) overwrites `actor->info` with the per-event info
+// at init: line 1211 copies targetOffset from sEventActorInfo[eventType] for
+// EVID < 200, line 1157 hardcodes targetOffset = 1.0 for EVID_200..EVID_300.
+// So after init, a OBJ_ACTOR_EVENT actor whose eventType is a real enemy has
+// a non-zero targetOffset; the id field stays as OBJ_ACTOR_EVENT but no
+// longer reflects whether the actor is lockable. Filtering on id would
+// reject every event-spawned enemy.
 static bool AccessibilityCues_IsCueableEnemy(Actor* actor) {
-    return (actor->obj.status == OBJ_ACTIVE) && (actor->obj.id != OBJ_ACTOR_EVENT) &&
-           (actor->info.targetOffset != 0.0f);
+    return (actor->obj.status == OBJ_ACTIVE) && (actor->info.targetOffset != 0.0f);
 }
+
+// Per-tick scan counters; populated by FindClosestEnemyAhead, consumed by
+// the listener's trace logs. Strictly debug-only; if we drop the tracing
+// the struct can go too.
+struct EnemyCueScanStats {
+    s32 active;    // gActors slots with status == OBJ_ACTIVE
+    s32 cueable;   // also passed IsCueableEnemy predicate
+    s32 ahead;     // also passed bodyDelta.z < 0 (in front of aim)
+    Actor* chosen; // closest one; NULL if none picked
+};
 
 // Walks gActors[], applies the lock-on predicate, rotates each candidate's
 // world delta into body frame via the matrix the caller has already set on
 // gCalcMatrix, drops anyone behind the aim line, and returns the body-frame
 // delta of whoever has the smallest 3D distance. Returns false if no
-// candidate passes.
-static bool AccessibilityCues_FindClosestEnemyAhead(Player* player, Vec3f* outBodyDelta) {
+// candidate passes. Populates outStats for trace logging.
+static bool AccessibilityCues_FindClosestEnemyAhead(Player* player, Vec3f* outBodyDelta, EnemyCueScanStats* outStats) {
+    outStats->active = 0;
+    outStats->cueable = 0;
+    outStats->ahead = 0;
+    outStats->chosen = NULL;
     bool found = false;
     f32 bestDistSq = 1.0e18f;
 
     for (s32 i = 0; i < ARRAY_COUNT(gActors); i++) {
         Actor* actor = &gActors[i];
+        if (actor->obj.status == OBJ_ACTIVE) {
+            outStats->active++;
+        }
         if (!AccessibilityCues_IsCueableEnemy(actor)) {
             continue;
         }
+        outStats->cueable++;
         Vec3f worldDelta;
         worldDelta.x = actor->obj.pos.x - player->pos.x;
         worldDelta.y = actor->obj.pos.y - player->pos.y;
@@ -200,10 +240,12 @@ static bool AccessibilityCues_FindClosestEnemyAhead(Player* player, Vec3f* outBo
         if (bodyDelta.z >= 0.0f) {
             continue;
         }
+        outStats->ahead++;
         f32 distSq = (bodyDelta.x * bodyDelta.x) + (bodyDelta.y * bodyDelta.y) + (bodyDelta.z * bodyDelta.z);
         if (distSq < bestDistSq) {
             bestDistSq = distSq;
             *outBodyDelta = bodyDelta;
+            outStats->chosen = actor;
             found = true;
         }
     }
@@ -224,6 +266,9 @@ static void AccessibilityCues_RefreshEnemySource(Vec3f bodyDelta) {
 
 static void AccessibilityCues_StartEnemyCue(Vec3f bodyDelta) {
     AccessibilityCues_RefreshEnemySource(bodyDelta);
+    ENEMY_CUE_TRACE("[enemy-cue] START sfx=0x{:08X} src=({:.1f},{:.1f},{:.1f}) freq={:.3f} vol={:.3f}",
+                    (u32) ENEMY_CUE_SFX, sEnemyCueSrc[0], sEnemyCueSrc[1], sEnemyCueSrc[2],
+                    sEnemyCueFreqMod, sEnemyCueVolMod);
     Audio_PlaySfx(ENEMY_CUE_SFX, sEnemyCueSrc, 0, &sEnemyCueFreqMod, &sEnemyCueVolMod, &sEnemyCueReverb);
     sEnemyCueActive = true;
 }
@@ -232,6 +277,8 @@ static void AccessibilityCues_StopEnemyCue() {
     if (!sEnemyCueActive) {
         return;
     }
+    ENEMY_CUE_TRACE("[enemy-cue] STOP last_src=({:.1f},{:.1f},{:.1f})",
+                    sEnemyCueSrc[0], sEnemyCueSrc[1], sEnemyCueSrc[2]);
     Audio_KillSfxBySource(sEnemyCueSrc);
     sEnemyCueActive = false;
 }
@@ -243,7 +290,12 @@ static void AccessibilityCues_OnEnemyPostUpdate(IEvent* event) {
     // process start (LEVELMODE_ON_RAILS = 0, gPlayer = NULL pointer) before
     // any level loads, so the mode check alone doesn't filter the pre-game
     // title/menu ticks. Null-check gPlayer to keep the listener safe there.
-    if (!AccessibilityCues_IsEnabled() || gLevelMode != LEVELMODE_ON_RAILS || gPlayer == NULL) {
+    bool enabled = AccessibilityCues_IsEnabled();
+    bool onRails = (gLevelMode == LEVELMODE_ON_RAILS);
+    bool hasPlayer = (gPlayer != NULL);
+    if (!enabled || !onRails || !hasPlayer) {
+        ENEMY_CUE_TRACE("[enemy-cue] gated enabled={} onRails={} mode={} hasPlayer={} active={}",
+                        enabled, onRails, (int) gLevelMode, hasPlayer, sEnemyCueActive);
         AccessibilityCues_StopEnemyCue();
         return;
     }
@@ -251,8 +303,13 @@ static void AccessibilityCues_OnEnemyPostUpdate(IEvent* event) {
     Player* player = &gPlayer[0];
     AccessibilityCues_BuildWorldToBodyMatrix(player);
 
+    EnemyCueScanStats stats;
     Vec3f bodyDelta;
-    if (!AccessibilityCues_FindClosestEnemyAhead(player, &bodyDelta)) {
+    bool found = AccessibilityCues_FindClosestEnemyAhead(player, &bodyDelta, &stats);
+
+    if (!found) {
+        ENEMY_CUE_TRACE("[enemy-cue] no target level={} active={} cueable={} ahead={} cueActive={}",
+                        (int) gCurrentLevel, stats.active, stats.cueable, stats.ahead, sEnemyCueActive);
         AccessibilityCues_StopEnemyCue();
         return;
     }
@@ -262,12 +319,22 @@ static void AccessibilityCues_OnEnemyPostUpdate(IEvent* event) {
     } else {
         AccessibilityCues_RefreshEnemySource(bodyDelta);
     }
+
+    // Logged after Start/Refresh so the src/freq values reflect this tick's
+    // refresh, not the previous one's residue.
+    ENEMY_CUE_TRACE("[enemy-cue] target id={} level={} active={} cueable={} ahead={} bodyDelta=({:.1f},{:.1f},{:.1f}) src=({:.1f},{:.1f},{:.1f}) freq={:.3f}",
+                    (int) stats.chosen->obj.id, (int) gCurrentLevel,
+                    stats.active, stats.cueable, stats.ahead,
+                    bodyDelta.x, bodyDelta.y, bodyDelta.z,
+                    sEnemyCueSrc[0], sEnemyCueSrc[1], sEnemyCueSrc[2],
+                    sEnemyCueFreqMod);
 }
 
 // ===== Entry points =====
 
 void AccessibilityCues_Init() {
     CVarRegisterInteger("gAccessibilityAudioCues", 1);
+    CVarRegisterInteger("gAccessibilityEnemyCueLog", 0);
     REGISTER_LISTENER(GamePostUpdateEvent, AccessibilityCues_OnRingPostUpdate, EVENT_PRIORITY_NORMAL);
     REGISTER_LISTENER(GamePostUpdateEvent, AccessibilityCues_OnEnemyPostUpdate, EVENT_PRIORITY_NORMAL);
 }

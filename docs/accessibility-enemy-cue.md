@@ -52,21 +52,20 @@ It is not the right primitive for the cue:
 
 ## Enemy detection criteria
 
-First-pass predicate, applied while walking `gActors[]`:
+Predicate, applied while walking `gActors[]`:
 
 ```c
 actor->obj.status == OBJ_ACTIVE
-&& actor->obj.id != OBJ_ACTOR_EVENT
 && actor->info.targetOffset != 0.0f
 ```
 
-This is the same predicate the engine itself uses for laser lock-on — see `PlayerShot_FindLockTarget` (`src/engine/fox_beam.c:1741`) and the follow-up tracking pass at `:2152`. Both sites check exactly `actor->obj.status == OBJ_ACTIVE && actor->info.targetOffset != 0.0f`. By inheriting that predicate, the cue automatically picks up every dynamic adjustment the game already does to disable lock-on:
+This is exactly the predicate the engine itself uses for laser lock-on — see `PlayerShot_FindLockTarget` (`src/engine/fox_beam.c:1741`) and the follow-up tracking pass at `:2152`. By inheriting it the cue automatically picks up every dynamic adjustment the game already does to disable lock-on:
 
 - **Teammates in all-range** — `ActorAllRange_SpawnTeam` zeroes `info.targetOffset` for aiType ≤ AI360_PEPPY right after `Object_SetInfo` copies the default from `gObjectInfo[]` (`fox_360.c:421`). Fox/Falco/Slippy/Peppy never read as targets.
 - **Event handlers** — aiType `AI360_EVENT_HANDLER` actors get `info.targetOffset = 0.0f` every update tick (`fox_360.c:1300`).
 - **Defeated / downed states** — various per-level scripts zero `targetOffset` when an enemy transitions out of its hostile state (e.g. `fox_sz.c:842`, `fox_ka.c:2230`, `fox_ti.c:870`, `fox_fo.c:513`).
 
-The `OBJ_ACTOR_EVENT` exclusion is a separate concern: those slots run the level's scripted-event bytecode (`ActorEvent_Update`), have `gNoHitbox`, and are invisible. The master table has `targetOffset = 0.0f` for them (`fox_edata_info.c:319`) so they'd already be filtered, but the explicit id check makes the intent obvious to a reader and survives any future table change.
+**Why there is no `id != OBJ_ACTOR_EVENT` filter** — `OBJ_ACTOR_EVENT` is *not* a "this slot is an invisible event handler" marker. It is the storage form for nearly every gameplay enemy on the on-rails levels: the level's scripted-event bytecode allocates an `OBJ_ACTOR_EVENT` actor and then `EVOP_INIT_ACTOR` (`fox_enmy2.c:1132-1258`) rewrites that actor's `info` field from a per-event-type table. After init, a Venom Tank actor has `obj.id == OBJ_ACTOR_EVENT` but `info.targetOffset == 1.0` (copied from `sEventActorInfo[EVID_VENOM_TANK]` at line 1211); the same for Spy Eyes, Garudas, Skibots, Star Wolf, etc. Filtering by `id != OBJ_ACTOR_EVENT` would reject every event-spawned enemy in Training and the rest of the on-rails pipeline. Pure event handlers (`EVID_EVENT_HANDLER`, `EVID_FFF` before init resolves) keep `info.targetOffset = 0.0f` because their `EVOP_INIT_ACTOR` branch never overwrites it, so the `targetOffset` check filters them on its own.
 
 Note that `actor->info` is the actor's *per-instance copy* of the per-class `ObjectInfo`, not a pointer back to the master table. `Object_SetInfo` (called from `Actor_Load`) does a struct copy at load time; subsequent dynamic writes like the ones above only affect that instance. This is why the engine's own lock-on check reads `actor->info.targetOffset` rather than `gObjectInfo[actor->obj.id].targetOffset`.
 
@@ -141,6 +140,6 @@ Decision for the first pass: keep the raw-distance form, matching the ring cue. 
 - Lives in the existing `src/port/mods/AccessibilityCues.{cpp,h}` alongside the ring cue, gated by the same `gAccessibilityAudioCues` CVar; structure deliberately parallel so small shared helpers (Y→freqMod, an internal `CueState` struct) can emerge once both cues work. A bigger split into separate files and/or per-cue CVars is deferred.
 - Pan magnitude is raw perpendicular distance, not angle, for the first pass.
 - The on-screen reticle global is not used.
-- Enemy predicate is the lock-on proxy: `status == OBJ_ACTIVE && id != OBJ_ACTOR_EVENT && info.targetOffset != 0.0f`, matching the engine's `PlayerShot_FindLockTarget` filter.
+- Enemy predicate is the lock-on proxy: `status == OBJ_ACTIVE && info.targetOffset != 0.0f`, identical to the engine's `PlayerShot_FindLockTarget` filter. No id-based exclusion: on-rails enemies are spawned as `OBJ_ACTOR_EVENT` and only resolve into "real enemies" after `EVOP_INIT_ACTOR` rewrites `info.targetOffset` from the per-event table.
 - Star Wolf members (Wolf / Leon / Pigma / Andrew) *are* lockable and so are covered by the predicate; only the four playable teammates are explicitly zeroed.
 - Bosses (`gBosses[]`), boss-shaped actors with `targetOffset = 0` (Dodora, Delphor body), non-lockable damage-dealers (CO_RADAR, ME_MORA), and environmental hazards are deferred — not cued by the first pass.
