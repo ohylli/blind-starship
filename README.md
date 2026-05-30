@@ -23,6 +23,14 @@ indicates left / right and pitch above / below you. High pitch is above you
 lower below. The cue tracks the closest target. Note: controls are typical
 fligth controls back / down on a stick makes you go up.
 
+There are also some spoken screen reader announcements during gameplay. In
+training the number of rings you have flown through in a row (your streak) is
+spoken as you pass each ring, and you are told when a streak is broken by a
+missed ring. Across all levels your score is announced whenever it goes up,
+spoken as the points you just gained and your new total. Both of these are per
+event announcements that can get chatty, so they share a single toggle that is
+on by default (see the configuration section if you want to turn them off).
+
 Training has 2 phases. The first is on rails flying containing only rings,
 enemies and some item pick ups. So no obstacles. Second phase  is in all-range
 mode (you can freely fly around a small arena) with some enemies and obstacles
@@ -45,7 +53,7 @@ In no particular order planned features or things to investigate include:
 - Add an audio cue glossary with both general sound effects and blind starship
   audio cues.
 - Making more game menus and screens accessible.
-- Adding screen reader announcements to gameplay: health, remaining lives,
+- Adding more screen reader announcements to gameplay: health, remaining lives,
   number of bombs etc.
 - Making the ports own configuration UI accessed via F1 accessible.
 - Possibly simplifying some levels if there simply is too much stuff going
@@ -136,6 +144,18 @@ you have the game. Change the value of `AccessibilityTrainingMinimal` from 1 to
 
 ```
 "gAccessibilityTrainingMinimal": 1,
+```
+
+### Gameplay announcements
+
+The spoken score and training ring streak announcements are on by default. If
+you find them too chatty you can turn them both off by editing the game's
+settings file `starship.cfg.json` created after first launch to the same folder
+where you have the game. Change the value of `AccessibilityScoreAnnounce` from 1
+to 0 i.e. change 1 to 0 on the line that looks like:
+
+```
+"gAccessibilityScoreAnnounce": 1,
 ```
 
 ### Graphics Backends
