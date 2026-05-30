@@ -6,7 +6,7 @@
 #include "assets/ast_versus.h"
 #include "assets/ast_sector_z.h"
 #include "port/interpolation/FrameInterpolation.h"
-#include "port/hooks/list/EngineEvent.h"
+#include "port/hooks/Events.h"
 #include "port/mods/PortEnhancements.h"
 
 // f32 path1 = 0.0f;
@@ -1844,6 +1844,15 @@ void Display_Update(void) {
         gHitCount = 999;
     }
 #endif
+
+    // @port: @event: announce score gains for accessibility; once-per-frame diff coalesces kills.
+    {
+        static s32 sPrevHitCount = 0;
+        if (gHitCount > sPrevHitCount) {
+            CALL_EVENT(ScoreChangedEvent, gHitCount, gHitCount - sPrevHitCount);
+        }
+        sPrevHitCount = gHitCount;
+    }
 
     // @port: @event: Call DisplayPreUpdateEvent
     CALL_EVENT(DisplayPreUpdateEvent);

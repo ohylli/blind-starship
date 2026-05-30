@@ -463,6 +463,7 @@ void PortEnhancements_Register() {
     // Register gameplay events
     REGISTER_EVENT(TrainingRingPassedEvent);
     REGISTER_EVENT(TrainingRingMissedEvent);
+    REGISTER_EVENT(ScoreChangedEvent);
 
     // Register item events
     REGISTER_EVENT(ItemDropEvent);
