@@ -460,6 +460,10 @@ void PortEnhancements_Register() {
     REGISTER_EVENT(DrawGlobalHUDPreEvent);
     REGISTER_EVENT(DrawGlobalHUDPostEvent);
 
+    // Register gameplay events
+    REGISTER_EVENT(TrainingRingPassedEvent);
+    REGISTER_EVENT(TrainingRingMissedEvent);
+
     // Register item events
     REGISTER_EVENT(ItemDropEvent);
 

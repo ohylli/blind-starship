@@ -89,6 +89,7 @@ This fork is exploring an accessibility mod for blind players (the maintainer is
 - Main menu — entry announcement + cursor navigation
 - Sound menu — entry announcement + cursor navigation + value changes
 - Pause menu  — entry announcement + cursor navigation
+- Training rings — the consecutive-ring streak spoken on each ring passed and when a streak is broken by a miss (interrupting, so the latest count wins). First gameplay (non-menu) TTS announcement: semantic events in `src/port/hooks/list/GameplayEvent.h` fired from `fox_tr.c`, spoken by `src/port/mods/accessibility_screens/TrainingRings.cpp`.
 - Positional audio cues sharing the `gAccessibilityAudioCues` CVar. Both live in `src/port/mods/AccessibilityCues.{cpp,h}`; the engine handles pan (from X) and volume (from distance) and the mod drives pitch from altitude.
     - *Ring cue* — guides the player to the next Training ring (LEVEL_TRAINING only). Drives src from the world-space delta to the ring.
     - *Enemy cue* — locks onto the closest cueable enemy ahead of the Arwing's aim line across all on-rails levels (`gLevelMode == LEVELMODE_ON_RAILS`). The world delta is rotated into the Arwing's body frame so pan / pitch / "ahead" track the aim direction, not world axes. Predicate matches the engine's missile lock-on (`PlayerShot_FindLockTarget`). Design rationale and the body-frame derivation: `docs/accessibility-enemy-cue.md`. Tuning knobs (both cues): `docs/accessibility-cues-tuning.md`.

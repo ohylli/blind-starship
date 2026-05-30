@@ -14,6 +14,7 @@ void Accessibility_Init() {
     AccessibilityMainMenu_Register();
     AccessibilitySoundMenu_Register();
     AccessibilityPauseMenu_Register();
+    AccessibilityTrainingRings_Register();
 
     AccessibilityCues_Init();
     AccessibilityTrainingMinimal_Init();

@@ -7,3 +7,4 @@ void AccessibilityTitleScreen_Register();
 void AccessibilityMainMenu_Register();
 void AccessibilitySoundMenu_Register();
 void AccessibilityPauseMenu_Register();
+void AccessibilityTrainingRings_Register();

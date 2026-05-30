@@ -1,6 +1,7 @@
 #pragma once
 
 #include "list/EngineEvent.h"
+#include "list/GameplayEvent.h"
 #include "list/ActorEvent.h"
 #include "list/ItemEvent.h"
 #include "list/ActionEvent.h"

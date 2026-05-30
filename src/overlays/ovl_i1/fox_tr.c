@@ -7,6 +7,7 @@
 #include "global.h"
 #include "assets/ast_training.h"
 #include "port/mods/PortEnhancements.h"
+#include "port/hooks/Events.h"
 
 void Training_RingPassCount_Draw(void) {
     if (gRingPassCount != 0) {
@@ -35,6 +36,7 @@ void Training_ItemRing_Update(ItemTrainingRing* this) {
                     this->unk_44 = 1;
                     PRINTF("♪:リング未通過音\n"); // Ring not passed sound
                     AUDIO_PLAY_SFX(NA_SE_RING_MISS, gDefaultSfxSource, 4);
+                    CALL_EVENT(TrainingRingMissedEvent, gRingPassCount); // streak before the reset below
                     gRingPassCount = 0;
                 }
             }
@@ -48,6 +50,7 @@ void Training_ItemRing_Update(ItemTrainingRing* this) {
                 AUDIO_PLAY_SFX(NA_SE_RING_PASS, gDefaultSfxSource, 4);
 
                 gRingPassCount++;
+                CALL_EVENT(TrainingRingPassedEvent, gRingPassCount);
 
                 if ((this->obj.rot.x != 0.0f) && (gRingPassCount >= 100)) {
                     Radio_PlayMessage(gMsg_ID_20330, RCID_ROB64);
