@@ -23,6 +23,7 @@
 #include "assets/ast_enmy_planet.h"
 #include "assets/ast_zoness.h"
 #include "port/interpolation/FrameInterpolation.h"
+#include "port/hooks/Events.h"
 #include "port/mods/PortEnhancements.h"
 #include "sf64_tagging.h"
 
@@ -42,6 +43,10 @@ s32 BonusText_Display(f32 xPos, f32 yPos, f32 zPos, s32 hits) {
             gBonusText[i].pos.z = zPos;
             gBonusText[i].rise = 0.0f;
             gBonusText[i].timer = 65;
+            // @port: @event: announce the on-screen bonus popup for accessibility.
+            // Fired here (not at function top) so it only fires when a slot was free
+            // and the popup is actually shown.
+            CALL_EVENT(BonusTextEvent, hits);
             break;
         }
     }

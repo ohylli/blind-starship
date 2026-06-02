@@ -26,10 +26,12 @@ fligth controls back / down on a stick makes you go up.
 There are also some spoken screen reader announcements during gameplay. In
 training the number of rings you have flown through in a row (your streak) is
 spoken as you pass each ring, and you are told when a streak is broken by a
-missed ring. Across all levels your score is announced whenever it goes up,
-spoken as the points you just gained and your new total. Both of these are per
-event announcements that can get chatty, so they share a single toggle that is
-on by default (see the configuration section if you want to turn them off).
+missed ring. Across all levels your score is announced by speaking the bonus
+that pops up on screen when you destroy an enemy, matching what a sighted player
+sees: the hits you scored ("3 hits") plus your new total, or "great" and "extra
+life" for the special bonuses. Both of these are per event announcements that can
+get chatty, so they share a single toggle that is on by default (see the
+configuration section if you want to turn them off).
 
 Training has 2 phases. The first is on rails flying containing only rings,
 enemies and some item pick ups. So no obstacles. Second phase  is in all-range

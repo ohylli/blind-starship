@@ -13,8 +13,12 @@
 DEFINE_EVENT(TrainingRingPassedEvent, s32 count;);
 DEFINE_EVENT(TrainingRingMissedEvent, s32 count;);
 
-// Score (gHitCount) increase, detected once per frame in Display_Update so every
-// scattered gHitCount += N site is captured and multiple kills in one frame are
-// coalesced into a single delta. Fired only when the score rises; restores/resets
-// (which lower it) resync silently. total is the new running score, delta the gain.
-DEFINE_EVENT(ScoreChangedEvent, s32 total; s32 delta;);
+// On-screen bonus popup ("hit +N" / "GREAT" / "1UP"). Fired from BonusText_Display
+// the instant a popup is actually shown, carrying value exactly as the game passes
+// it: 1-10 and 20/30/40/50 render as numbers, BONUS_TEXT_GREAT (100) as "GREAT",
+// BONUS_TEXT_1UP (101) as "1UP". This is what the player sees, which is deliberately
+// not the same as the gHitCount increment (a hidden "+1 tax" at most sites, lock-on
+// bonuses >10 clamped to "GREAT", 1UP not scoring at all). Consumers that also want
+// the running total read gHitCount on DisplayPostUpdateEvent, where it is final for
+// the frame (the popup fires before gHitCount is incremented at the call site).
+DEFINE_EVENT(BonusTextEvent, s32 value;);

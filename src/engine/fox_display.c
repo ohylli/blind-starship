@@ -1845,15 +1845,6 @@ void Display_Update(void) {
     }
 #endif
 
-    // @port: @event: announce score gains for accessibility; once-per-frame diff coalesces kills.
-    {
-        static s32 sPrevHitCount = 0;
-        if (gHitCount > sPrevHitCount) {
-            CALL_EVENT(ScoreChangedEvent, gHitCount, gHitCount - sPrevHitCount);
-        }
-        sPrevHitCount = gHitCount;
-    }
-
     // @port: @event: Call DisplayPreUpdateEvent
     CALL_EVENT(DisplayPreUpdateEvent);
 
