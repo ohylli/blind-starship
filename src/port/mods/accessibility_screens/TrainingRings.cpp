@@ -42,6 +42,10 @@ static void Accessibility_OnTrainingRingMissed(IEvent* event) {
 }
 
 void AccessibilityTrainingRings_Register() {
+    // Register the shared toggle here too so this file is independently correct and does
+    // not depend on AccessibilityScore_Register running first. CVarRegisterInteger is
+    // idempotent for the same key+default, so the duplicate call is harmless.
+    CVarRegisterInteger("gAccessibilityScoreAnnounce", 1);
     REGISTER_LISTENER(TrainingRingPassedEvent, Accessibility_OnTrainingRingPassed, EVENT_PRIORITY_NORMAL);
     REGISTER_LISTENER(TrainingRingMissedEvent, Accessibility_OnTrainingRingMissed, EVENT_PRIORITY_NORMAL);
 }

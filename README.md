@@ -153,7 +153,7 @@ you have the game. Change the value of `AccessibilityTrainingMinimal` from 1 to
 The spoken score and training ring streak announcements are on by default. If
 you find them too chatty you can turn them both off by editing the game's
 settings file `starship.cfg.json` created after first launch to the same folder
-where you have the game. Change the value of `AccessibilityScoreAnnounce` from 1
+where you have the game. Change the value of `gAccessibilityScoreAnnounce` from 1
 to 0 i.e. change 1 to 0 on the line that looks like:
 
 ```
