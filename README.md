@@ -28,7 +28,7 @@ training the number of rings you have flown through in a row (your streak) is
 spoken as you pass each ring, and you are told when a streak is broken by a
 missed ring. Across all levels your score is announced by speaking the bonus
 that pops up on screen when you destroy an enemy, matching what a sighted player
-sees: the hits you scored ("3 hits") plus your new total, or "great" and "extra
+sees: the hits you scored ("hit +3") plus your new total, or "great" and "extra
 life" for the special bonuses. Both of these are per event announcements that can
 get chatty, so they share a single toggle that is on by default (see the
 configuration section if you want to turn them off).

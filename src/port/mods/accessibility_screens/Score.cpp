@@ -32,8 +32,8 @@ static bool Accessibility_IsScoreAnnounceEnabled() {
     return CVarGetInteger("gAccessibilityScoreAnnounce", 1) == 1;
 }
 
-// Spoken form of one popup plus the running total. Numeric popups are the on-screen
-// "+N"; the two sentinels become words. total is gHitCount, read at flush time.
+// Spoken form of one popup plus the running total. Numeric popups echo the on-screen
+// "hit +N" verbatim; the two sentinels become words. total is gHitCount, read at flush time.
 static std::string Accessibility_BonusPhrase(s32 value, s32 total) {
     if (value == BONUS_TEXT_GREAT) {
         return fmt::format("great, total {}", total);
@@ -41,7 +41,7 @@ static std::string Accessibility_BonusPhrase(s32 value, s32 total) {
     if (value == BONUS_TEXT_1UP) {
         return fmt::format("extra life, total {}", total);
     }
-    return fmt::format("{} {}, total {}", value, value == 1 ? "hit" : "hits", total);
+    return fmt::format("hit +{}, total {}", value, total);
 }
 
 static void Accessibility_OnBonusText(IEvent* event) {
