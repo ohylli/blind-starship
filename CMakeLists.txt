@@ -343,6 +343,81 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "NintendoSwitch")
     )
 endif()
 
+#=================== Steam Audio + miniaudio (accessibility / 3D HRTF cues) ===================
+# Steam Audio (Valve, Apache-2.0) is the binaural HRTF spatializer; miniaudio
+# (single-header, public-domain) is the playback engine that hosts it and opens
+# its own OS audio device alongside libultraship's. Unlike PRISM above, Steam
+# Audio ships prebuilt binaries, so we download + extract the release zip rather
+# than building from source. Both deps surface a runtime DLL copied next to the
+# executable, mirroring the PRISM POST_BUILD step.
+if(NOT CMAKE_SYSTEM_NAME STREQUAL "NintendoSwitch")
+    set(STEAMAUDIO_VER 4.8.1)
+    set(STEAMAUDIO_DL_DIR ${CMAKE_BINARY_DIR}/steamaudio)
+    set(STEAMAUDIO_ZIP ${STEAMAUDIO_DL_DIR}/steamaudio_${STEAMAUDIO_VER}.zip)
+    # The release zip extracts to a single top-level steamaudio/ folder.
+    set(STEAMAUDIO_ROOT ${STEAMAUDIO_DL_DIR}/steamaudio)
+
+    if(NOT EXISTS ${STEAMAUDIO_ROOT}/include/phonon.h)
+        message(STATUS "Downloading Steam Audio ${STEAMAUDIO_VER}...")
+        file(DOWNLOAD
+            https://github.com/ValveSoftware/steam-audio/releases/download/v${STEAMAUDIO_VER}/steamaudio_${STEAMAUDIO_VER}.zip
+            ${STEAMAUDIO_ZIP}
+            SHOW_PROGRESS STATUS _sa_status)
+        list(GET _sa_status 0 _sa_code)
+        if(NOT _sa_code EQUAL 0)
+            message(FATAL_ERROR "Failed to download Steam Audio: ${_sa_status}")
+        endif()
+        # `cmake -E tar` auto-detects zip and is available well before
+        # file(ARCHIVE_EXTRACT) (3.18), keeping us within the 3.16 floor.
+        execute_process(
+            COMMAND ${CMAKE_COMMAND} -E tar xf ${STEAMAUDIO_ZIP}
+            WORKING_DIRECTORY ${STEAMAUDIO_DL_DIR}
+            RESULT_VARIABLE _sa_extract)
+        if(NOT _sa_extract EQUAL 0)
+            message(FATAL_ERROR "Failed to extract Steam Audio: ${_sa_extract}")
+        endif()
+    endif()
+
+    # miniaudio single header: declarations are included where needed; the
+    # implementation lives in src/port/accessibility/miniaudio_impl.cpp.
+    set(MINIAUDIO_VER 0.11.21)
+    set(MINIAUDIO_DIR ${CMAKE_BINARY_DIR}/miniaudio)
+    if(NOT EXISTS ${MINIAUDIO_DIR}/miniaudio.h)
+        message(STATUS "Downloading miniaudio ${MINIAUDIO_VER}...")
+        file(DOWNLOAD
+            https://raw.githubusercontent.com/mackron/miniaudio/${MINIAUDIO_VER}/miniaudio.h
+            ${MINIAUDIO_DIR}/miniaudio.h
+            SHOW_PROGRESS STATUS _ma_status)
+        list(GET _ma_status 0 _ma_code)
+        if(NOT _ma_code EQUAL 0)
+            message(FATAL_ERROR "Failed to download miniaudio: ${_ma_status}")
+        endif()
+    endif()
+
+    if(WIN32)
+        set(STEAMAUDIO_LIBDIR ${STEAMAUDIO_ROOT}/lib/windows-x64)
+        set(STEAMAUDIO_IMPORT_LIB ${STEAMAUDIO_LIBDIR}/phonon.lib)
+        set(STEAMAUDIO_RUNTIME_LIB ${STEAMAUDIO_LIBDIR}/phonon.dll)
+    elseif(APPLE)
+        set(STEAMAUDIO_LIBDIR ${STEAMAUDIO_ROOT}/lib/osx)
+        set(STEAMAUDIO_IMPORT_LIB ${STEAMAUDIO_LIBDIR}/libphonon.dylib)
+        set(STEAMAUDIO_RUNTIME_LIB ${STEAMAUDIO_IMPORT_LIB})
+    else()
+        set(STEAMAUDIO_LIBDIR ${STEAMAUDIO_ROOT}/lib/linux-x64)
+        set(STEAMAUDIO_IMPORT_LIB ${STEAMAUDIO_LIBDIR}/libphonon.so)
+        set(STEAMAUDIO_RUNTIME_LIB ${STEAMAUDIO_IMPORT_LIB})
+    endif()
+
+    target_include_directories(${PROJECT_NAME} PRIVATE ${STEAMAUDIO_ROOT}/include ${MINIAUDIO_DIR})
+    target_link_libraries(${PROJECT_NAME} PRIVATE ${STEAMAUDIO_IMPORT_LIB})
+    target_compile_definitions(${PROJECT_NAME} PRIVATE HAVE_STEAM_AUDIO)
+    add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                ${STEAMAUDIO_RUNTIME_LIB} $<TARGET_FILE_DIR:${PROJECT_NAME}>
+        COMMENT "Copying phonon shared library next to Starship executable"
+    )
+endif()
+
 if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
     target_compile_definitions(${PROJECT_NAME} PRIVATE
         "$<$<CONFIG:Debug>:"
