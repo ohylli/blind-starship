@@ -5,6 +5,7 @@
 #include "port/CGameCompat.h"
 #include "sfx.h"
 #include "port/hooks/Events.h"
+#include "port/accessibility/Cue3D.h"
 
 #include <spdlog/spdlog.h>
 
@@ -38,7 +39,20 @@ static f32 sRingCueSrc[3] = { 0.0f, 0.0f, 0.0f };
 static f32 sRingCueFreqMod = 1.0f;
 static f32 sRingCueVolMod = 1.0f;
 static s8 sRingCueReverb = 0;
-static bool sRingCueActive = false;
+
+// Which backend is currently sounding the ring cue. Lets a mid-level
+// gAccessibilityCue3D flip stop the old backend before starting the other so
+// the two never overlap.
+enum RingCueBackend { RING_CUE_NONE, RING_CUE_SFX_ENGINE, RING_CUE_3D };
+static RingCueBackend sRingCueBackend = RING_CUE_NONE;
+
+// HRTF ring cue (gAccessibilityCue3D). The ring.wav source is loaded lazily on
+// first use — Cue3D_Init opens a second OS audio device, so we defer that until
+// the cue is actually wanted. Cached for the process lifetime; freed wholesale
+// by Cue3D_Shutdown in Accessibility_Exit (after which this pointer dangles but
+// is never touched again).
+static Cue3DSource* sRing3DSource = nullptr;
+static bool sRing3DLoadFailed = false; // don't retry a failed load every frame
 
 static f32 sEnemyCueSrc[3] = { 0.0f, 0.0f, 0.0f };
 static f32 sEnemyCueFreqMod = 1.0f;
@@ -48,6 +62,13 @@ static bool sEnemyCueActive = false;
 
 static bool AccessibilityCues_IsEnabled() {
     return CVarGetInteger("gAccessibilityAudioCues", 1) == 1;
+}
+
+// When on, the ring cue plays through the Cue3D HRTF backend (ring.wav) instead
+// of the SF64 audio engine. Runtime-toggleable; the listener switches backends
+// on the next tick. Default on.
+static bool AccessibilityCues_IsCue3DEnabled() {
+    return CVarGetInteger("gAccessibilityCue3D", 1) == 1;
 }
 
 // Per-tick diagnostic trace for the enemy cue. Off by default. Even when on,
@@ -114,6 +135,26 @@ static Item* AccessibilityCues_FindNextTrainingRing() {
     return best;
 }
 
+// Lazily load (and cache) the ring.wav HRTF source. Returns NULL if the Cue3D
+// backend isn't compiled in (e.g. Switch) or the file can't be loaded, in which
+// case we record the failure so we don't retry it every frame.
+static Cue3DSource* AccessibilityCues_GetRing3DSource() {
+    if (sRing3DSource != NULL) {
+        return sRing3DSource;
+    }
+    if (sRing3DLoadFailed) {
+        return NULL;
+    }
+    Cue3D_Init(); // idempotent; opens the device + HRTF on first use only
+    std::string path = Ship::Context::GetPathRelativeToAppDirectory("assets/accessibility/ring.wav");
+    sRing3DSource = Cue3D_Load(path.c_str(), true); // loop: continuous while a ring is ahead
+    if (sRing3DSource == NULL) {
+        sRing3DLoadFailed = true;
+        SPDLOG_WARN("AccessibilityCues: Cue3D ring cue unavailable (failed to load '{}')", path);
+    }
+    return sRing3DSource;
+}
+
 static void AccessibilityCues_RefreshRingSource(Item* ring) {
     Player* player = &gPlayer[0];
     // Player-relative bypass of Object_SetSfxSourceToPos. The converter pans
@@ -125,20 +166,46 @@ static void AccessibilityCues_RefreshRingSource(Item* ring) {
     sRingCueSrc[2] = -(ring->obj.pos.z - player->trueZpos);
     Object_ClampSfxSource(sRingCueSrc);
     sRingCueFreqMod = AccessibilityCues_ComputeFreqModFromY(sRingCueSrc[1]);
+    // The HRTF backend needs the position pushed every frame (the SF64 engine
+    // reads the sRingCueSrc pointer itself, so its path needs no per-frame call).
+    // Pass the vector verbatim in the game convention (+x right, +y up, +z
+    // ahead); the backend negates Z internally. HRTF gives a real elevation cue
+    // from Y, so sRingCueFreqMod is not applied here.
+    if (sRingCueBackend == RING_CUE_3D) {
+        Cue3D_SetPosition(sRing3DSource, sRingCueSrc[0], sRingCueSrc[1], sRingCueSrc[2]);
+    }
 }
 
 static void AccessibilityCues_StartRingCue(Item* ring) {
-    AccessibilityCues_RefreshRingSource(ring);
-    Audio_PlaySfx(RING_CUE_SFX, sRingCueSrc, 0, &sRingCueFreqMod, &sRingCueVolMod, &sRingCueReverb);
-    sRingCueActive = true;
+    if (AccessibilityCues_IsCue3DEnabled()) {
+        Cue3DSource* source = AccessibilityCues_GetRing3DSource();
+        if (source == NULL) {
+            // 3D selected but unavailable: no cue. The SF64 path is deliberately
+            // suppressed while the 3D backend is chosen.
+            return;
+        }
+        sRingCueBackend = RING_CUE_3D;
+        AccessibilityCues_RefreshRingSource(ring); // computes src + pushes position
+        Cue3D_Play(source);
+    } else {
+        AccessibilityCues_RefreshRingSource(ring);
+        Audio_PlaySfx(RING_CUE_SFX, sRingCueSrc, 0, &sRingCueFreqMod, &sRingCueVolMod, &sRingCueReverb);
+        sRingCueBackend = RING_CUE_SFX_ENGINE;
+    }
 }
 
 static void AccessibilityCues_StopRingCue() {
-    if (!sRingCueActive) {
-        return;
+    switch (sRingCueBackend) {
+        case RING_CUE_SFX_ENGINE:
+            Audio_KillSfxBySource(sRingCueSrc);
+            break;
+        case RING_CUE_3D:
+            Cue3D_Stop(sRing3DSource);
+            break;
+        case RING_CUE_NONE:
+            return;
     }
-    Audio_KillSfxBySource(sRingCueSrc);
-    sRingCueActive = false;
+    sRingCueBackend = RING_CUE_NONE;
 }
 
 static void AccessibilityCues_OnRingPostUpdate(IEvent* event) {
@@ -158,7 +225,14 @@ static void AccessibilityCues_OnRingPostUpdate(IEvent* event) {
         return;
     }
 
-    if (!sRingCueActive) {
+    // Stop the active backend if the CVar was flipped mid-level, so the two
+    // never sound at once.
+    RingCueBackend desired = AccessibilityCues_IsCue3DEnabled() ? RING_CUE_3D : RING_CUE_SFX_ENGINE;
+    if (sRingCueBackend != RING_CUE_NONE && sRingCueBackend != desired) {
+        AccessibilityCues_StopRingCue();
+    }
+
+    if (sRingCueBackend == RING_CUE_NONE) {
         AccessibilityCues_StartRingCue(target);
     } else {
         AccessibilityCues_RefreshRingSource(target);
@@ -334,6 +408,7 @@ static void AccessibilityCues_OnEnemyPostUpdate(IEvent* event) {
 
 void AccessibilityCues_Init() {
     CVarRegisterInteger("gAccessibilityAudioCues", 1);
+    CVarRegisterInteger("gAccessibilityCue3D", 1);
     CVarRegisterInteger("gAccessibilityEnemyCueLog", 0);
     REGISTER_LISTENER(GamePostUpdateEvent, AccessibilityCues_OnRingPostUpdate, EVENT_PRIORITY_NORMAL);
     REGISTER_LISTENER(GamePostUpdateEvent, AccessibilityCues_OnEnemyPostUpdate, EVENT_PRIORITY_NORMAL);
