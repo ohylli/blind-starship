@@ -34,6 +34,7 @@ void Accessibility_Init() {
 
 void Accessibility_Exit() {
     AccessibilityCues_Exit();
+    SpatialAudioTest_Stop();
     Cue3D_Shutdown();
 }
 

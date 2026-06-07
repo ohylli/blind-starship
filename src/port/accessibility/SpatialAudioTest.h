@@ -14,6 +14,10 @@ extern "C" {
 // listener that moves it. Call once, only when the test is enabled.
 void SpatialAudioTest_Start(void);
 
+// Detaches the test from its source so the per-frame listener goes inert. Call
+// before Cue3D_Shutdown so the listener never touches a freed source.
+void SpatialAudioTest_Stop(void);
+
 #ifdef __cplusplus
 }
 #endif

@@ -4,7 +4,7 @@
 
 // Cue3D: a backend-agnostic seam for 3D-positional audio cues. The caller loads a
 // mono sound, plays it, and moves it around the listener in 3D; a backend (Steam
-// Audio's binaural HRTF spatializer, in SpatialAudio.cpp) turns that into stereo.
+// Audio's binaural HRTF spatializer, in Cue3DSteamAudio.cpp) turns that into stereo.
 // Keeping this interface free of any spatializer detail means an alternate backend
 // (e.g. OpenAL Soft) can drop in behind the same header without touching callers.
 //
@@ -35,6 +35,12 @@ void Cue3D_Init(void);
 // even if Init never ran or failed.
 void Cue3D_Shutdown(void);
 
+// The backend's fixed output sample rate, in Hz — the rate Cue3D_LoadPcm expects
+// its PCM to already be at. Lets a caller synthesize PCM at the right rate instead
+// of hardcoding a constant that must track the backend. Returns 0 if no backend is
+// compiled in.
+int Cue3D_GetSampleRate(void);
+
 // Load a sound from a file (any format miniaudio decodes — WAV/FLAC/MP3),
 // downmixed to mono and resampled to the backend's rate. Returns NULL on failure
 // or if no source slot is free. `loop` makes playback wrap forever.
@@ -45,7 +51,8 @@ Cue3DSource* Cue3D_Load(const char* path, bool loop);
 // NULL on failure / no free slot.
 Cue3DSource* Cue3D_LoadPcm(const float* monoPcm, int frames, bool loop);
 
-// Begin (or resume) playback of a loaded source.
+// Begin (or resume) playback of a loaded source. A one-shot source that has already
+// finished restarts from the beginning.
 void Cue3D_Play(Cue3DSource* source);
 
 // Set the source's listener-relative position (game convention: +x right, +y up,

@@ -8,6 +8,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstring>
+#include <exception>
 #include <vector>
 
 // Steam Audio backend for the Cue3D seam (Cue3D.h). miniaudio owns the OS playback
@@ -39,12 +40,15 @@ constexpr int kMaxSources = 16;
 // Real definition of the seam's opaque handle.
 struct Cue3DSource {
     // Audio-thread-only: the callback is the sole accessor once the source is
-    // published (inUse == true). Immutable-after-publish fields ride the inUse
-    // release/acquire pair for visibility, so they need no atomics.
+    // published (inUse == true). effect/pcm/frameCount/loop are immutable after
+    // publish and ride the inUse release/acquire pair for visibility, so they need
+    // no atomics. cursor is mutated every block, but ONLY by the callback, so it is
+    // likewise atomic-free — do NOT write it from the game thread without adding
+    // synchronization.
     IPLBinauralEffect effect = nullptr; // one per source — holds interpolation state
     std::vector<float> pcm;             // decoded mono @ kSampleRate, owned
     int frameCount = 0;
-    int cursor = 0; // playback position, frames
+    int cursor = 0; // playback position, frames (audio-thread-only)
     bool loop = false;
 
     // Cross-thread: game thread writes, audio callback reads. Read once per block.
@@ -116,7 +120,14 @@ Cue3DSource* CreateSource(const float* monoPcm, int frames, bool loop) {
         return nullptr;
     }
 
-    s.pcm.assign(monoPcm, monoPcm + frames);
+    try {
+        s.pcm.assign(monoPcm, monoPcm + frames);
+    } catch (const std::exception& e) {
+        // Never let a C++ allocation failure unwind through the extern "C" callers.
+        SPDLOG_ERROR("Cue3D: PCM allocation failed ({}); source not created", e.what());
+        iplBinauralEffectRelease(&s.effect); // undo the effect created just above
+        return nullptr;
+    }
     s.frameCount = frames;
     s.cursor = 0;
     s.loop = loop;
@@ -171,8 +182,10 @@ void ProduceBlock() {
             mono[n] = s.pcm[s.cursor++] * gain;
         }
         if (ended) {
-            // End of a non-looping source: stop it from the audio thread. cursor is
-            // left past the end (harmless); the slot stays inUse.
+            // End of a non-looping source: stop it from the audio thread and rewind
+            // so a later Cue3D_Play restarts from the beginning (the cursor is the
+            // callback's own, so this write is race-free). The slot stays inUse.
+            s.cursor = 0;
             s.playing.store(false, std::memory_order_release);
         }
 
@@ -325,6 +338,10 @@ extern "C" void Cue3D_Shutdown(void) {
     iplContextRelease(&g.ctx);
 }
 
+extern "C" int Cue3D_GetSampleRate(void) {
+    return kSampleRate;
+}
+
 extern "C" Cue3DSource* Cue3D_Load(const char* path, bool loop) {
     if (!g.active || path == nullptr) {
         return nullptr;
@@ -339,25 +356,32 @@ extern "C" Cue3DSource* Cue3D_Load(const char* path, bool loop) {
     }
 
     std::vector<float> pcm;
-    ma_uint64 total = 0;
-    if (ma_decoder_get_length_in_pcm_frames(&decoder, &total) == MA_SUCCESS && total > 0) {
-        pcm.resize((size_t) total);
-        ma_uint64 read = 0;
-        ma_decoder_read_pcm_frames(&decoder, pcm.data(), total, &read);
-        pcm.resize((size_t) read); // trim to what actually decoded
-    } else {
-        // Length unknown (some streamed formats): read until EOF.
-        float chunk[kFrameSize];
-        for (;;) {
+    try {
+        ma_uint64 total = 0;
+        if (ma_decoder_get_length_in_pcm_frames(&decoder, &total) == MA_SUCCESS && total > 0) {
+            pcm.resize((size_t) total);
             ma_uint64 read = 0;
-            ma_result r = ma_decoder_read_pcm_frames(&decoder, chunk, kFrameSize, &read);
-            if (read > 0) {
-                pcm.insert(pcm.end(), chunk, chunk + read);
-            }
-            if (r != MA_SUCCESS || read < (ma_uint64) kFrameSize) {
-                break;
+            ma_decoder_read_pcm_frames(&decoder, pcm.data(), total, &read);
+            pcm.resize((size_t) read); // trim to what actually decoded
+        } else {
+            // Length unknown (some streamed formats): read until EOF.
+            float chunk[kFrameSize];
+            for (;;) {
+                ma_uint64 read = 0;
+                ma_result r = ma_decoder_read_pcm_frames(&decoder, chunk, kFrameSize, &read);
+                if (read > 0) {
+                    pcm.insert(pcm.end(), chunk, chunk + read);
+                }
+                if (r != MA_SUCCESS || read < (ma_uint64) kFrameSize) {
+                    break;
+                }
             }
         }
+    } catch (const std::exception& e) {
+        // Keep allocation failures from unwinding through the extern "C" boundary.
+        SPDLOG_ERROR("Cue3D: allocation failed decoding '{}' ({})", path, e.what());
+        ma_decoder_uninit(&decoder);
+        return nullptr;
     }
     ma_decoder_uninit(&decoder);
 
@@ -405,6 +429,9 @@ extern "C" void Cue3D_SetPosition(Cue3DSource* source, float x, float y, float z
 
 extern "C" void Cue3D_Init(void) {}
 extern "C" void Cue3D_Shutdown(void) {}
+extern "C" int Cue3D_GetSampleRate(void) {
+    return 0;
+}
 extern "C" Cue3DSource* Cue3D_Load(const char* path, bool loop) {
     (void) path;
     (void) loop;
