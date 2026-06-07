@@ -1,83 +1,218 @@
-#include "SpatialAudio.h"
+#include "Cue3D.h"
 
 #ifdef HAVE_STEAM_AUDIO
 
 #include <phonon.h>
 #include "miniaudio.h"
 #include <spdlog/spdlog.h>
+#include <atomic>
 #include <cmath>
 #include <cstring>
+#include <vector>
 
-// End-to-end smoke test for the Steam Audio + miniaudio pipeline. A single mono
-// tone is synthesized procedurally and run through Steam Audio's binaural HRTF
-// effect with a source direction that slowly orbits the listener in the
-// horizontal plane. miniaudio owns the OS playback device and pulls audio via a
-// callback; we bridge the callback's (variable) frame count to Steam Audio's
-// fixed frame size with a one-block carry buffer — the same block-size matching
-// the real cue engine will need.
+// Steam Audio backend for the Cue3D seam (Cue3D.h). miniaudio owns the OS playback
+// device and pulls audio via a callback; each Cue3D source carries its own decoded
+// mono PCM and its own Steam Audio binaural effect (the effect holds per-source
+// HRTF-interpolation state). The callback mixes all active sources — Steam Audio
+// spatializes but does not mix, so summing is our job — and bridges the callback's
+// variable frame count to Steam Audio's fixed processing block with a one-block
+// carry buffer.
+//
+// This file is the ONLY place that knows about Steam Audio's -Z-forward axis: the
+// seam takes the game's +z-ahead convention and ProduceBlock negates Z when it
+// builds the direction vector. An alternate backend would do its own mapping.
 
 namespace {
 
 constexpr int kSampleRate = 48000;
-constexpr int kFrameSize = 1024;          // Steam Audio fixed processing block
-constexpr double kTwoPi = 6.283185307179586;
-constexpr double kToneHz = 440.0;         // the orbiting tone's pitch
-constexpr double kOrbitHz = 0.25;         // one full circle around the head every 4 s
-constexpr float kToneGain = 0.2f;
+constexpr int kFrameSize = 1024; // Steam Audio fixed processing block
+
+// Fixed pool of sources. Cues are few (today: a ring cue + an enemy cue); 16 gives
+// generous headroom for future cue types while keeping the per-block scan trivial.
+// A fixed array means slot addresses never move, so a Cue3DSource* handed to a
+// caller stays valid for the whole Cue3D lifetime and the lock-free publish below
+// is safe.
+constexpr int kMaxSources = 16;
+
+} // namespace
+
+// Real definition of the seam's opaque handle.
+struct Cue3DSource {
+    // Audio-thread-only: the callback is the sole accessor once the source is
+    // published (inUse == true). Immutable-after-publish fields ride the inUse
+    // release/acquire pair for visibility, so they need no atomics.
+    IPLBinauralEffect effect = nullptr; // one per source — holds interpolation state
+    std::vector<float> pcm;             // decoded mono @ kSampleRate, owned
+    int frameCount = 0;
+    int cursor = 0; // playback position, frames
+    bool loop = false;
+
+    // Cross-thread: game thread writes, audio callback reads. Read once per block.
+    std::atomic<float> x{ 0.0f }; // game convention: +x right
+    std::atomic<float> y{ 0.0f }; //                  +y up
+    std::atomic<float> z{ 1.0f }; //                  +z ahead
+    std::atomic<float> gain{ 1.0f };
+    std::atomic<bool> playing{ false }; // game sets on Play/Stop; callback clears at non-loop EOF
+
+    // Publish gate: set LAST (release) in CreateSource, read FIRST (acquire) in the
+    // callback, so a half-built source is never observed.
+    std::atomic<bool> inUse{ false };
+};
+
+namespace {
 
 struct SpatialState {
     bool active = false;
 
     IPLContext ctx = nullptr;
     IPLHRTF hrtf = nullptr;
-    IPLBinauralEffect effect = nullptr;
-    IPLAudioBuffer inBuf{};               // mono, kFrameSize
-    IPLAudioBuffer outBuf{};              // stereo, kFrameSize
+    IPLAudioBuffer inBuf{};  // mono, kFrameSize — reused per source
+    IPLAudioBuffer tmpOut{}; // stereo, kFrameSize — reused per source
 
     ma_device device{};
 
-    double tonePhase = 0.0;               // continuous across blocks (avoids clicks)
-    double toneInc = 0.0;                 // radians/sample
-    float orbit = 0.0f;                   // current source angle, radians
-    float orbitInc = 0.0f;                // radians/sample
+    // Planar stereo accumulator: sources are summed here before interleaving.
+    float accL[kFrameSize] = { 0 };
+    float accR[kFrameSize] = { 0 };
 
-    // Interleaved stereo carry buffer: one processed Steam Audio block, drained
-    // across however many frames the device callback asks for.
+    // Interleaved stereo carry buffer: one processed block, drained across however
+    // many frames the device callback asks for. Audio-thread-only.
     float block[kFrameSize * 2] = { 0 };
-    int blockAvail = 0;                   // frames remaining in `block`
-    int blockPos = 0;                     // read cursor (frames) into `block`
+    int blockAvail = 0; // frames remaining in `block`
+    int blockPos = 0;   // read cursor (frames) into `block`
 };
 
 SpatialState g;
+Cue3DSource g_sources[kMaxSources];
 
-// Produce one kFrameSize block: synthesize the tone, spatialize it at the
-// current orbit angle, interleave into the carry buffer.
+// Build a per-source source from already-decoded mono PCM. Main thread only:
+// allocates, decodes, and creates the Steam Audio effect, then publishes the slot
+// with a single release store so the callback never sees it half-built.
+Cue3DSource* CreateSource(const float* monoPcm, int frames, bool loop) {
+    if (!g.active || monoPcm == nullptr || frames <= 0) {
+        return nullptr;
+    }
+
+    int slot = -1;
+    for (int i = 0; i < kMaxSources; i++) {
+        if (!g_sources[i].inUse.load(std::memory_order_acquire)) {
+            slot = i;
+            break;
+        }
+    }
+    if (slot < 0) {
+        SPDLOG_WARN("Cue3D: no free source slot ({} in use); load ignored", kMaxSources);
+        return nullptr;
+    }
+    Cue3DSource& s = g_sources[slot];
+
+    IPLAudioSettings audioSettings{};
+    audioSettings.samplingRate = kSampleRate;
+    audioSettings.frameSize = kFrameSize;
+    IPLBinauralEffectSettings effectSettings{};
+    effectSettings.hrtf = g.hrtf;
+    if (iplBinauralEffectCreate(g.ctx, &audioSettings, &effectSettings, &s.effect) != IPL_STATUS_SUCCESS) {
+        SPDLOG_ERROR("Cue3D: iplBinauralEffectCreate failed; source not created");
+        return nullptr;
+    }
+
+    s.pcm.assign(monoPcm, monoPcm + frames);
+    s.frameCount = frames;
+    s.cursor = 0;
+    s.loop = loop;
+    s.x.store(0.0f, std::memory_order_relaxed);
+    s.y.store(0.0f, std::memory_order_relaxed);
+    s.z.store(1.0f, std::memory_order_relaxed); // default "ahead"
+    s.gain.store(1.0f, std::memory_order_relaxed);
+    s.playing.store(false, std::memory_order_relaxed); // silent until Cue3D_Play
+
+    // Publish. Everything above must be visible before inUse flips true.
+    s.inUse.store(true, std::memory_order_release);
+    return &s;
+}
+
+// Produce one kFrameSize block: mix every active source through its binaural
+// effect at its current position, then interleave into the carry buffer.
 void ProduceBlock() {
+    std::memset(g.accL, 0, sizeof(g.accL));
+    std::memset(g.accR, 0, sizeof(g.accR));
+
     float* mono = g.inBuf.data[0];
-    for (int i = 0; i < kFrameSize; i++) {
-        mono[i] = kToneGain * (float) sin(g.tonePhase);
-        g.tonePhase += g.toneInc;
-        if (g.tonePhase >= kTwoPi) {
-            g.tonePhase -= kTwoPi;
+
+    for (int i = 0; i < kMaxSources; i++) {
+        Cue3DSource& s = g_sources[i];
+        if (!s.inUse.load(std::memory_order_acquire)) {
+            continue;
+        }
+        if (!s.playing.load(std::memory_order_acquire)) {
+            continue;
+        }
+
+        // Read the cross-thread params once per block (not per sample). A value one
+        // frame stale is inaudible for a cue.
+        const float gain = s.gain.load(std::memory_order_relaxed);
+        const float px = s.x.load(std::memory_order_relaxed);
+        const float py = s.y.load(std::memory_order_relaxed);
+        const float pz = s.z.load(std::memory_order_relaxed);
+
+        // Fill the mono input from this source's PCM, applying gain and advancing
+        // the cursor. Loop-wrap, or zero-pad + stop at the end of a one-shot.
+        bool ended = false;
+        for (int n = 0; n < kFrameSize; n++) {
+            if (s.cursor >= s.frameCount) {
+                if (s.loop) {
+                    s.cursor = 0;
+                } else {
+                    mono[n] = 0.0f;
+                    ended = true;
+                    continue;
+                }
+            }
+            mono[n] = s.pcm[s.cursor++] * gain;
+        }
+        if (ended) {
+            // End of a non-looping source: stop it from the audio thread. cursor is
+            // left past the end (harmless); the slot stays inUse.
+            s.playing.store(false, std::memory_order_release);
+        }
+
+        // Game (+z ahead) -> Steam Audio (-Z forward). THE negation lives here.
+        float dx = px;
+        float dy = py;
+        float dz = -pz;
+        float len = std::sqrt(dx * dx + dy * dy + dz * dz);
+        if (len < 1e-6f) {
+            dx = 0.0f;
+            dy = 0.0f;
+            dz = -1.0f; // degenerate position -> straight ahead
+        } else {
+            float inv = 1.0f / len;
+            dx *= inv;
+            dy *= inv;
+            dz *= inv;
+        }
+
+        IPLBinauralEffectParams params{};
+        params.direction = IPLVector3{ dx, dy, dz };
+        params.interpolation = IPL_HRTFINTERPOLATION_BILINEAR;
+        params.spatialBlend = 1.0f;
+        params.hrtf = g.hrtf;
+        params.peakDelays = nullptr;
+        iplBinauralEffectApply(s.effect, &params, &g.inBuf, &g.tmpOut);
+
+        // Sum into the accumulator (Steam Audio spatializes but does not mix).
+        const float* L = g.tmpOut.data[0];
+        const float* R = g.tmpOut.data[1];
+        for (int n = 0; n < kFrameSize; n++) {
+            g.accL[n] += L[n];
+            g.accR[n] += R[n];
         }
     }
 
-    // Advance the orbit once per block; bilinear HRTF interpolation smooths the
-    // per-block direction steps. Angle 0 = front (-Z), +90 deg = right (+X).
-    g.orbit += g.orbitInc * kFrameSize;
-    if (g.orbit >= (float) kTwoPi) {
-        g.orbit -= (float) kTwoPi;
+    for (int n = 0; n < kFrameSize; n++) {
+        g.block[2 * n] = g.accL[n];
+        g.block[2 * n + 1] = g.accR[n];
     }
-
-    IPLBinauralEffectParams params{};
-    params.direction = IPLVector3{ sinf(g.orbit), 0.0f, -cosf(g.orbit) };
-    params.interpolation = IPL_HRTFINTERPOLATION_BILINEAR;
-    params.spatialBlend = 1.0f;
-    params.hrtf = g.hrtf;
-    params.peakDelays = nullptr;
-
-    iplBinauralEffectApply(g.effect, &params, &g.inBuf, &g.outBuf);
-    iplAudioBufferInterleave(g.ctx, &g.outBuf, g.block);
     g.blockAvail = kFrameSize;
     g.blockPos = 0;
 }
@@ -85,7 +220,7 @@ void ProduceBlock() {
 void DataCallback(ma_device* device, void* output, const void* input, ma_uint32 frameCount) {
     (void) device;
     (void) input;
-    float* out = (float*) output;     // interleaved stereo
+    float* out = (float*) output; // interleaved stereo
     ma_uint32 written = 0;
     while (written < frameCount) {
         if (g.blockAvail == 0) {
@@ -104,7 +239,7 @@ void DataCallback(ma_device* device, void* output, const void* input, ma_uint32 
 
 } // namespace
 
-extern "C" void SpatialAudio_Init(void) {
+extern "C" void Cue3D_Init(void) {
     if (g.active) {
         return;
     }
@@ -112,7 +247,7 @@ extern "C" void SpatialAudio_Init(void) {
     IPLContextSettings ctxSettings{};
     ctxSettings.version = STEAMAUDIO_VERSION;
     if (iplContextCreate(&ctxSettings, &g.ctx) != IPL_STATUS_SUCCESS) {
-        SPDLOG_ERROR("SpatialAudio: iplContextCreate failed; 3D audio disabled");
+        SPDLOG_ERROR("Cue3D: iplContextCreate failed; 3D audio disabled");
         return;
     }
 
@@ -125,27 +260,14 @@ extern "C" void SpatialAudio_Init(void) {
     hrtfSettings.volume = 1.0f;
     hrtfSettings.normType = IPL_HRTFNORMTYPE_NONE;
     if (iplHRTFCreate(g.ctx, &audioSettings, &hrtfSettings, &g.hrtf) != IPL_STATUS_SUCCESS) {
-        SPDLOG_ERROR("SpatialAudio: iplHRTFCreate failed; 3D audio disabled");
+        SPDLOG_ERROR("Cue3D: iplHRTFCreate failed; 3D audio disabled");
         iplContextRelease(&g.ctx);
         return;
     }
 
-    IPLBinauralEffectSettings effectSettings{};
-    effectSettings.hrtf = g.hrtf;
-    if (iplBinauralEffectCreate(g.ctx, &audioSettings, &effectSettings, &g.effect) != IPL_STATUS_SUCCESS) {
-        SPDLOG_ERROR("SpatialAudio: iplBinauralEffectCreate failed; 3D audio disabled");
-        iplHRTFRelease(&g.hrtf);
-        iplContextRelease(&g.ctx);
-        return;
-    }
-
+    // Reused per source by the callback; effects are per-source, created on load.
     iplAudioBufferAllocate(g.ctx, 1, kFrameSize, &g.inBuf);
-    iplAudioBufferAllocate(g.ctx, 2, kFrameSize, &g.outBuf);
-
-    g.tonePhase = 0.0;
-    g.toneInc = kTwoPi * kToneHz / kSampleRate;
-    g.orbit = 0.0f;
-    g.orbitInc = (float) (kTwoPi * kOrbitHz / kSampleRate);
+    iplAudioBufferAllocate(g.ctx, 2, kFrameSize, &g.tmpOut);
 
     ma_device_config cfg = ma_device_config_init(ma_device_type_playback);
     cfg.playback.format = ma_format_f32;
@@ -154,46 +276,161 @@ extern "C" void SpatialAudio_Init(void) {
     cfg.periodSizeInFrames = kFrameSize;
     cfg.dataCallback = DataCallback;
     if (ma_device_init(nullptr, &cfg, &g.device) != MA_SUCCESS) {
-        SPDLOG_ERROR("SpatialAudio: ma_device_init failed; 3D audio disabled");
-        iplAudioBufferFree(g.ctx, &g.outBuf);
+        SPDLOG_ERROR("Cue3D: ma_device_init failed; 3D audio disabled");
+        iplAudioBufferFree(g.ctx, &g.tmpOut);
         iplAudioBufferFree(g.ctx, &g.inBuf);
-        iplBinauralEffectRelease(&g.effect);
         iplHRTFRelease(&g.hrtf);
         iplContextRelease(&g.ctx);
         return;
     }
     if (ma_device_start(&g.device) != MA_SUCCESS) {
-        SPDLOG_ERROR("SpatialAudio: ma_device_start failed; 3D audio disabled");
+        SPDLOG_ERROR("Cue3D: ma_device_start failed; 3D audio disabled");
         ma_device_uninit(&g.device);
-        iplAudioBufferFree(g.ctx, &g.outBuf);
+        iplAudioBufferFree(g.ctx, &g.tmpOut);
         iplAudioBufferFree(g.ctx, &g.inBuf);
-        iplBinauralEffectRelease(&g.effect);
         iplHRTFRelease(&g.hrtf);
         iplContextRelease(&g.ctx);
         return;
     }
 
     g.active = true;
-    SPDLOG_INFO("SpatialAudio: Steam Audio {} test tone started (orbiting HRTF source)", STEAMAUDIO_VERSION);
+    SPDLOG_INFO("Cue3D: Steam Audio {} backend ready", STEAMAUDIO_VERSION);
 }
 
-extern "C" void SpatialAudio_Shutdown(void) {
+extern "C" void Cue3D_Shutdown(void) {
     if (!g.active) {
         return;
     }
-    // Uninit stops the callback before we free the Steam Audio objects it reads.
+    // Uninit stops/joins the callback first, so the teardown below has no concurrent
+    // reader of the sources or Steam Audio objects.
     ma_device_uninit(&g.device);
-    iplAudioBufferFree(g.ctx, &g.outBuf);
+    g.active = false;
+
+    for (int i = 0; i < kMaxSources; i++) {
+        Cue3DSource& s = g_sources[i];
+        if (s.inUse.load(std::memory_order_relaxed)) {
+            iplBinauralEffectRelease(&s.effect);
+            s.pcm.clear();
+            s.pcm.shrink_to_fit();
+            s.frameCount = 0;
+            s.cursor = 0;
+            s.playing.store(false, std::memory_order_relaxed);
+            s.inUse.store(false, std::memory_order_relaxed); // reusable on a later Init
+        }
+    }
+
+    iplAudioBufferFree(g.ctx, &g.tmpOut);
     iplAudioBufferFree(g.ctx, &g.inBuf);
-    iplBinauralEffectRelease(&g.effect);
     iplHRTFRelease(&g.hrtf);
     iplContextRelease(&g.ctx);
-    g.active = false;
+}
+
+extern "C" Cue3DSource* Cue3D_Load(const char* path, bool loop) {
+    if (!g.active || path == nullptr) {
+        return nullptr;
+    }
+
+    // Force mono downmix + resample to the backend rate + float samples.
+    ma_decoder_config cfg = ma_decoder_config_init(ma_format_f32, 1, kSampleRate);
+    ma_decoder decoder;
+    if (ma_decoder_init_file(path, &cfg, &decoder) != MA_SUCCESS) {
+        SPDLOG_ERROR("Cue3D: failed to open '{}'", path);
+        return nullptr;
+    }
+
+    std::vector<float> pcm;
+    ma_uint64 total = 0;
+    if (ma_decoder_get_length_in_pcm_frames(&decoder, &total) == MA_SUCCESS && total > 0) {
+        pcm.resize((size_t) total);
+        ma_uint64 read = 0;
+        ma_decoder_read_pcm_frames(&decoder, pcm.data(), total, &read);
+        pcm.resize((size_t) read); // trim to what actually decoded
+    } else {
+        // Length unknown (some streamed formats): read until EOF.
+        float chunk[kFrameSize];
+        for (;;) {
+            ma_uint64 read = 0;
+            ma_result r = ma_decoder_read_pcm_frames(&decoder, chunk, kFrameSize, &read);
+            if (read > 0) {
+                pcm.insert(pcm.end(), chunk, chunk + read);
+            }
+            if (r != MA_SUCCESS || read < (ma_uint64) kFrameSize) {
+                break;
+            }
+        }
+    }
+    ma_decoder_uninit(&decoder);
+
+    if (pcm.empty()) {
+        SPDLOG_ERROR("Cue3D: '{}' decoded to 0 frames", path);
+        return nullptr;
+    }
+    return CreateSource(pcm.data(), (int) pcm.size(), loop);
+}
+
+extern "C" Cue3DSource* Cue3D_LoadPcm(const float* monoPcm, int frames, bool loop) {
+    return CreateSource(monoPcm, frames, loop);
+}
+
+extern "C" void Cue3D_Play(Cue3DSource* source) {
+    if (source != nullptr) {
+        source->playing.store(true, std::memory_order_release);
+    }
+}
+
+extern "C" void Cue3D_Stop(Cue3DSource* source) {
+    if (source != nullptr) {
+        source->playing.store(false, std::memory_order_release);
+    }
+}
+
+extern "C" void Cue3D_SetGain(Cue3DSource* source, float gain) {
+    if (source != nullptr) {
+        source->gain.store(gain, std::memory_order_relaxed);
+    }
+}
+
+extern "C" void Cue3D_SetPosition(Cue3DSource* source, float x, float y, float z) {
+    if (source == nullptr) {
+        return;
+    }
+    // Game convention (+x right, +y up, +z ahead); the backend negates Z when it
+    // builds the Steam Audio direction (see ProduceBlock).
+    source->x.store(x, std::memory_order_relaxed);
+    source->y.store(y, std::memory_order_relaxed);
+    source->z.store(z, std::memory_order_relaxed);
 }
 
 #else // HAVE_STEAM_AUDIO not defined — no-op stubs
 
-extern "C" void SpatialAudio_Init(void) {}
-extern "C" void SpatialAudio_Shutdown(void) {}
+extern "C" void Cue3D_Init(void) {}
+extern "C" void Cue3D_Shutdown(void) {}
+extern "C" Cue3DSource* Cue3D_Load(const char* path, bool loop) {
+    (void) path;
+    (void) loop;
+    return nullptr;
+}
+extern "C" Cue3DSource* Cue3D_LoadPcm(const float* monoPcm, int frames, bool loop) {
+    (void) monoPcm;
+    (void) frames;
+    (void) loop;
+    return nullptr;
+}
+extern "C" void Cue3D_Play(Cue3DSource* source) {
+    (void) source;
+}
+extern "C" void Cue3D_SetPosition(Cue3DSource* source, float x, float y, float z) {
+    (void) source;
+    (void) x;
+    (void) y;
+    (void) z;
+}
+extern "C" void Cue3D_SetGain(Cue3DSource* source, float gain) {
+    (void) source;
+    (void) gain;
+}
+extern "C" void Cue3D_Stop(Cue3DSource* source) {
+    (void) source;
+}
 
 #endif // HAVE_STEAM_AUDIO

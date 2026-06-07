@@ -2,7 +2,8 @@
 
 #include "port/CGameCompat.h"
 #include "port/accessibility/Tts.h"
-#include "port/accessibility/SpatialAudio.h"
+#include "port/accessibility/Cue3D.h"
+#include "port/accessibility/SpatialAudioTest.h"
 #include "accessibility_screens/AccessibilityScreens.h"
 #include "AccessibilityCues.h"
 #include "AccessibilityTrainingMinimal.h"
@@ -11,12 +12,12 @@
 void Accessibility_Init() {
     CVarRegisterInteger("gAccessibilityScreenReader", 1);
 
-    // Opt-in Steam Audio HRTF smoke test (orbiting tone). Off by default so the
-    // second OS audio device only opens when explicitly requested. Toggling
-    // requires a restart for now.
+    // Opt-in Cue3D smoke test (orbiting tone over the Steam Audio backend). Off by
+    // default so the second OS audio device only opens when explicitly requested.
+    // Toggling requires a restart for now.
     CVarRegisterInteger("gAccessibilitySpatialTest", 0);
     if (CVarGetInteger("gAccessibilitySpatialTest", 0)) {
-        SpatialAudio_Init();
+        SpatialAudioTest_Start();
     }
 
     AccessibilityTitleScreen_Register();
@@ -33,7 +34,7 @@ void Accessibility_Init() {
 
 void Accessibility_Exit() {
     AccessibilityCues_Exit();
-    SpatialAudio_Shutdown();
+    Cue3D_Shutdown();
 }
 
 bool Accessibility_IsScreenReaderEnabled() {
