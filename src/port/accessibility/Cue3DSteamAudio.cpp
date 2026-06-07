@@ -48,7 +48,7 @@ struct Cue3DSource {
     IPLBinauralEffect effect = nullptr; // one per source — holds interpolation state
     std::vector<float> pcm;             // decoded mono @ kSampleRate, owned
     int frameCount = 0;
-    int cursor = 0; // playback position, frames (audio-thread-only)
+    double cursor = 0.0; // fractional playback position, frames (audio-thread-only)
     bool loop = false;
 
     // Cross-thread: game thread writes, audio callback reads. Read once per block.
@@ -56,6 +56,7 @@ struct Cue3DSource {
     std::atomic<float> y{ 0.0f }; //                  +y up
     std::atomic<float> z{ 1.0f }; //                  +z ahead
     std::atomic<float> gain{ 1.0f };
+    std::atomic<float> rate{ 1.0f }; // playback-rate multiplier (pitch); 1.0 = native
     std::atomic<bool> playing{ false }; // game sets on Play/Stop; callback clears at non-loop EOF
 
     // Publish gate: set LAST (release) in CreateSource, read FIRST (acquire) in the
@@ -129,12 +130,13 @@ Cue3DSource* CreateSource(const float* monoPcm, int frames, bool loop) {
         return nullptr;
     }
     s.frameCount = frames;
-    s.cursor = 0;
+    s.cursor = 0.0;
     s.loop = loop;
     s.x.store(0.0f, std::memory_order_relaxed);
     s.y.store(0.0f, std::memory_order_relaxed);
     s.z.store(1.0f, std::memory_order_relaxed); // default "ahead"
     s.gain.store(1.0f, std::memory_order_relaxed);
+    s.rate.store(1.0f, std::memory_order_relaxed); // native pitch until SetPitch
     s.playing.store(false, std::memory_order_relaxed); // silent until Cue3D_Play
 
     // Publish. Everything above must be visible before inUse flips true.
@@ -162,30 +164,46 @@ void ProduceBlock() {
         // Read the cross-thread params once per block (not per sample). A value one
         // frame stale is inaudible for a cue.
         const float gain = s.gain.load(std::memory_order_relaxed);
+        const float rate = s.rate.load(std::memory_order_relaxed);
         const float px = s.x.load(std::memory_order_relaxed);
         const float py = s.y.load(std::memory_order_relaxed);
         const float pz = s.z.load(std::memory_order_relaxed);
 
         // Fill the mono input from this source's PCM, applying gain and advancing
-        // the cursor. Loop-wrap, or zero-pad + stop at the end of a one-shot.
+        // the cursor by `rate` (the pitch multiplier) with linear interpolation
+        // between bracketing samples — nearest-sample at a fractional rate would
+        // add audible zipper/aliasing noise. Loop-wrap (preserving the fractional
+        // phase), or zero-pad + stop at the end of a one-shot.
+        double cursor = s.cursor;
         bool ended = false;
         for (int n = 0; n < kFrameSize; n++) {
-            if (s.cursor >= s.frameCount) {
+            if (cursor >= s.frameCount) {
                 if (s.loop) {
-                    s.cursor = 0;
+                    cursor -= s.frameCount;
+                    if (cursor >= s.frameCount) {
+                        cursor = 0.0; // guard a tiny pcm / huge rate overshoot
+                    }
                 } else {
                     mono[n] = 0.0f;
                     ended = true;
                     continue;
                 }
             }
-            mono[n] = s.pcm[s.cursor++] * gain;
+            int i0 = (int) cursor;
+            float frac = (float) (cursor - i0);
+            float a = s.pcm[i0];
+            int i1 = i0 + 1;
+            // Next sample: wrap to the start for a loop (seamless), hold for a one-shot.
+            float b = (i1 < s.frameCount) ? s.pcm[i1] : (s.loop ? s.pcm[0] : a);
+            mono[n] = (a + (b - a) * frac) * gain;
+            cursor += rate;
         }
+        s.cursor = ended ? 0.0 : cursor;
         if (ended) {
-            // End of a non-looping source: stop it from the audio thread and rewind
-            // so a later Cue3D_Play restarts from the beginning (the cursor is the
-            // callback's own, so this write is race-free). The slot stays inUse.
-            s.cursor = 0;
+            // End of a non-looping source: stop it from the audio thread (the cursor
+            // was already rewound to 0 above, so a later Cue3D_Play restarts from the
+            // beginning; this write is race-free as the cursor is the callback's own).
+            // The slot stays inUse.
             s.playing.store(false, std::memory_order_release);
         }
 
@@ -326,7 +344,7 @@ extern "C" void Cue3D_Shutdown(void) {
             s.pcm.clear();
             s.pcm.shrink_to_fit();
             s.frameCount = 0;
-            s.cursor = 0;
+            s.cursor = 0.0;
             s.playing.store(false, std::memory_order_relaxed);
             s.inUse.store(false, std::memory_order_relaxed); // reusable on a later Init
         }
@@ -414,6 +432,12 @@ extern "C" void Cue3D_SetGain(Cue3DSource* source, float gain) {
     }
 }
 
+extern "C" void Cue3D_SetPitch(Cue3DSource* source, float rate) {
+    if (source != nullptr) {
+        source->rate.store(rate, std::memory_order_relaxed);
+    }
+}
+
 extern "C" void Cue3D_SetPosition(Cue3DSource* source, float x, float y, float z) {
     if (source == nullptr) {
         return;
@@ -455,6 +479,10 @@ extern "C" void Cue3D_SetPosition(Cue3DSource* source, float x, float y, float z
 extern "C" void Cue3D_SetGain(Cue3DSource* source, float gain) {
     (void) source;
     (void) gain;
+}
+extern "C" void Cue3D_SetPitch(Cue3DSource* source, float rate) {
+    (void) source;
+    (void) rate;
 }
 extern "C" void Cue3D_Stop(Cue3DSource* source) {
     (void) source;

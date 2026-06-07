@@ -18,8 +18,8 @@
 // game code never learns the spatializer's axis convention.
 //
 // Threading: Cue3D_Load / Cue3D_LoadPcm allocate and decode on the calling (main)
-// thread. Cue3D_Play / SetPosition / SetGain / Stop are cheap, lock-free, and safe
-// to call every game frame; the audio callback reads the published values.
+// thread. Cue3D_Play / SetPosition / SetGain / SetPitch / Stop are cheap, lock-free,
+// and safe to call every game frame; the audio callback reads the published values.
 
 typedef struct Cue3DSource Cue3DSource;
 
@@ -62,6 +62,12 @@ void Cue3D_SetPosition(Cue3DSource* source, float x, float y, float z);
 // Set a flat linear gain on the source (1.0 = unchanged). No distance attenuation
 // is applied by the backend — that's the caller's model, if any.
 void Cue3D_SetGain(Cue3DSource* source, float gain);
+
+// Set a playback-rate multiplier on the source (1.0 = native rate / no shift,
+// 2.0 = one octave up, 0.5 = one octave down). Cheap; safe to call every frame.
+// Used as an explicit elevation cue (higher source -> higher pitch) layered on
+// top of the spatializer's own positional rendering.
+void Cue3D_SetPitch(Cue3DSource* source, float rate);
 
 // Silence the source. It stays loaded and can be played again.
 void Cue3D_Stop(Cue3DSource* source);

@@ -169,10 +169,15 @@ static void AccessibilityCues_RefreshRingSource(Item* ring) {
     // The HRTF backend needs the position pushed every frame (the SF64 engine
     // reads the sRingCueSrc pointer itself, so its path needs no per-frame call).
     // Pass the vector verbatim in the game convention (+x right, +y up, +z
-    // ahead); the backend negates Z internally. HRTF gives a real elevation cue
-    // from Y, so sRingCueFreqMod is not applied here.
+    // ahead); the backend negates Z internally. On top of the HRTF we also drive
+    // pitch from the raw clamped Y (sRingCueFreqMod): the generic HRTF only renders
+    // strong elevation when the ring is nearly on the aim line (the vertical angle
+    // is tiny for most of the approach), so the raw-Y pitch supplies a
+    // distance-independent "ring is above/below you" signal throughout the flight.
+    // This matches the SFX-engine path, which already passes sRingCueFreqMod.
     if (sRingCueBackend == RING_CUE_3D) {
         Cue3D_SetPosition(sRing3DSource, sRingCueSrc[0], sRingCueSrc[1], sRingCueSrc[2]);
+        Cue3D_SetPitch(sRing3DSource, sRingCueFreqMod);
     }
 }
 
