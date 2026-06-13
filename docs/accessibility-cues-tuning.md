@@ -36,20 +36,6 @@ For the enemy cue, "altitude" is altitude relative to the Arwing's aim, not worl
 
 Also in `AccessibilityCues_ComputeFreqModFromY`: `octaves = y / 1000.0f`. Negate this to flip the mapping (lower pitch = higher altitude). Currently higher pitch = above. The change applies to both cues simultaneously.
 
-### Ring cue distance falloff (Cue3D / HRTF path only)
-
-`kCueNear`, `kCueFar`, `kCueFloorGain` near `AccessibilityCues_ComputeGainFromDistance` in `AccessibilityCues.cpp`. These only affect the HRTF ring cue (`gAccessibilityCue3D` on). The Steam Audio binaural effect applies no distance attenuation of its own, so we model it in the caller and push the result through `Cue3D_SetGain`; the SF64 audio-engine path (and the enemy cue) attenuate internally and ignore these knobs.
-
-The curve is deliberately *not* physically correct. A navigation cue must stay clearly audible while the ring is still far (rings spawn ~3000 units ahead), so:
-
-- `kCueNear` (default 500) — full volume at or inside this distance, in world units.
-- `kCueFar` (default 4500) — at or beyond this distance the gain is pinned to the floor. Sits just below the ±5000 X/Z clamp box so the floor is reached near the edge of the playfield.
-- `kCueFloorGain` (default 0.3) — the never-go-quieter-than floor (0..1). This is the knob to raise if the ring goes too faint at spawn distance, or lower if a distant ring is distractingly loud. Setting it to 1.0 disables the falloff entirely (constant volume).
-
-Between near and far the gain tapers quadratically (`1 - (1 - floor)·t²`), mirroring the SF64 engine's squared falloff curve. Distance uses `y/2.5` to de-emphasise vertical separation, matching the engine and keeping a high ring from reading as "far" when elevation is already carried by pitch + HRTF.
-
-Distance drives **gain only** on this path — never pitch, which is reserved for the Y→elevation cue. If a global master volume / pause-silence lever is added later it composes multiplicatively on top of this gain.
-
 ### "Drop the cue when behind the player"
 
 - Ring cue, `AccessibilityCues_FindNextTrainingRing`: `if (dz >= 0.0f) continue;` filters by world Z relative to `player->trueZpos`. As written, the moment a ring is at or behind the Arwing it stops contributing. Could be relaxed to `dz >= someThreshold` if you want a brief tail as you pass through — but in practice the engine's distance falloff already fades the trailing ring, and the next ring becomes the target on the very next tick.

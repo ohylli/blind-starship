@@ -100,39 +100,6 @@ static f32 AccessibilityCues_ComputeFreqModFromY(f32 y) {
     return powf(2.0f, octaves);
 }
 
-// Distance attenuation for the Cue3D (HRTF) ring cue. Steam Audio's binaural
-// effect applies no distance falloff of its own (it only spatializes
-// direction), so we model it here and push the result through Cue3D_SetGain.
-// The SF64 audio-engine path doesn't use this — that engine attenuates
-// internally (see docs/audio-system.md §7).
-//
-// This is deliberately NOT a physically-correct 1/d curve: a navigation cue
-// must stay clearly audible while the target is still far (rings spawn ~3000
-// units ahead), so the curve floors at a still-audible minimum instead of
-// fading to silence, and only conveys "am I closing in" on top of the HRTF's
-// direction and the pitch's elevation. Three knobs, documented in
-// docs/accessibility-cues-tuning.md:
-//   - kCueNear: full volume at or inside this distance (world units).
-//   - kCueFar:  floored at or beyond this distance.
-//   - kCueFloorGain: the never-go-quieter-than floor (0..1), so the cue is
-//     never lost even at max spawn distance.
-// Between near and far it tapers quadratically (mirroring the SF64 engine's
-// squared falloff curve).
-static const f32 kCueNear = 500.0f;
-static const f32 kCueFar = 4500.0f;
-static const f32 kCueFloorGain = 0.3f;
-
-static f32 AccessibilityCues_ComputeGainFromDistance(f32 distance) {
-    if (distance <= kCueNear) {
-        return 1.0f;
-    }
-    if (distance >= kCueFar) {
-        return kCueFloorGain;
-    }
-    f32 t = (distance - kCueNear) / (kCueFar - kCueNear);
-    return 1.0f - (1.0f - kCueFloorGain) * (t * t);
-}
-
 // ===== Ring cue =====
 
 static Item* AccessibilityCues_FindNextTrainingRing() {
@@ -211,13 +178,6 @@ static void AccessibilityCues_RefreshRingSource(Item* ring) {
     if (sRingCueBackend == RING_CUE_3D) {
         Cue3D_SetPosition(sRing3DSource, sRingCueSrc[0], sRingCueSrc[1], sRingCueSrc[2]);
         Cue3D_SetPitch(sRing3DSource, sRingCueFreqMod);
-        // The HRTF backend applies no distance falloff; model it here. y/2.5
-        // de-emphasises vertical separation (mirrors the SF64 engine, and keeps
-        // a high ring from reading as "far" when elevation is already carried by
-        // pitch + HRTF).
-        f32 yScaled = sRingCueSrc[1] / 2.5f;
-        f32 distance = sqrtf((sRingCueSrc[0] * sRingCueSrc[0]) + (yScaled * yScaled) + (sRingCueSrc[2] * sRingCueSrc[2]));
-        Cue3D_SetGain(sRing3DSource, AccessibilityCues_ComputeGainFromDistance(distance));
     }
 }
 
