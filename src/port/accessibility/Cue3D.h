@@ -5,8 +5,11 @@
 // Cue3D: a backend-agnostic seam for 3D-positional audio cues. The caller loads a
 // mono sound, plays it, and moves it around the listener in 3D; a backend (Steam
 // Audio's binaural HRTF spatializer, in Cue3DSteamAudio.cpp) turns that into stereo.
-// Keeping this interface free of any spatializer detail means an alternate backend
-// (e.g. OpenAL Soft) can drop in behind the same header without touching callers.
+// The backend owns the full spatialization: both DIRECTION (HRTF) and DISTANCE
+// attenuation are derived from the position the caller pushes, so the caller just
+// reports where the source is and lets the backend decide how it sounds. Keeping
+// this interface free of any spatializer detail means an alternate backend (e.g.
+// OpenAL Soft) can drop in behind the same header without touching callers.
 //
 // The backend opens its own OS audio device alongside libultraship's; the OS mixer
 // combines the two streams (same coexistence model as PRISM/Tolk for TTS).
@@ -56,11 +59,15 @@ Cue3DSource* Cue3D_LoadPcm(const float* monoPcm, int frames, bool loop);
 void Cue3D_Play(Cue3DSource* source);
 
 // Set the source's listener-relative position (game convention: +x right, +y up,
-// +z ahead). Cheap; call it every frame to move the source.
+// +z ahead). Both the DIRECTION and the DISTANCE (the vector's length) matter: the
+// backend spatializes by direction and attenuates by distance, so a far source is
+// rendered quieter than a near one. Cheap; call it every frame to move the source.
 void Cue3D_SetPosition(Cue3DSource* source, float x, float y, float z);
 
-// Set a flat linear gain on the source (1.0 = unchanged). No distance attenuation
-// is applied by the backend — that's the caller's model, if any.
+// Set a flat linear gain on the source (1.0 = unchanged), applied on TOP of the
+// backend's distance attenuation. Use it for distance-independent level (per-cue
+// trim, or a future master-volume / pause-silence lever) — not for falloff, which
+// the backend derives from the position passed to Cue3D_SetPosition.
 void Cue3D_SetGain(Cue3DSource* source, float gain);
 
 // Set a playback-rate multiplier on the source (1.0 = native rate / no shift,

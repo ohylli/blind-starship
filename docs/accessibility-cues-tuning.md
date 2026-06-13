@@ -24,6 +24,21 @@ Constraints to keep in mind if reaching for another `NA_SE_*`:
 - **Avoid `SFX_FLAG_23`** — random per-frame pitch wobble; fights the Y→pitch mapping.
 - **Prefer range 2 or 3** (the two bits at position 16/17 of the ID; see `docs/audio-system.md` §3 for the decoding). Range 0/1 dies at ~1650/2200 world units; rings spawn ~3000 units ahead, so a low-range SFX would be inaudible until the player is already close.
 
+### Ring cue distance falloff (Cue3D / HRTF backend only)
+
+Two knobs near the top of `src/port/accessibility/Cue3DSteamAudio.cpp`, applying **only** to the HRTF ring cue (`gAccessibilityCue3D` on). The SF64 SFX-engine path attenuates internally and ignores them.
+
+Unlike the SFX engine — which folds distance, pan, and elevation into one opaque path — the HRTF backend splits the jobs: Steam Audio's binaural effect handles *direction*, and a separate inverse-distance model handles *loudness-vs-distance*. `ProduceBlock` calls `iplDistanceAttenuationCalculate` (type `INVERSEDISTANCE`, gain ≈ 1/d past the near plateau) once per audio block, using the magnitude of the player-relative position the cue pushes through `Cue3D_SetPosition`.
+
+The wrinkle: Steam Audio measures distance in **meters**, but SF64 world units are huge (rings spawn ~3000 units ahead, clamp box ±5000). Feeding raw units to a 1/d model would be near-silent, so we scale units → meters first.
+
+- `kWorldUnitsPerMeter` (default 1000) — overall steepness/loudness. It sits in the numerator of the gain (`1 / (units / thisKnob)`), so **larger = louder and flatter** (a given distance maps to fewer "meters", hence less falloff), **smaller = quieter and steeper**. Raise it if a distant ring fades out too aggressively; lower it if a far ring is distractingly loud. At 1000: 3000u → 3m → gain ~0.33; 5000u → 5m → 0.2.
+- `kMinDistanceMeters` (default 1) — near plateau. A source closer than this gets no attenuation (gain capped at full), so the cue stops getting louder once you're basically on top of the ring. Larger = a wider full-volume bubble at close range.
+
+`Cue3D_SetGain` is a separate, distance-*independent* multiplier applied on top of this falloff — reserved for a per-cue trim or a future master-volume / pause-silence lever, not for shaping distance.
+
+Elevation caveat: this is a *pure* inverse-distance model — it uses the full 3D distance including the vertical component, so a ring high above reads as genuinely farther (quieter). The SF64 path de-emphasised vertical separation (`y/2.5`); if a high ring sounds too faint here, dividing the y component before the distance calc is the equivalent knob to add.
+
 ### Y→pitch sensitivity
 
 The `1000.0f` divisor in `AccessibilityCues_ComputeFreqModFromY` (shared by both cues). This is "how many world units of altitude difference equals one octave." Smaller = more aggressive pitch swing for small altitude changes.

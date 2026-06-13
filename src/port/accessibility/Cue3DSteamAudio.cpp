@@ -22,11 +22,29 @@
 // This file is the ONLY place that knows about Steam Audio's -Z-forward axis: the
 // seam takes the game's +z-ahead convention and ProduceBlock negates Z when it
 // builds the direction vector. An alternate backend would do its own mapping.
+//
+// Distance attenuation is the backend's job (per the Cue3D.h contract): ProduceBlock
+// feeds the source's distance to Steam Audio's inverse-distance model and folds the
+// resulting gain into playback, so a far source renders quieter than a near one. The
+// caller pushes raw positions and never models falloff itself.
 
 namespace {
 
 constexpr int kSampleRate = 48000;
 constexpr int kFrameSize = 1024; // Steam Audio fixed processing block
+
+// Distance attenuation: cue loudness falls off with distance via Steam Audio's
+// inverse-distance model (1/d past kMinDistanceMeters). iplDistanceAttenuationCalculate
+// interprets distance in meters, but SF64 world units are huge (rings spawn ~3000
+// units, clamp box ±5000), so we scale world units -> meters first. At scale 1000:
+// 3000u -> 3m -> gain ~0.33, 5000u -> 5m -> 0.2. Two knobs, tuned by ear:
+//   kWorldUnitsPerMeter — overall steepness. Larger = louder/flatter (a given
+//     distance maps to fewer "meters", so less falloff); smaller = quieter/steeper.
+//   kMinDistanceMeters  — near plateau. A source closer than this gets no
+//     attenuation (gain capped at 1.0), so the cue stops getting louder once you're
+//     basically on top of it. Larger = wider full-volume bubble.
+constexpr float kWorldUnitsPerMeter = 1000.0f;
+constexpr float kMinDistanceMeters = 1.0f;
 
 // Fixed pool of sources. Cues are few (today: a ring cue + an enemy cue); 16 gives
 // generous headroom for future cue types while keeping the per-block scan trivial.
@@ -169,6 +187,22 @@ void ProduceBlock() {
         const float py = s.y.load(std::memory_order_relaxed);
         const float pz = s.z.load(std::memory_order_relaxed);
 
+        // Distance attenuation: fold Steam Audio's inverse-distance gain into the
+        // source's flat gain. The coordinate frame is irrelevant here (only the
+        // distance magnitude matters), so we feed the raw position with no Z
+        // negation. For the inverse-distance type this is pure math (no callback /
+        // simulation), so calling it once per block in the audio callback is cheap
+        // and thread-safe. `gain` (Cue3D_SetGain) is a distance-independent
+        // multiplier layered on top of this falloff.
+        IPLDistanceAttenuationModel distModel{};
+        distModel.type = IPL_DISTANCEATTENUATIONTYPE_INVERSEDISTANCE;
+        distModel.minDistance = kMinDistanceMeters;
+        const float invScale = 1.0f / kWorldUnitsPerMeter;
+        IPLVector3 srcPos{ px * invScale, py * invScale, pz * invScale };
+        IPLVector3 listener{ 0.0f, 0.0f, 0.0f };
+        const float distGain = iplDistanceAttenuationCalculate(g.ctx, srcPos, listener, &distModel);
+        const float effGain = gain * distGain;
+
         // Fill the mono input from this source's PCM, applying gain and advancing
         // the cursor by `rate` (the pitch multiplier) with linear interpolation
         // between bracketing samples — nearest-sample at a fractional rate would
@@ -195,7 +229,7 @@ void ProduceBlock() {
             int i1 = i0 + 1;
             // Next sample: wrap to the start for a loop (seamless), hold for a one-shot.
             float b = (i1 < s.frameCount) ? s.pcm[i1] : (s.loop ? s.pcm[0] : a);
-            mono[n] = (a + (b - a) * frac) * gain;
+            mono[n] = (a + (b - a) * frac) * effGain;
             cursor += rate;
         }
         s.cursor = ended ? 0.0 : cursor;
