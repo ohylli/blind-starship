@@ -82,6 +82,18 @@ static bool AccessibilityCues_IsCue3DEnabled() {
     return CVarGetInteger("gAccessibilityCue3D", 1) == 1;
 }
 
+// True while the level is paused (START during play -> gPlayState == PLAY_PAUSE,
+// see fox_play.c). The 3D cue backend runs its own OS audio device that the
+// game's pause doesn't reach, so a looping Cue3D source keeps sounding through a
+// pause unless we stop it by hand. The listeners treat pause as one more reason
+// to stop the cue; because Play_Update is skipped while paused, the player /
+// ring / enemy positions are frozen, so the next unpaused tick re-acquires the
+// same target and restarts the cue (the SF64-engine path needs no help here —
+// the game's own audio thread already honours pause).
+static bool AccessibilityCues_IsPaused() {
+    return gPlayState == PLAY_PAUSE;
+}
+
 // Per-tick diagnostic trace for the enemy cue. Off by default. Even when on,
 // emitted lines still go through SPDLOG_TRACE, so the global log threshold
 // (gDeveloperTools.LogLevel) must also be at "trace" to actually appear in
@@ -230,7 +242,8 @@ static void AccessibilityCues_OnRingPostUpdate(IEvent* event) {
     // gPlayer is a pointer (sf64context.h:324), zero-initialized at process
     // start and only allocated when a level loads. The listener fires on
     // GamePostUpdateEvent which can tick before that — guard it.
-    if (!AccessibilityCues_IsEnabled() || gCurrentLevel != LEVEL_TRAINING || gPlayer == NULL) {
+    if (!AccessibilityCues_IsEnabled() || gCurrentLevel != LEVEL_TRAINING || gPlayer == NULL ||
+        AccessibilityCues_IsPaused()) {
         AccessibilityCues_StopRingCue();
         return;
     }
@@ -430,9 +443,10 @@ static void AccessibilityCues_OnEnemyPostUpdate(IEvent* event) {
     bool enabled = AccessibilityCues_IsEnabled();
     bool onRails = (gLevelMode == LEVELMODE_ON_RAILS);
     bool hasPlayer = (gPlayer != NULL);
-    if (!enabled || !onRails || !hasPlayer) {
-        ENEMY_CUE_TRACE("[enemy-cue] gated enabled={} onRails={} mode={} hasPlayer={} backend={}",
-                        enabled, onRails, (int) gLevelMode, hasPlayer, (int) sEnemyCueBackend);
+    bool paused = AccessibilityCues_IsPaused();
+    if (!enabled || !onRails || !hasPlayer || paused) {
+        ENEMY_CUE_TRACE("[enemy-cue] gated enabled={} onRails={} mode={} hasPlayer={} paused={} backend={}",
+                        enabled, onRails, (int) gLevelMode, hasPlayer, paused, (int) sEnemyCueBackend);
         AccessibilityCues_StopEnemyCue();
         return;
     }
