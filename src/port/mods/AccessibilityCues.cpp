@@ -58,7 +58,18 @@ static f32 sEnemyCueSrc[3] = { 0.0f, 0.0f, 0.0f };
 static f32 sEnemyCueFreqMod = 1.0f;
 static f32 sEnemyCueVolMod = 1.0f;
 static s8 sEnemyCueReverb = 0;
-static bool sEnemyCueActive = false;
+
+// Which backend is currently sounding the enemy cue. Same dual-backend scheme
+// as the ring cue (see sRingCueBackend) so a mid-level gAccessibilityCue3D flip
+// stops the old backend before starting the other.
+enum EnemyCueBackend { ENEMY_CUE_NONE, ENEMY_CUE_SFX_ENGINE, ENEMY_CUE_3D };
+static EnemyCueBackend sEnemyCueBackend = ENEMY_CUE_NONE;
+
+// HRTF enemy cue (gAccessibilityCue3D). enemy.wav source loaded lazily on first
+// use, cached for the process lifetime, freed wholesale by Cue3D_Shutdown in
+// Accessibility_Exit. Mirrors sRing3DSource / sRing3DLoadFailed.
+static Cue3DSource* sEnemy3DSource = nullptr;
+static bool sEnemy3DLoadFailed = false; // don't retry a failed load every frame
 
 static bool AccessibilityCues_IsEnabled() {
     return CVarGetInteger("gAccessibilityAudioCues", 1) == 1;
@@ -331,6 +342,27 @@ static bool AccessibilityCues_FindClosestEnemyAhead(Player* player, Vec3f* outBo
     return found;
 }
 
+// Lazily load (and cache) the enemy.wav HRTF source. Mirrors
+// AccessibilityCues_GetRing3DSource: returns NULL if the Cue3D backend isn't
+// compiled in or the file can't be loaded, recording the failure so we don't
+// retry it every frame.
+static Cue3DSource* AccessibilityCues_GetEnemy3DSource() {
+    if (sEnemy3DSource != NULL) {
+        return sEnemy3DSource;
+    }
+    if (sEnemy3DLoadFailed) {
+        return NULL;
+    }
+    Cue3D_Init(); // idempotent; opens the device + HRTF on first use only
+    std::string path = Ship::Context::GetPathRelativeToAppDirectory("assets/accessibility/enemy.wav");
+    sEnemy3DSource = Cue3D_Load(path.c_str(), true); // loop: continuous while an enemy is ahead
+    if (sEnemy3DSource == NULL) {
+        sEnemy3DLoadFailed = true;
+        SPDLOG_WARN("AccessibilityCues: Cue3D enemy cue unavailable (failed to load '{}')", path);
+    }
+    return sEnemy3DSource;
+}
+
 static void AccessibilityCues_RefreshEnemySource(Vec3f bodyDelta) {
     // src[0] = body X (positive = right of aim); src[1] = body Y (positive
     // = above aim); src[2] = -body Z so positive = ahead of aim, matching
@@ -341,25 +373,51 @@ static void AccessibilityCues_RefreshEnemySource(Vec3f bodyDelta) {
     sEnemyCueSrc[2] = -bodyDelta.z;
     Object_ClampSfxSource(sEnemyCueSrc);
     sEnemyCueFreqMod = AccessibilityCues_ComputeFreqModFromY(sEnemyCueSrc[1]);
+    // The HRTF backend needs the aim-relative position (and the raw-Y pitch cue)
+    // pushed every frame; the SF64 engine reads the sEnemyCueSrc pointer itself.
+    // The vector is already in the game convention (+x right, +y up, +z ahead) —
+    // pass it verbatim, the backend negates Z internally. Same as RefreshRingSource.
+    if (sEnemyCueBackend == ENEMY_CUE_3D) {
+        Cue3D_SetPosition(sEnemy3DSource, sEnemyCueSrc[0], sEnemyCueSrc[1], sEnemyCueSrc[2]);
+        Cue3D_SetPitch(sEnemy3DSource, sEnemyCueFreqMod);
+    }
 }
 
 static void AccessibilityCues_StartEnemyCue(Vec3f bodyDelta) {
-    AccessibilityCues_RefreshEnemySource(bodyDelta);
-    ENEMY_CUE_TRACE("[enemy-cue] START sfx=0x{:08X} src=({:.1f},{:.1f},{:.1f}) freq={:.3f} vol={:.3f}",
-                    (u32) ENEMY_CUE_SFX, sEnemyCueSrc[0], sEnemyCueSrc[1], sEnemyCueSrc[2],
-                    sEnemyCueFreqMod, sEnemyCueVolMod);
-    Audio_PlaySfx(ENEMY_CUE_SFX, sEnemyCueSrc, 0, &sEnemyCueFreqMod, &sEnemyCueVolMod, &sEnemyCueReverb);
-    sEnemyCueActive = true;
+    if (AccessibilityCues_IsCue3DEnabled()) {
+        Cue3DSource* source = AccessibilityCues_GetEnemy3DSource();
+        if (source == NULL) {
+            // 3D selected but unavailable: no cue. The SF64 path is deliberately
+            // suppressed while the 3D backend is chosen.
+            return;
+        }
+        sEnemyCueBackend = ENEMY_CUE_3D;
+        AccessibilityCues_RefreshEnemySource(bodyDelta); // computes src + pushes position
+        Cue3D_Play(source);
+    } else {
+        AccessibilityCues_RefreshEnemySource(bodyDelta);
+        ENEMY_CUE_TRACE("[enemy-cue] START sfx=0x{:08X} src=({:.1f},{:.1f},{:.1f}) freq={:.3f} vol={:.3f}",
+                        (u32) ENEMY_CUE_SFX, sEnemyCueSrc[0], sEnemyCueSrc[1], sEnemyCueSrc[2],
+                        sEnemyCueFreqMod, sEnemyCueVolMod);
+        Audio_PlaySfx(ENEMY_CUE_SFX, sEnemyCueSrc, 0, &sEnemyCueFreqMod, &sEnemyCueVolMod, &sEnemyCueReverb);
+        sEnemyCueBackend = ENEMY_CUE_SFX_ENGINE;
+    }
 }
 
 static void AccessibilityCues_StopEnemyCue() {
-    if (!sEnemyCueActive) {
-        return;
+    switch (sEnemyCueBackend) {
+        case ENEMY_CUE_SFX_ENGINE:
+            ENEMY_CUE_TRACE("[enemy-cue] STOP last_src=({:.1f},{:.1f},{:.1f})",
+                            sEnemyCueSrc[0], sEnemyCueSrc[1], sEnemyCueSrc[2]);
+            Audio_KillSfxBySource(sEnemyCueSrc);
+            break;
+        case ENEMY_CUE_3D:
+            Cue3D_Stop(sEnemy3DSource);
+            break;
+        case ENEMY_CUE_NONE:
+            return;
     }
-    ENEMY_CUE_TRACE("[enemy-cue] STOP last_src=({:.1f},{:.1f},{:.1f})",
-                    sEnemyCueSrc[0], sEnemyCueSrc[1], sEnemyCueSrc[2]);
-    Audio_KillSfxBySource(sEnemyCueSrc);
-    sEnemyCueActive = false;
+    sEnemyCueBackend = ENEMY_CUE_NONE;
 }
 
 static void AccessibilityCues_OnEnemyPostUpdate(IEvent* event) {
@@ -373,8 +431,8 @@ static void AccessibilityCues_OnEnemyPostUpdate(IEvent* event) {
     bool onRails = (gLevelMode == LEVELMODE_ON_RAILS);
     bool hasPlayer = (gPlayer != NULL);
     if (!enabled || !onRails || !hasPlayer) {
-        ENEMY_CUE_TRACE("[enemy-cue] gated enabled={} onRails={} mode={} hasPlayer={} active={}",
-                        enabled, onRails, (int) gLevelMode, hasPlayer, sEnemyCueActive);
+        ENEMY_CUE_TRACE("[enemy-cue] gated enabled={} onRails={} mode={} hasPlayer={} backend={}",
+                        enabled, onRails, (int) gLevelMode, hasPlayer, (int) sEnemyCueBackend);
         AccessibilityCues_StopEnemyCue();
         return;
     }
@@ -387,13 +445,20 @@ static void AccessibilityCues_OnEnemyPostUpdate(IEvent* event) {
     bool found = AccessibilityCues_FindClosestEnemyAhead(player, &bodyDelta, &stats);
 
     if (!found) {
-        ENEMY_CUE_TRACE("[enemy-cue] no target level={} active={} cueable={} ahead={} cueActive={}",
-                        (int) gCurrentLevel, stats.active, stats.cueable, stats.ahead, sEnemyCueActive);
+        ENEMY_CUE_TRACE("[enemy-cue] no target level={} active={} cueable={} ahead={} backend={}",
+                        (int) gCurrentLevel, stats.active, stats.cueable, stats.ahead, (int) sEnemyCueBackend);
         AccessibilityCues_StopEnemyCue();
         return;
     }
 
-    if (!sEnemyCueActive) {
+    // Stop the active backend if gAccessibilityCue3D was flipped mid-level, so the
+    // two never sound at once (mirrors the ring listener).
+    EnemyCueBackend desired = AccessibilityCues_IsCue3DEnabled() ? ENEMY_CUE_3D : ENEMY_CUE_SFX_ENGINE;
+    if (sEnemyCueBackend != ENEMY_CUE_NONE && sEnemyCueBackend != desired) {
+        AccessibilityCues_StopEnemyCue();
+    }
+
+    if (sEnemyCueBackend == ENEMY_CUE_NONE) {
         AccessibilityCues_StartEnemyCue(bodyDelta);
     } else {
         AccessibilityCues_RefreshEnemySource(bodyDelta);
