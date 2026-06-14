@@ -18,8 +18,13 @@ make the game's main menu, sounds options and pause menu accessible.
 
 For gameplay there is partial accessibility for the game's training mode. In
 training you practice maneuvering you ship by flying through rings and fighting
-some enemies. These rings and enemies have their own sound cues where stereo pan
-indicates left / right and pitch above / below you. High pitch is above you
+some enemies. These rings and enemies have their own sound cues. By default they
+are rendered as real 3D binaural (HRTF) audio via [Steam
+Audio](https://valvesoftware.github.io/steam-audio/), which gives true left /
+right and front / back positioning through headphones. There is also an older
+fallback that drives the cues through the game's own sound engine, where stereo
+pan indicates left / right; you can switch between the two (see) the configuration
+section). In both, pitch indicates above / below you — high pitch is above you,
 lower below. The cue tracks the closest target. Note: controls are typical
 fligth controls back / down on a stick makes you go up.
 
@@ -37,14 +42,13 @@ Training has 2 phases. The first is on rails flying containing only rings,
 enemies and some item pick ups. So no obstacles. Second phase  is in all-range
 mode (you can freely fly around a small arena) with some enemies and obstacles
 with no accessibility features to help you. Note the enemy audio cue for now
-does not work here since it currently does not distinguish between in front /
-behind you. And in case you are familiar with the game and are thinking "wait
+does not work here. And in case you are familiar with the game and are thinking "wait
 that is not what I remember." you are absolutely right. Currently the first
 phase of training is simplified all obstacles are removed (see
 the configuration section how to bring them back). When more features are added
 like obstacle audio cues, these simplifications will be removed. The enemy audio
 cue works also in the main game though might not cover all enemies and does not
-include bosses. Also in general it probably needs more tuning to be useful.
+include bosses.
 
 ## Road map
 
@@ -158,6 +162,21 @@ to 0 i.e. change 1 to 0 on the line that looks like:
 
 ```
 "gAccessibilityScoreAnnounce": 1,
+```
+
+### 3D audio cues
+
+By default the ring and enemy audio cues are rendered as real 3D binaural (HRTF)
+audio via [Steam Audio](https://valvesoftware.github.io/steam-audio/), giving
+true left / right and front / back positioning through headphones. If you prefer
+the older cues driven by the game's own sound engine (stereo pan for left /
+right, pitch for above / below), you can switch back by editing the game's
+settings file `starship.cfg.json` created after first launch to the same folder
+where you have the game. Change the value of `gAccessibilityCue3D` from 1 to 0
+i.e. change 1 to 0 on the line that looks like:
+
+```
+"gAccessibilityCue3D": 1,
 ```
 
 ### Graphics Backends
