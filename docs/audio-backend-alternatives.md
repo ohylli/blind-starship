@@ -1,5 +1,13 @@
 # Audio backend alternatives — feasibility notes
 
+> **Superseded.** This survey's conclusion — "stay on the SF64 engine; Steam
+> Audio is overkill" — was reversed. We went with **Steam Audio HRTF** (hosted by
+> miniaudio) behind the `Cue3D` seam; see
+> [accessibility-hrtf-cues.md](accessibility-hrtf-cues.md) for the decision and
+> the open questions. The survey below is preserved for the rationale and for the
+> **OpenAL Soft fallback**, which the `Cue3D` seam keeps viable as a one-file
+> backend swap.
+
 This document captures a discussion held during accessibility-cue exploration about whether to bypass the SF64 audio engine entirely and use a modern third-party audio library for cue playback. We decided to stay on the SF64 engine for now and revisit only if its limitations become a real blocker. These notes preserve the framing so future work can pick the discussion back up without re-deriving it.
 
 ## The question

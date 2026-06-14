@@ -5,6 +5,14 @@ The cue mod lives at `src/port/mods/AccessibilityCues.{cpp,h}` and now houses tw
 - **Ring cue** — attaches a continuous SFX to the next Training ring ahead of the Arwing (scoped to `LEVEL_TRAINING`).
 - **Enemy cue** — attaches a continuous SFX to the closest cueable enemy ahead of the Arwing's aim line, on any on-rails level. Coordinate frame is body-frame (rotated by the player's yaw + pitch) rather than world-frame; see `docs/accessibility-enemy-cue.md` for the derivation.
 
+**Two backends exist.** By default (`gAccessibilityCue3D` on) both cues render
+through the Steam Audio HRTF backend — see `docs/accessibility-hrtf-cues.md`. The
+SF64 audio-engine path described through most of this doc is the *fallback*,
+live only when `gAccessibilityCue3D` is off; its knobs no longer affect the cue
+in the default configuration. Its constraints are kept here because the SF64-SFX
+knowledge stays relevant (the native path may live on for some cues). The
+HRTF-only knobs are called out in their own subsection below.
+
 Both cues drive pan from X, volume from distance, and pitch from altitude via the same `AccessibilityCues_ComputeFreqModFromY` helper. Almost every knob below applies to either cue — function and variable names are prefixed `Ring` or `Enemy` to disambiguate.
 
 For background on *why* the cues are shaped this way (player-relative coordinate frame, Y→pitch instead of Y→pan, bank/range constraints), see `docs/audio-system.md` and `docs/game-world.md`.

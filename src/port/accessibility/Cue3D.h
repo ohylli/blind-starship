@@ -68,6 +68,9 @@ void Cue3D_SetPosition(Cue3DSource* source, float x, float y, float z);
 // backend's distance attenuation. Use it for distance-independent level (per-cue
 // trim, or a future master-volume / pause-silence lever) — not for falloff, which
 // the backend derives from the position passed to Cue3D_SetPosition.
+// NOTE: the game's master volume (gGameMasterVolume) and BGM ducking do NOT reach
+// this second audio device; wiring them through this gain is still open work — see
+// docs/accessibility-hrtf-cues.md "Known limitations".
 void Cue3D_SetGain(Cue3DSource* source, float gain);
 
 // Set a playback-rate multiplier on the source (1.0 = native rate / no shift,
