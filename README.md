@@ -36,7 +36,8 @@ that pops up on screen when you destroy an enemy, matching what a sighted player
 sees: the hits you scored ("hit +3") plus your new total, or "great" and "extra
 life" for the special bonuses. Both of these are per event announcements that can
 get chatty, so they share a single toggle that is on by default (see the
-configuration section if you want to turn them off).
+configuration section if you want to turn them off). Changing the camera view
+also has spoken announcements.
 
 Training has 2 phases. The first is on rails flying containing only rings,
 enemies and some item pick ups. So no obstacles. Second phase  is in all-range

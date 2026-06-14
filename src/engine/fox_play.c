@@ -5962,6 +5962,7 @@ void Player_Update(Player* player) {
                         player->camRoll = 0.0f;
                     }
                 }
+                CALL_EVENT(CameraViewChangedEvent, player->alternateView);
                 player->unk_014 = 0.1f;
             }
 

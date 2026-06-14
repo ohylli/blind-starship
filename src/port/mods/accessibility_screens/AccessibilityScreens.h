@@ -9,3 +9,4 @@ void AccessibilitySoundMenu_Register();
 void AccessibilityPauseMenu_Register();
 void AccessibilityTrainingRings_Register();
 void AccessibilityScore_Register();
+void AccessibilityCameraView_Register();

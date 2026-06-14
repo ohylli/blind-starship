@@ -22,3 +22,9 @@ DEFINE_EVENT(TrainingRingMissedEvent, s32 count;);
 // the running total read gHitCount on DisplayPostUpdateEvent, where it is final for
 // the frame (the popup fires before gHitCount is incremented at the call site).
 DEFINE_EVENT(BonusTextEvent, s32 value;);
+
+// Player toggled the camera view (C-Up). alternateView is the NEW value after
+// the toggle. Its meaning depends on gLevelMode: on rails it switches the
+// cockpit/external view; in all-range it switches the follow distance. The
+// consumer reads gLevelMode to phrase it, so the producer stays policy-free.
+DEFINE_EVENT(CameraViewChangedEvent, s32 alternateView;);
