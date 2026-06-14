@@ -97,6 +97,20 @@ jobs:
           path: |
             build/x64/TorchExternal
             build/x64/Torch
+      # Steam Audio ships as a prebuilt release zip (tens of MB) that CMake
+      # downloads + extracts into build/x64/steamaudio on a clean configure;
+      # miniaudio is a single header alongside it. Caching the populated trees
+      # skips the re-download every run. The CMake `if(NOT EXISTS .../phonon.h)`
+      # guard treats a restored cache as already-downloaded. Exact-match key on
+      # both version strings — bumping either STEAMAUDIO_VER or MINIAUDIO_VER in
+      # CMakeLists.txt forces a fresh download, same discipline as the PRISM key.
+      - name: Cache Steam Audio download
+        uses: actions/cache@v4
+        with:
+          key: ${{ runner.os }}-steamaudio-4.8.1-miniaudio-0.11.21
+          path: |
+            build/x64/steamaudio
+            build/x64/miniaudio
       # Torch's ExternalProject source is the tools/Torch submodule, which
       # actions/checkout re-materialises with fresh timestamps every run. That
       # makes the source look newer than the cached .obj files, so Torch's
@@ -155,6 +169,7 @@ jobs:
           mv build/x64/Starship.exe starship-release/
           mv build/x64/starship.o2r starship-release/
           mv build/x64/prism.dll starship-release/
+          mv build/x64/phonon.dll starship-release/
           mv config.yml starship-release/
           mv assets starship-release/
           Invoke-WebRequest -Uri "https://raw.githubusercontent.com/mdqinc/SDL_GameControllerDB/master/gamecontrollerdb.txt" -OutFile "starship-release/gamecontrollerdb.txt"
