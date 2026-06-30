@@ -95,6 +95,28 @@ suggested ordering; it is not a commitment.
   path (same always-available device) instead of returning; optionally add a spoken
   PRISM notice. This converts "silent" to "degraded but audible." The reviewer noted
   that this remedy is one branch and drops the player-facing severity to LOW.
+- **Decision (2026-06-30):** *SF64 fallback rejected; spoken notice deferred (log-only).*
+  The native-SFX cue path is temporary scaffolding that will be removed entirely, so
+  the review's "fall through to SF64" remedy is moot — it disappears with that path
+  rather than being built. Likelihood was reassessed as low for the actual target
+  user, splitting the NULL-source failures into two classes:
+  - **Class 1 — whole OS audio path dead** (`ma_device_init`/`ma_device_start` fail):
+    essentially nil for a blind player, who necessarily has a working output device
+    (the screen reader needs one). A spoken PRISM notice is *useless* here — TTS has
+    no device either — so log-only is the only option.
+  - **Class 2 — Steam Audio init or asset load fails while OS audio is fine**
+    (`iplContextCreate`/`iplHRTFCreate`, or `ma_decoder_init_file` on the cue WAVs):
+    install/packaging failures, low for a clean release build (CI pins the Steam Audio
+    version; WAVs are git-tracked + POST_BUILD-copied; a *missing* `phonon.dll` fails
+    the implicit link loudly at startup rather than silently in-game). This is the
+    *only* class where TTS still works, so a one-time spoken notice would actually be
+    heard — and the only case worth one.
+
+  Resolution: keep it **log-only** for now (the failure points already
+  `SPDLOG_ERROR`/`SPDLOG_WARN`). A spoken PRISM notice is deferred as a cheap, narrowly
+  scoped follow-up *conditioned on the Class-2 path only* (speak iff Cue3D init/load
+  failed while the screen reader is alive), to be added later or if a real bug report
+  surfaces it. Player-facing severity drops to LOW given the reassessed likelihood.
 
 ### CUE3D-2 — Cue volume is uncontrollable; `Cue3D_SetGain` is wired to nothing
 - **Severity:** HIGH (player-facing). The UX reviewer recommended promoting it from
