@@ -37,6 +37,9 @@ std::shared_ptr<AdvancedResolutionSettings::AdvancedResolutionSettingsWindow> mA
 void SetupGuiElements() {
     auto gui = Ship::Context::GetInstance()->GetWindow()->GetGui();
 
+    // PHASE 0 SPIKE: enable ImGui keyboard navigation for the F1 menu.
+    ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+
     auto& style = ImGui::GetStyle();
     style.FramePadding = ImVec2(4.0f, 6.0f);
     style.ItemSpacing = ImVec2(8.0f, 6.0f);
@@ -915,6 +918,32 @@ void DrawDebugMenu() {
 
 void GameMenuBar::DrawElement() {
     if(ImGui::BeginMenuBar()){
+        // PHASE 0 SPIKE: on the frame the menu opens, move keyboard nav focus into the
+        // menu bar (the ImGui "Menu" nav layer) so the arrow keys work immediately,
+        // without the user having to press Alt first. This replicates what ImGui does
+        // for the Alt-key layer toggle (imgui.cpp NavUpdateWindowing "apply_toggle_layer").
+        // DrawElement only runs while the menu bar is visible (GuiMenuBar::Draw early-returns
+        // when hidden), so "ran this frame but not last frame" == the open transition.
+        {
+            ImGuiContext& g = *ImGui::GetCurrentContext();
+            static int sLastDrawFrame = -100;
+            const bool freshOpen = (g.FrameCount != sLastDrawFrame + 1);
+            sLastDrawFrame = g.FrameCount;
+            if (freshOpen) {
+                ImGuiWindow* host = g.CurrentWindow; // "Main - Deck" (owns the menu bar)
+                ImGui::ClearActiveID();
+                ImGui::FocusWindow(host); // ensures g.NavWindow == host
+                g.NavLayer = ImGuiNavLayer_Menu;
+                if (host->NavLastIds[ImGuiNavLayer_Menu] != 0) {
+                    ImGui::SetNavID(host->NavLastIds[ImGuiNavLayer_Menu], ImGuiNavLayer_Menu, 0,
+                                    host->NavRectRel[ImGuiNavLayer_Menu]);
+                } else {
+                    ImGui::NavInitWindow(host, true); // first menu item drawn below grabs the init request
+                }
+                SPDLOG_INFO("[nav-spike] menu opened: forced focus into Menu layer of window '{}'", host->Name);
+            }
+        }
+
         DrawMenuBarIcon();
 
         DrawGameMenu();
@@ -938,5 +967,17 @@ void GameMenuBar::DrawElement() {
         DrawDebugMenu();
 
         ImGui::EndMenuBar();
+    }
+
+    // PHASE 0 SPIKE: report keyboard-nav focus so it can be verified without sight.
+    {
+        ImGuiContext* g = ImGui::GetCurrentContext();
+        static ImGuiID sLastNavId = (ImGuiID)-1;
+        if (g != nullptr && g->NavId != sLastNavId) {
+            sLastNavId = g->NavId;
+            const char* navWindow = (g->NavWindow != nullptr) ? g->NavWindow->Name : "<none>";
+            SPDLOG_INFO("[nav-spike] focus id=0x{:08X} window='{}' menuVisible={}", g->NavId, navWindow,
+                        Ship::Context::GetInstance()->GetWindow()->GetGui()->GetMenuOrMenubarVisible());
+        }
     }
 }

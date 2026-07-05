@@ -81,6 +81,24 @@ ImGui nav model to know: arrows move between items; Enter/Space activates; on sl
 activate first, then arrows adjust the value, Enter/Escape releases. Menu-bar
 horizontal arrow wrap only landed in ImGui 1.92.6, so wrapping may be absent — cosmetic.
 
+**Result (verified 2026-07-05, sightless via log):** The risk is real and now resolved.
+Enabling the keyboard flag alone was **not** enough — focus stayed on the main nav layer
+of the dockspace host window `"Main - Deck"` with `NavId == 0`, and arrows did nothing.
+Menu-bar items live on the separate `ImGuiNavLayer_Menu`, which a normal ImGui app only
+enters via the Alt key. **The fix, required, is to drop focus into the menu layer on the
+open transition**, replicating ImGui's own Alt-toggle (imgui.cpp `NavUpdateWindowing`
+"apply_toggle_layer"): with the host window current inside `BeginMenuBar()`,
+`ClearActiveID()` → `FocusWindow(host)` → `g.NavLayer = ImGuiNavLayer_Menu` →
+`NavInitWindow(host, true)` (or `SetNavID(host->NavLastIds[Menu], …)` if a prior id
+exists); the first menu item drawn that frame captures the init request. The open
+transition is detected by "`DrawElement` ran this frame but not last" (`GuiMenuBar::Draw`
+early-returns while hidden, so it only runs while visible). Verified: arrows traverse the
+top-level menus and Up/Down walks submenu items. **Phase 1 must fold this focus fix into
+`AccessibilityImGuiMenu_*` (gated behind the reader toggle).** Bonus observed: submenu
+popup windows are named after their label (e.g. `"Enhancements###Menu_00"`), so top-level
+labels are recoverable from the window name; leaf-item labels still need the UIWidgets
+instrumentation (Phase 2/3).
+
 ### Phase 1 — menu session tracking (open/close)
 
 New consumer-mod file pair, following the existing per-screen pattern:
