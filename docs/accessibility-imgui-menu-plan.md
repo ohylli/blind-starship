@@ -110,8 +110,8 @@ makes `Controller_ReadData` zero `sNextController` for N frames, or clear
 
 In the same module, a small narrator with a narrow API for UIWidgets, e.g.:
 
-- `AccessibilityImGuiMenu_ItemFocused(label, role, stateText)` — call after each widget
-  when `ImGui::IsItemFocused()`; dedup with `ImGui::GetItemID()` against the last
+- `AccessibilityImGuiMenu_ItemFocused(label, role, stateText)` — call when
+  `ImGui::IsItemFocused()`; dedup with `ImGui::GetItemID()` against the last
   spoken id so it speaks once per focus change. Speak "label, role, state" with
   interrupt=true.
 - `AccessibilityImGuiMenu_ValueChanged(label, valueText)` — speak the new value with
@@ -119,11 +119,34 @@ In the same module, a small narrator with a narrow API for UIWidgets, e.g.:
 - Both no-op unless the menu session is active (reader on + menu visible), so
   UIWidgets stays cheap and PRISM-ignorant.
 
-Details: strip `##`/`###` ID suffixes from labels before speaking; append
-"unavailable" plus the `disabledTooltip` for disabled items; checkbox state is
-"checked/unchecked", combo state is the selected entry text, slider state is the
-formatted value (respect `isPercentage`), `WindowButton` state is whether its window
-is open. Tooltips-on-demand can come later.
+**Placement: the focus checks must go *inside* the helpers, immediately after each
+focusable sub-widget — not after the helper call.** Both widget generations wrap
+their contents in `ImGui::BeginGroup()`/`EndGroup()`, and after `EndGroup()` the
+"last item" is the group itself, whose ID never receives nav focus — an
+`IsItemFocused()` check placed after the helper returns will simply never fire for
+sliders and combos. Helpers also contain multiple keyboard nav stops:
+
+- Sliders (V2 `SliderInt/Float` with `options.showButtons`, legacy
+  `EnhancementSliderInt/Float` with `PlusMinusButton`) are up to three stops:
+  minus button, slider, plus button. The slider speaks "label, role, value"; the
+  buttons speak "decrease <label>" / "increase <label>".
+- Combo popups render one raw `ImGui::Selectable` per entry (V2 `Combobox`
+  `UIWidgets.cpp:820-832`, legacy `EnhancementCombobox` similarly). Focus narration
+  at the helper boundary only covers the collapsed combo — arrowing through the
+  *open* popup would be silent until commit. Each `Selectable` in the popup loop
+  needs its own focus check, speaking the highlighted option text. Same for the two
+  raw `BeginCombo` backend pickers handled in phase 4.
+
+Label handling: the interactive widgets all use invisible `"##label"` IDs, so the
+spoken label is threaded down from the helper's argument (which instrumenting inside
+the helpers gives for free), not recovered from ImGui state. Strip `##`/`###` ID
+suffixes before speaking. Legacy slider labels are printf format strings rendered via
+`ImGui::Text(text, val)` (e.g. `"Volume: %d%%"`) — format them with the current value
+(or strip the specifiers) before speaking. Append "unavailable" plus the
+`disabledTooltip` for disabled items; checkbox state is "checked/unchecked", combo
+state is the selected entry text, slider state is the formatted value (respect
+`isPercentage`), `WindowButton` state is whether its window is open.
+Tooltips-on-demand can come later.
 
 ### Phase 3 — instrument UIWidgets
 
@@ -138,8 +161,9 @@ grepping `ImguiUI.cpp`):
   `EnhancementRadioButton`. Where legacy funnels into a shared low-level helper
   (`CustomCheckbox`), instrument the shared one.
 
-Focus announcements go after the widget call; value announcements where the helper
-already knows the value changed (its `return true` paths — the same spots that call
+Focus announcements go inside the helper after each focusable sub-widget (see the
+placement rules in phase 2); value announcements where the helper already knows the
+value changed (its `return true` paths — the same spots that call
 `SaveConsoleVariablesNextFrame()`).
 
 ### Phase 4 — mop-up of non-helper items
