@@ -62,3 +62,4 @@ src/port/mods/ObjectIdNames.generated.c
 src/port/mods/EventIdNames.generated.c
 /mods*/
 .claude/
+/level_manifests/
