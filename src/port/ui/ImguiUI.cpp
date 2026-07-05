@@ -11,6 +11,7 @@
 #include <libultraship/libultraship.h>
 #include <Fast3D/interpreter.h>
 #include "port/Engine.h"
+#include "port/mods/accessibility_screens/ImGuiMenu.h"
 #include "port/notification/notification.h"
 #include "utils/StringHelper.h"
 
@@ -36,9 +37,6 @@ std::shared_ptr<AdvancedResolutionSettings::AdvancedResolutionSettingsWindow> mA
 
 void SetupGuiElements() {
     auto gui = Ship::Context::GetInstance()->GetWindow()->GetGui();
-
-    // PHASE 0 SPIKE: enable ImGui keyboard navigation for the F1 menu.
-    ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 
     auto& style = ImGui::GetStyle();
     style.FramePadding = ImVec2(4.0f, 6.0f);
@@ -276,11 +274,20 @@ void DrawSettingsMenu(){
             if (Ship::Context::GetInstance()->GetAudio()->GetAvailableAudioBackends()->size() <= 1) {
                 UIWidgets::DisableComponent(ImGui::GetStyle().Alpha * 0.5f);
             }
-            if (ImGui::BeginCombo("##AApi", audioBackendNames[currentAudioBackend])) {
+            bool audioApiComboOpen = ImGui::BeginCombo("##AApi", audioBackendNames[currentAudioBackend]);
+            if (ImGui::IsItemFocused()) {
+                AccessibilityImGuiMenu_ItemFocused("Audio API", "combo box", audioBackendNames[currentAudioBackend]);
+            }
+            if (audioApiComboOpen) {
                 for (uint8_t i = 0; i < Ship::Context::GetInstance()->GetAudio()->GetAvailableAudioBackends()->size(); i++) {
                     auto backend = Ship::Context::GetInstance()->GetAudio()->GetAvailableAudioBackends()->data()[i];
-                    if (ImGui::Selectable(audioBackendNames[backend], backend == currentAudioBackend)) {
+                    bool isSelected = backend == currentAudioBackend;
+                    if (ImGui::Selectable(audioBackendNames[backend], isSelected)) {
                         Ship::Context::GetInstance()->GetAudio()->SetCurrentAudioBackend(backend);
+                        AccessibilityImGuiMenu_ValueChanged("Audio API", audioBackendNames[backend]);
+                    }
+                    if (ImGui::IsItemFocused()) {
+                        AccessibilityImGuiMenu_ItemFocused(audioBackendNames[backend], "option", isSelected ? "selected" : nullptr);
                     }
                 }
                 ImGui::EndCombo();
@@ -415,6 +422,10 @@ void DrawSettingsMenu(){
 
             if (ImGui::Button(" - ##WiiUFPS")) {
                 fpsSlider--;
+                AccessibilityImGuiMenu_ValueChanged("FPS", StringHelper::Sprintf("%d", fpsSlider).c_str());
+            }
+            if (ImGui::IsItemFocused()) {
+                AccessibilityImGuiMenu_ItemFocused("Decrease FPS", "button", "");
             }
             ImGui::SameLine();
             ImGui::SetCursorPosX(ImGui::GetCursorPosX() - 7.0f);
@@ -423,12 +434,19 @@ void DrawSettingsMenu(){
 
             ImGui::PushItemWidth(std::min((ImGui::GetContentRegionAvail().x - 60.0f), 260.0f));
             ImGui::SliderInt("##WiiUFPSSlider", &fpsSlider, 1, 3, "", ImGuiSliderFlags_AlwaysClamp);
+            if (ImGui::IsItemFocused()) {
+                AccessibilityImGuiMenu_ItemFocused("FPS", "slider", StringHelper::Sprintf("%d", fpsSlider).c_str());
+            }
             ImGui::PopItemWidth();
 
             ImGui::SameLine();
             ImGui::SetCursorPosX(ImGui::GetCursorPosX() - 7.0f);
             if (ImGui::Button(" + ##WiiUFPS")) {
                 fpsSlider++;
+                AccessibilityImGuiMenu_ValueChanged("FPS", StringHelper::Sprintf("%d", fpsSlider).c_str());
+            }
+            if (ImGui::IsItemFocused()) {
+                AccessibilityImGuiMenu_ItemFocused("Increase FPS", "button", "");
             }
 
             if (CVarGetInteger("gMatchRefreshRate", 0)) {
@@ -495,14 +513,23 @@ void DrawSettingsMenu(){
         if (Ship::Context::GetInstance()->GetWindow()->GetAvailableWindowBackends()->size() <= 1) {
             UIWidgets::DisableComponent(ImGui::GetStyle().Alpha * 0.5f);
         }
-        if (ImGui::BeginCombo("##RApi", windowBackendNames[configWindowBackend])) {
+        bool rendererApiComboOpen = ImGui::BeginCombo("##RApi", windowBackendNames[configWindowBackend]);
+        if (ImGui::IsItemFocused()) {
+            AccessibilityImGuiMenu_ItemFocused("Renderer API", "combo box", windowBackendNames[configWindowBackend]);
+        }
+        if (rendererApiComboOpen) {
             for (size_t i = 0; i < Ship::Context::GetInstance()->GetWindow()->GetAvailableWindowBackends()->size(); i++) {
                 auto backend = Ship::Context::GetInstance()->GetWindow()->GetAvailableWindowBackends()->data()[i];
-                if (ImGui::Selectable(windowBackendNames[backend], backend == configWindowBackend)) {
+                bool isSelected = backend == configWindowBackend;
+                if (ImGui::Selectable(windowBackendNames[backend], isSelected)) {
                     Ship::Context::GetInstance()->GetConfig()->SetInt("Window.Backend.Id", static_cast<int>(backend));
                     Ship::Context::GetInstance()->GetConfig()->SetString("Window.Backend.Name",
                                                                         windowBackendNames[backend]);
                     Ship::Context::GetInstance()->GetConfig()->Save();
+                    AccessibilityImGuiMenu_ValueChanged("Renderer API", windowBackendNames[backend]);
+                }
+                if (ImGui::IsItemFocused()) {
+                    AccessibilityImGuiMenu_ItemFocused(windowBackendNames[backend], "option", isSelected ? "selected" : nullptr);
                 }
             }
             ImGui::EndCombo();
@@ -918,31 +945,7 @@ void DrawDebugMenu() {
 
 void GameMenuBar::DrawElement() {
     if(ImGui::BeginMenuBar()){
-        // PHASE 0 SPIKE: on the frame the menu opens, move keyboard nav focus into the
-        // menu bar (the ImGui "Menu" nav layer) so the arrow keys work immediately,
-        // without the user having to press Alt first. This replicates what ImGui does
-        // for the Alt-key layer toggle (imgui.cpp NavUpdateWindowing "apply_toggle_layer").
-        // DrawElement only runs while the menu bar is visible (GuiMenuBar::Draw early-returns
-        // when hidden), so "ran this frame but not last frame" == the open transition.
-        {
-            ImGuiContext& g = *ImGui::GetCurrentContext();
-            static int sLastDrawFrame = -100;
-            const bool freshOpen = (g.FrameCount != sLastDrawFrame + 1);
-            sLastDrawFrame = g.FrameCount;
-            if (freshOpen) {
-                ImGuiWindow* host = g.CurrentWindow; // "Main - Deck" (owns the menu bar)
-                ImGui::ClearActiveID();
-                ImGui::FocusWindow(host); // ensures g.NavWindow == host
-                g.NavLayer = ImGuiNavLayer_Menu;
-                if (host->NavLastIds[ImGuiNavLayer_Menu] != 0) {
-                    ImGui::SetNavID(host->NavLastIds[ImGuiNavLayer_Menu], ImGuiNavLayer_Menu, 0,
-                                    host->NavRectRel[ImGuiNavLayer_Menu]);
-                } else {
-                    ImGui::NavInitWindow(host, true); // first menu item drawn below grabs the init request
-                }
-                SPDLOG_INFO("[nav-spike] menu opened: forced focus into Menu layer of window '{}'", host->Name);
-            }
-        }
+        AccessibilityImGuiMenu_OnMenuBarDraw();
 
         DrawMenuBarIcon();
 
@@ -967,17 +970,5 @@ void GameMenuBar::DrawElement() {
         DrawDebugMenu();
 
         ImGui::EndMenuBar();
-    }
-
-    // PHASE 0 SPIKE: report keyboard-nav focus so it can be verified without sight.
-    {
-        ImGuiContext* g = ImGui::GetCurrentContext();
-        static ImGuiID sLastNavId = (ImGuiID)-1;
-        if (g != nullptr && g->NavId != sLastNavId) {
-            sLastNavId = g->NavId;
-            const char* navWindow = (g->NavWindow != nullptr) ? g->NavWindow->Name : "<none>";
-            SPDLOG_INFO("[nav-spike] focus id=0x{:08X} window='{}' menuVisible={}", g->NavId, navWindow,
-                        Ship::Context::GetInstance()->GetWindow()->GetGui()->GetMenuOrMenubarVisible());
-        }
     }
 }

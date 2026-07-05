@@ -41,6 +41,7 @@
 #include "port/patches/DisplayListPatch.h"
 #include "port/mods/PortEnhancements.h"
 #include "port/mods/Accessibility.h"
+#include "port/mods/accessibility_screens/ImGuiMenu.h"
 #include "port/accessibility/Tts.h"
 
 #include <Fast3D/interpreter.h>
@@ -324,6 +325,8 @@ void GameEngine::Destroy() {
 }
 
 void GameEngine::StartFrame() const {
+    AccessibilityImGuiMenu_FrameTick();
+
     using Ship::KbScancode;
     const int32_t dwScancode = this->context->GetWindow()->GetLastScancode();
     this->context->GetWindow()->SetLastScancode(-1);

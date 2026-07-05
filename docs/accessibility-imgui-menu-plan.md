@@ -1,7 +1,10 @@
 # Plan: making the F1 settings menu screen-reader accessible
 
-Status: planned, not yet implemented. This document is self-contained input for the
-implementation session.
+Status: implemented (2026-07-05, branch `accessibility-imgui-menu`). All four phases are
+in: session tracking + narrator in `src/port/mods/accessibility_screens/ImGuiMenu.{cpp,h}`,
+instrumented widget helpers in `src/port/ui/UIWidgets.cpp`, raw-combo mop-up in
+`src/port/ui/ImguiUI.cpp`. The "Known gaps" section below still applies. This document
+remains the design reference.
 
 ## Decision
 

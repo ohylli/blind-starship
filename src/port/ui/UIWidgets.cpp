@@ -2,13 +2,35 @@
 #include "UIWidgets.h"
 
 #include "libultraship/src/Context.h"
+#include "port/mods/accessibility_screens/ImGuiMenu.h"
 
+#include <cstdio>
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <libultraship/libultraship.h>
 #include <libultraship/libultra/types.h>
 
 namespace UIWidgets {
+
+    namespace {
+        // Formats a printf-style label/format string with a single value, mirroring the
+        // ImGui::Text(label, value) the slider helpers already do for display — so labels that
+        // embed the value (e.g. "Cockpit Glass Opacity: %d") are spoken with the value filled in.
+        // Invariant: fmt is forwarded to snprintf as the format string, so it must be a
+        // compile-time literal whose specifier (if any) matches the value's type. Unlike the
+        // ImGui::Text call it mirrors, it is applied to the label regardless of labelPosition,
+        // so a literal % in a label must be escaped as %%.
+        std::string FormatValue(const char* fmt, int value) {
+            char buf[256];
+            snprintf(buf, sizeof(buf), fmt, value);
+            return buf;
+        }
+        std::string FormatValue(const char* fmt, float value) {
+            char buf[256];
+            snprintf(buf, sizeof(buf), fmt, value);
+            return buf;
+        }
+    }
 
     // MARK: - Layout Helper
 
@@ -172,6 +194,16 @@ namespace UIWidgets {
             ImGui::RenderText(label_pos, label);
         }
 
+        // Narration — the RenderText/RenderFrame calls above add no item, so g.LastItemData is
+        // still this checkbox (docs/accessibility-imgui-menu-plan.md).
+        if (ImGui::IsItemFocused()) {
+            AccessibilityImGuiMenu_ItemFocused(label, "checkbox",
+                                               disabled ? "unavailable" : (*v ? "checked" : "unchecked"));
+        }
+        if (pressed) {
+            AccessibilityImGuiMenu_ValueChanged(label, *v ? "checked" : "unchecked");
+        }
+
         IMGUI_TEST_ENGINE_ITEM_INFO(id, label, g.LastItemData.StatusFlags | ImGuiItemStatusFlags_Checkable | (*v ? ImGuiItemStatusFlags_Checked : 0));
         return pressed;
     }
@@ -232,14 +264,25 @@ namespace UIWidgets {
 
         uint8_t selected = CVarGetInteger(cvarName, defaultIndex);
         std::string comboName = std::string("##") + std::string(cvarName);
-        if (ImGui::BeginCombo(comboName.c_str(), comboArray[selected])) {
+        // comboName strips to empty (EnhancementCombobox has no visible label); the value text
+        // still conveys the selection.
+        bool comboOpen = ImGui::BeginCombo(comboName.c_str(), comboArray[selected]);
+        if (ImGui::IsItemFocused()) {
+            AccessibilityImGuiMenu_ItemFocused(comboName.c_str(), "combo box", comboArray[selected]);
+        }
+        if (comboOpen) {
             for (uint8_t i = 0; i < comboArray.size(); i++) {
                 if (strlen(comboArray[i]) > 1) {
-                    if (ImGui::Selectable(comboArray[i], i == selected)) {
+                    bool sel = ImGui::Selectable(comboArray[i], i == selected);
+                    if (ImGui::IsItemFocused()) {
+                        AccessibilityImGuiMenu_ItemFocused(comboArray[i], "option", i == selected ? "selected" : nullptr);
+                    }
+                    if (sel) {
                         CVarSetInteger(cvarName, i);
                         selected = i;
                         changed = true;
                         Ship::Context::GetInstance()->GetWindow()->GetGui()->SaveConsoleVariablesNextFrame();
+                        AccessibilityImGuiMenu_ValueChanged(comboName.c_str(), comboArray[i]);
                     }
                 }
             }
@@ -609,13 +652,15 @@ namespace UIWidgets {
     }
 
     bool BeginMenu(const char* label, const ImVec4& color) {
-        bool dirty = false;
         PushStyleMenu(color);
-        if (ImGui::BeginMenu(label)) {
-            dirty = true;
+        bool open = ImGui::BeginMenu(label);
+        // ImGui restores LastItemData after BeginMenu (see imgui_widgets.cpp "Restore LastItemData"),
+        // so this focus check refers to the menu-bar item whether or not the menu is open.
+        if (ImGui::IsItemFocused()) {
+            AccessibilityImGuiMenu_ItemFocused(label, "menu", nullptr);
         }
         PopStyleMenu();
-        return dirty;
+        return open;
     }
 
     void PushStyleMenuItem(const ImVec4& color) {
@@ -629,13 +674,13 @@ namespace UIWidgets {
     }
 
     bool MenuItem(const char* label, const char* shortcut, const ImVec4& color) {
-        bool dirty = false;
         PushStyleMenuItem(color);
-        if (ImGui::MenuItem(label, shortcut)) {
-            dirty = true;
+        bool activated = ImGui::MenuItem(label, shortcut);
+        if (ImGui::IsItemFocused()) {
+            AccessibilityImGuiMenu_ItemFocused(label, "menu item", nullptr);
         }
         PopStyleMenuItem();
-        return dirty;
+        return activated;
     }
 
     void PushStyleButton(const ImVec4& color) {
@@ -653,10 +698,20 @@ namespace UIWidgets {
         ImGui::PopStyleColor(4);
     }
 
-    bool Button(const char* label, const ButtonOptions& options) {
+    // Shared Button body with the accessibility-narration seam kept out of the public ButtonOptions
+    // (docs/accessibility-imgui-menu-plan.md). suppressNarration lets a wrapper own the focus
+    // announcement (the slider +/- buttons speak "decrease/increase <label>" themselves);
+    // narrateLabel == nullptr means "speak the button's own label", narrateState is optional
+    // (WindowButton speaks its plain label plus open/closed instead of the icon-prefixed text).
+    static bool ButtonImpl(const char* label, const ButtonOptions& options, bool suppressNarration,
+                           const char* narrateLabel, const char* narrateState) {
         ImGui::BeginDisabled(options.disabled);
         PushStyleButton(options.color);
         bool dirty = ImGui::Button(label, options.size);
+        if (!suppressNarration && ImGui::IsItemFocused()) {
+            AccessibilityImGuiMenu_ItemFocused(narrateLabel != nullptr ? narrateLabel : label, "button",
+                                               narrateState);
+        }
         PopStyleButton();
         ImGui::EndDisabled();
         if (options.disabled && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) && strcmp(options.disabledTooltip, "") != 0) {
@@ -667,18 +722,25 @@ namespace UIWidgets {
         return dirty;
     }
 
+    bool Button(const char* label, const ButtonOptions& options) {
+        return ButtonImpl(label, options, false, nullptr, nullptr);
+    }
+
     bool WindowButton(const char* label, const char* cvarName, std::shared_ptr<Ship::GuiWindow> windowPtr, const ButtonOptions& options) {
         ImGui::PushStyleVar(ImGuiStyleVar_ButtonTextAlign, ImVec2(0, 0));
+        bool isOpen = CVarGetInteger(cvarName, 0);
         std::string buttonText = label;
         bool dirty = false;
-        if (CVarGetInteger(cvarName, 0)) {
+        if (isOpen) {
             buttonText = ICON_FA_WINDOW_CLOSE " " + buttonText;
         } else {
             buttonText = ICON_FA_EXTERNAL_LINK_SQUARE " " + buttonText;
         }
-        if (Button(buttonText.c_str(), options)) {
+        // Speak the plain label + window state, not the icon-prefixed button text.
+        if (ButtonImpl(buttonText.c_str(), options, false, label, isOpen ? "open" : "closed")) {
             windowPtr->ToggleVisibility();
             dirty = true;
+            AccessibilityImGuiMenu_ValueChanged(label, isOpen ? "closed" : "open");
         }
         ImGui::PopStyleVar();
         return dirty;
@@ -723,6 +785,15 @@ namespace UIWidgets {
             }
         }
         dirty = ImGui::Checkbox(invisibleLabel, value);
+        // Must be before the label Text calls below — those submit items and would clobber
+        // g.LastItemData (docs/accessibility-imgui-menu-plan.md).
+        if (ImGui::IsItemFocused()) {
+            AccessibilityImGuiMenu_ItemFocused(label, "checkbox",
+                                               options.disabled ? "unavailable" : (*value ? "checked" : "unchecked"));
+        }
+        if (dirty) {
+            AccessibilityImGuiMenu_ValueChanged(label, *value ? "checked" : "unchecked");
+        }
         if (options.alignment == ComponentAlignment::Right) {
             if (options.labelPosition == LabelPosition::Near) {
                 ImGui::SameLine(ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize(label).x - ImGui::GetStyle().FramePadding.x * 2 - ImGui::GetStyle().ItemSpacing.x * 2);
@@ -817,13 +888,23 @@ namespace UIWidgets {
                 ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
             }
         }
-        if (ImGui::BeginCombo(invisibleLabel, comboArray[*value], options.flags)) {
+        bool comboOpen = ImGui::BeginCombo(invisibleLabel, comboArray[*value], options.flags);
+        if (ImGui::IsItemFocused()) {
+            AccessibilityImGuiMenu_ItemFocused(label, "combo box", comboArray[*value]);
+        }
+        if (comboOpen) {
             ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(10.0f, 10.0f));
             for (uint8_t i = 0; i < comboArray.size(); i++) {
                 if (strlen(comboArray[i]) > 1) {
-                    if (ImGui::Selectable(comboArray[i], i == *value)) {
+                    bool sel = ImGui::Selectable(comboArray[i], i == *value);
+                    // Each open-popup entry needs its own focus check, else arrowing is silent.
+                    if (ImGui::IsItemFocused()) {
+                        AccessibilityImGuiMenu_ItemFocused(comboArray[i], "option", i == *value ? "selected" : nullptr);
+                    }
+                    if (sel) {
                         *value = i;
                         dirty = true;
+                        AccessibilityImGuiMenu_ValueChanged(label, comboArray[i]);
                     }
                 }
             }
@@ -904,8 +985,14 @@ namespace UIWidgets {
                 ImGui::Text(label, *value);
             }
         }
+        // Each nav stop (minus / slider / plus) speaks from inside the group — after EndGroup the
+        // last item is the group, which never gets focus (docs/accessibility-imgui-menu-plan.md).
         if (options.showButtons) {
-            if (Button("-", { .color = options.color, .size = Sizes::Inline }) && *value > min) {
+            bool minusPressed = ButtonImpl("-", { .color = options.color, .size = Sizes::Inline }, true, nullptr, nullptr);
+            if (AccessibilityImGuiMenu_IsSessionActive() && ImGui::IsItemFocused()) {
+                AccessibilityImGuiMenu_ItemFocused(("decrease " + FormatValue(label, *value)).c_str(), "button", nullptr);
+            }
+            if (minusPressed && *value > min) {
                 *value -= options.step;
                 if (*value < min) *value = min;
                 Ship::Context::GetInstance()->GetWindow()->GetGui()->SaveConsoleVariablesNextFrame();
@@ -920,10 +1007,18 @@ namespace UIWidgets {
             Ship::Context::GetInstance()->GetWindow()->GetGui()->SaveConsoleVariablesNextFrame();
             dirty = true;
         }
+        if (AccessibilityImGuiMenu_IsSessionActive() && ImGui::IsItemFocused()) {
+            AccessibilityImGuiMenu_ItemFocused(FormatValue(label, *value).c_str(), "slider",
+                                               FormatValue(options.format, *value).c_str());
+        }
         if (options.showButtons) {
             ImGui::SameLine(0, 3.0f);
             ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
-            if (Button("+", { .color = options.color, .size = Sizes::Inline }) && *value < max) {
+            bool plusPressed = ButtonImpl("+", { .color = options.color, .size = Sizes::Inline }, true, nullptr, nullptr);
+            if (AccessibilityImGuiMenu_IsSessionActive() && ImGui::IsItemFocused()) {
+                AccessibilityImGuiMenu_ItemFocused(("increase " + FormatValue(label, *value)).c_str(), "button", nullptr);
+            }
+            if (plusPressed && *value < max) {
                 *value += options.step;
                 if (*value > max) *value = max;
                 Ship::Context::GetInstance()->GetWindow()->GetGui()->SaveConsoleVariablesNextFrame();
@@ -933,6 +1028,9 @@ namespace UIWidgets {
         PopStyleSlider();
         ImGui::EndDisabled();
         ImGui::EndGroup();
+        if (dirty) {
+            AccessibilityImGuiMenu_ValueChanged(label, FormatValue(options.format, *value).c_str());
+        }
         if (options.disabled && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) && strcmp(options.disabledTooltip, "") != 0) {
             ImGui::SetTooltip("%s", WrappedText(options.disabledTooltip));
         } else if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) && strcmp(options.tooltip, "") != 0) {
@@ -975,8 +1073,15 @@ namespace UIWidgets {
                 ImGui::Text(label, valueToDisplay);
             }
         }
+        // Each nav stop (minus / slider / plus) speaks from inside the group; the spoken value
+        // respects isPercentage, matching the on-screen caption (docs/accessibility-imgui-menu-plan.md).
         if (options.showButtons) {
-            if (Button("-", { .color = options.color, .size = Sizes::Inline }) && *value > min) {
+            bool minusPressed = ButtonImpl("-", { .color = options.color, .size = Sizes::Inline }, true, nullptr, nullptr);
+            if (AccessibilityImGuiMenu_IsSessionActive() && ImGui::IsItemFocused()) {
+                float dv = options.isPercentage ? *value * 100.0f : *value;
+                AccessibilityImGuiMenu_ItemFocused(("decrease " + FormatValue(label, dv)).c_str(), "button", nullptr);
+            }
+            if (minusPressed && *value > min) {
                 *value -= options.step;
                 if (*value < min) *value = min;
                 Ship::Context::GetInstance()->GetWindow()->GetGui()->SaveConsoleVariablesNextFrame();
@@ -992,10 +1097,20 @@ namespace UIWidgets {
             Ship::Context::GetInstance()->GetWindow()->GetGui()->SaveConsoleVariablesNextFrame();
             dirty = true;
         }
+        if (AccessibilityImGuiMenu_IsSessionActive() && ImGui::IsItemFocused()) {
+            float dv = options.isPercentage ? *value * 100.0f : *value;
+            AccessibilityImGuiMenu_ItemFocused(FormatValue(label, dv).c_str(), "slider",
+                                               FormatValue(options.format, dv).c_str());
+        }
         if (options.showButtons) {
             ImGui::SameLine(0, 3.0f);
             ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
-            if (Button("+", { .color = options.color, .size = Sizes::Inline }) && *value < max) {
+            bool plusPressed = ButtonImpl("+", { .color = options.color, .size = Sizes::Inline }, true, nullptr, nullptr);
+            if (AccessibilityImGuiMenu_IsSessionActive() && ImGui::IsItemFocused()) {
+                float dv = options.isPercentage ? *value * 100.0f : *value;
+                AccessibilityImGuiMenu_ItemFocused(("increase " + FormatValue(label, dv)).c_str(), "button", nullptr);
+            }
+            if (plusPressed && *value < max) {
                 *value += options.step;
                 if (*value > max) *value = max;
                 Ship::Context::GetInstance()->GetWindow()->GetGui()->SaveConsoleVariablesNextFrame();
@@ -1005,6 +1120,10 @@ namespace UIWidgets {
         PopStyleSlider();
         ImGui::EndDisabled();
         ImGui::EndGroup();
+        if (dirty) {
+            float dv = options.isPercentage ? *value * 100.0f : *value;
+            AccessibilityImGuiMenu_ValueChanged(label, FormatValue(options.format, dv).c_str());
+        }
         if (options.disabled && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) && strcmp(options.disabledTooltip, "") != 0) {
             ImGui::SetTooltip("%s", WrappedText(options.disabledTooltip));
         } else if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) && strcmp(options.tooltip, "") != 0) {

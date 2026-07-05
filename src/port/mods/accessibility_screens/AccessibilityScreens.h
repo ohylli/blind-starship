@@ -10,3 +10,5 @@ void AccessibilityPauseMenu_Register();
 void AccessibilityTrainingRings_Register();
 void AccessibilityScore_Register();
 void AccessibilityCameraView_Register();
+// Full API (frame tick, narrator) lives in ImGuiMenu.h.
+void AccessibilityImGuiMenu_Register();
