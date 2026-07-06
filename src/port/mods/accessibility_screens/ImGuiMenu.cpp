@@ -1,5 +1,6 @@
 #include "ImGuiMenu.h"
 
+#include <cstring>
 #include <string>
 #include <imgui.h>
 #include <imgui_internal.h>
@@ -16,6 +17,10 @@ static constexpr int32_t kMenuGameInputBlockId = 0x53464141; // "SFAA"
 static bool sSessionActive = false;
 static bool sFocusDropPending = false;
 static ImGuiID sLastSpokenItemId = 0;
+// The slider (if any) whose edit-mode activation we've already announced, so the "how to
+// adjust and exit" hint speaks once per activation rather than every frame while held.
+static ImGuiID sActiveEditItemId = 0;
+static bool sActiveEditWasTextInput = false;
 
 void AccessibilityImGuiMenu_Register() {
     // Nothing to register: no CVar of its own (gated on the shared screen-reader toggle)
@@ -31,6 +36,8 @@ void AccessibilityImGuiMenu_FrameTick() {
     }
     sSessionActive = shouldBeActive;
     sLastSpokenItemId = 0;
+    sActiveEditItemId = 0;
+    sActiveEditWasTextInput = false;
     if (shouldBeActive) {
         context->GetControlDeck()->BlockGameInput(kMenuGameInputBlockId);
         // WriteToOSContPad early-returns while blocked without zeroing the pad, so a button
@@ -85,6 +92,21 @@ bool AccessibilityImGuiMenu_IsSessionActive() {
     return sSessionActive;
 }
 
+// A short "how to operate this" clause appended after the item's value when it is focused, so a
+// keyboard user learns the interaction without having to discover it by trial. Returns nullptr for
+// roles that need no hint (buttons/menu items/checkboxes activate the obvious way with enter/space).
+// Sliders are the subtle case: enter opens a text-input mode while space enters arrow-key tweak mode
+// (imgui.cpp NavUpdate, PreferInput vs PreferTweak), so both are spelled out.
+static const char* HintForRole(const char* role) {
+    if (role == nullptr) {
+        return nullptr;
+    }
+    if (std::strcmp(role, "slider") == 0) {
+        return "space to adjust, enter to input a value";
+    }
+    return nullptr;
+}
+
 // "##" hides the prefix from display, "###" replaces the id — either way the spoken
 // text is everything before the first "##" (a "###" also matches).
 static std::string StripImGuiIdSuffix(const char* label) {
@@ -106,7 +128,7 @@ void AccessibilityImGuiMenu_ItemFocused(const char* label, const char* role, con
     }
     sLastSpokenItemId = itemId;
     std::string text = StripImGuiIdSuffix(label);
-    for (const char* part : { role, stateText }) {
+    for (const char* part : { role, stateText, HintForRole(role) }) {
         if (part != nullptr && part[0] != '\0') {
             if (!text.empty()) {
                 text += ", ";
@@ -130,5 +152,26 @@ void AccessibilityImGuiMenu_ValueChanged(const char* label, const char* valueTex
     const std::string text = StripImGuiIdSuffix(label);
     if (!text.empty()) {
         Tts_Speak(text.c_str(), true);
+    }
+}
+
+void AccessibilityImGuiMenu_SliderActivated(unsigned int id, bool active, bool textInput) {
+    if (!sSessionActive) {
+        return;
+    }
+    if (active) {
+        // Tracking by id (not a plain was-active bool) keeps the announcement correct regardless
+        // of draw order: the many idle sliders call this with active == false every frame, and
+        // only the one that just became active — or switched edit modes — trips the transition.
+        if (sActiveEditItemId != id || sActiveEditWasTextInput != textInput) {
+            sActiveEditItemId = id;
+            sActiveEditWasTextInput = textInput;
+            Tts_Speak(textInput ? "type a value, enter to confirm, escape to cancel"
+                                : "left and right to adjust, escape to exit",
+                      true);
+        }
+    } else if (sActiveEditItemId == id) {
+        sActiveEditItemId = 0;
+        sActiveEditWasTextInput = false;
     }
 }

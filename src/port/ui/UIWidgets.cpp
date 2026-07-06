@@ -985,13 +985,16 @@ namespace UIWidgets {
                 ImGui::Text(label, *value);
             }
         }
-        // Each nav stop (minus / slider / plus) speaks from inside the group — after EndGroup the
-        // last item is the group, which never gets focus (docs/accessibility-imgui-menu-plan.md).
+        // With the screen reader on, pull the +/- buttons out of keyboard nav (ImGuiItemFlags_NoNav)
+        // so the menu reads as a flat vertical list: up/down moves between sliders, and the focused
+        // slider is adjusted in place (space to tweak, enter to type a value — spoken as a usage
+        // hint by the narrator). The buttons stay visible and mouse-clickable
+        // (docs/accessibility-imgui-menu-plan.md).
+        const bool skipButtonNav = AccessibilityImGuiMenu_IsSessionActive();
         if (options.showButtons) {
+            if (skipButtonNav) ImGui::PushItemFlag(ImGuiItemFlags_NoNav, true);
             bool minusPressed = ButtonImpl("-", { .color = options.color, .size = Sizes::Inline }, true, nullptr, nullptr);
-            if (AccessibilityImGuiMenu_IsSessionActive() && ImGui::IsItemFocused()) {
-                AccessibilityImGuiMenu_ItemFocused(("decrease " + FormatValue(label, *value)).c_str(), "button", nullptr);
-            }
+            if (skipButtonNav) ImGui::PopItemFlag();
             if (minusPressed && *value > min) {
                 *value -= options.step;
                 if (*value < min) *value = min;
@@ -1007,17 +1010,23 @@ namespace UIWidgets {
             Ship::Context::GetInstance()->GetWindow()->GetGui()->SaveConsoleVariablesNextFrame();
             dirty = true;
         }
-        if (AccessibilityImGuiMenu_IsSessionActive() && ImGui::IsItemFocused()) {
-            AccessibilityImGuiMenu_ItemFocused(FormatValue(label, *value).c_str(), "slider",
-                                               FormatValue(options.format, *value).c_str());
+        if (AccessibilityImGuiMenu_IsSessionActive()) {
+            if (ImGui::IsItemFocused()) {
+                AccessibilityImGuiMenu_ItemFocused(FormatValue(label, *value).c_str(), "slider",
+                                                   FormatValue(options.format, *value).c_str());
+            }
+            // Capture here, before the + button below clobbers LastItemData: on the frame the
+            // slider becomes active the narrator speaks how to adjust/exit (tweak vs text-input).
+            const ImGuiID sliderId = ImGui::GetItemID();
+            const bool active = ImGui::IsItemActive();
+            AccessibilityImGuiMenu_SliderActivated(sliderId, active, active && ImGui::TempInputIsActive(sliderId));
         }
         if (options.showButtons) {
             ImGui::SameLine(0, 3.0f);
             ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+            if (skipButtonNav) ImGui::PushItemFlag(ImGuiItemFlags_NoNav, true);
             bool plusPressed = ButtonImpl("+", { .color = options.color, .size = Sizes::Inline }, true, nullptr, nullptr);
-            if (AccessibilityImGuiMenu_IsSessionActive() && ImGui::IsItemFocused()) {
-                AccessibilityImGuiMenu_ItemFocused(("increase " + FormatValue(label, *value)).c_str(), "button", nullptr);
-            }
+            if (skipButtonNav) ImGui::PopItemFlag();
             if (plusPressed && *value < max) {
                 *value += options.step;
                 if (*value > max) *value = max;
@@ -1073,14 +1082,16 @@ namespace UIWidgets {
                 ImGui::Text(label, valueToDisplay);
             }
         }
-        // Each nav stop (minus / slider / plus) speaks from inside the group; the spoken value
+        // With the screen reader on, pull the +/- buttons out of keyboard nav (ImGuiItemFlags_NoNav)
+        // so the menu reads as a flat vertical list: up/down moves between sliders, and the focused
+        // slider is adjusted in place (space to tweak, enter to type a value — spoken as a usage
+        // hint by the narrator). The buttons stay visible and mouse-clickable; the spoken value
         // respects isPercentage, matching the on-screen caption (docs/accessibility-imgui-menu-plan.md).
+        const bool skipButtonNav = AccessibilityImGuiMenu_IsSessionActive();
         if (options.showButtons) {
+            if (skipButtonNav) ImGui::PushItemFlag(ImGuiItemFlags_NoNav, true);
             bool minusPressed = ButtonImpl("-", { .color = options.color, .size = Sizes::Inline }, true, nullptr, nullptr);
-            if (AccessibilityImGuiMenu_IsSessionActive() && ImGui::IsItemFocused()) {
-                float dv = options.isPercentage ? *value * 100.0f : *value;
-                AccessibilityImGuiMenu_ItemFocused(("decrease " + FormatValue(label, dv)).c_str(), "button", nullptr);
-            }
+            if (skipButtonNav) ImGui::PopItemFlag();
             if (minusPressed && *value > min) {
                 *value -= options.step;
                 if (*value < min) *value = min;
@@ -1097,19 +1108,24 @@ namespace UIWidgets {
             Ship::Context::GetInstance()->GetWindow()->GetGui()->SaveConsoleVariablesNextFrame();
             dirty = true;
         }
-        if (AccessibilityImGuiMenu_IsSessionActive() && ImGui::IsItemFocused()) {
-            float dv = options.isPercentage ? *value * 100.0f : *value;
-            AccessibilityImGuiMenu_ItemFocused(FormatValue(label, dv).c_str(), "slider",
-                                               FormatValue(options.format, dv).c_str());
+        if (AccessibilityImGuiMenu_IsSessionActive()) {
+            if (ImGui::IsItemFocused()) {
+                float dv = options.isPercentage ? *value * 100.0f : *value;
+                AccessibilityImGuiMenu_ItemFocused(FormatValue(label, dv).c_str(), "slider",
+                                                   FormatValue(options.format, dv).c_str());
+            }
+            // Capture here, before the + button below clobbers LastItemData: on the frame the
+            // slider becomes active the narrator speaks how to adjust/exit (tweak vs text-input).
+            const ImGuiID sliderId = ImGui::GetItemID();
+            const bool active = ImGui::IsItemActive();
+            AccessibilityImGuiMenu_SliderActivated(sliderId, active, active && ImGui::TempInputIsActive(sliderId));
         }
         if (options.showButtons) {
             ImGui::SameLine(0, 3.0f);
             ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+            if (skipButtonNav) ImGui::PushItemFlag(ImGuiItemFlags_NoNav, true);
             bool plusPressed = ButtonImpl("+", { .color = options.color, .size = Sizes::Inline }, true, nullptr, nullptr);
-            if (AccessibilityImGuiMenu_IsSessionActive() && ImGui::IsItemFocused()) {
-                float dv = options.isPercentage ? *value * 100.0f : *value;
-                AccessibilityImGuiMenu_ItemFocused(("increase " + FormatValue(label, dv)).c_str(), "button", nullptr);
-            }
+            if (skipButtonNav) ImGui::PopItemFlag();
             if (plusPressed && *value < max) {
                 *value += options.step;
                 if (*value > max) *value = max;

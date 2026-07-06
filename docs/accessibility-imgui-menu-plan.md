@@ -148,9 +148,24 @@ their contents in `ImGui::BeginGroup()`/`EndGroup()`, and after `EndGroup()` the
 sliders and combos. Helpers also contain multiple keyboard nav stops:
 
 - Sliders (V2 `SliderInt/Float` with `options.showButtons`, legacy
-  `EnhancementSliderInt/Float` with `PlusMinusButton`) are up to three stops:
-  minus button, slider, plus button. The slider speaks "label, role, value"; the
-  buttons speak "decrease <label>" / "increase <label>".
+  `EnhancementSliderInt/Float` with `PlusMinusButton`) lay out a minus button,
+  the slider, and a plus button on one row. **With the reader on, the +/- buttons
+  are pulled out of keyboard nav** (`ImGui::PushItemFlag(ImGuiItemFlags_NoNav, true)`
+  around each `ButtonImpl` call in `UIWidgets.cpp`, gated on
+  `AccessibilityImGuiMenu_IsSessionActive()`), so the slider is the row's only nav
+  stop and the menu reads as a flat up/down list — no left/right hopping between
+  minus/slider/plus. The buttons stay visible and mouse-clickable; the previously
+  spoken "decrease <label>"/"increase <label>" focus lines are gone because those
+  items no longer receive keyboard focus. The slider speaks "label, role, value,
+  <hint>", where the hint ("space to adjust, enter to input a value") teaches the
+  ImGui slider quirk that space enters arrow-key tweak mode while enter opens a
+  text-input mode (imgui.cpp `NavUpdate`, `PreferTweak` vs `PreferInput`). Hints are
+  centralized in `HintForRole()` in `ImGuiMenu.cpp`, keyed by the role string. On the
+  *activation* transition a second hint fires — `AccessibilityImGuiMenu_SliderActivated()`,
+  fed each frame from the helper with the slider's `ImGui::GetItemID()`,
+  `IsItemActive()`, and `TempInputIsActive()` — speaking "left and right to adjust, escape
+  to exit" for tweak mode or "type a value, enter to confirm, escape to cancel" for
+  text-input mode, once per activation (tracked by item id, reset on session open/close).
 - Combo popups render one raw `ImGui::Selectable` per entry (V2 `Combobox`
   `UIWidgets.cpp:820-832`, legacy `EnhancementCombobox` similarly). Focus narration
   at the helper boundary only covers the collapsed combo — arrowing through the

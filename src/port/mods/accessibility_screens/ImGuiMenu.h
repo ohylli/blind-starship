@@ -39,3 +39,11 @@ void AccessibilityImGuiMenu_ItemFocused(const char* label, const char* role, con
 // Call when a widget's value changed. Speaks just the value — snappier for repeated
 // slider ticks — falling back to the label if valueText is empty. Interrupts.
 void AccessibilityImGuiMenu_ValueChanged(const char* label, const char* valueText);
+
+// Call every frame right after a slider, with the slider's ImGui id (ImGui::GetItemID())
+// and its current edit state. On the transition into an edit mode it speaks how to operate
+// and leave it — tweak mode (entered with space): arrow keys adjust; text-input mode
+// (entered with enter): type a value. Spoken once per activation; no-op while the slider is
+// idle or the session is inactive. `id` is ImGuiID, passed as unsigned int to keep this
+// header free of imgui includes.
+void AccessibilityImGuiMenu_SliderActivated(unsigned int id, bool active, bool textInput);
