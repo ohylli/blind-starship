@@ -166,6 +166,40 @@ sliders and combos. Helpers also contain multiple keyboard nav stops:
   `IsItemActive()`, and `TempInputIsActive()` — speaking "left and right to adjust, escape
   to exit" for tweak mode or "type a value, enter to confirm, escape to cancel" for
   text-input mode, once per activation (tracked by item id, reset on session open/close).
+
+  **Update (usage hints extended to the whole menu).** `HintForRole()` now returns a short
+  activate clause for every leaf role, not just sliders — checkbox "enter to toggle", combo
+  box "enter to open the list", button "enter to activate", menu item "enter to select", menu
+  "enter to open", combo option "enter to choose" — appended on each focus. On top of that,
+  `ItemFocused` speaks a one-off *directional* hint whenever keyboard focus arrives on a new
+  nav **surface**, so the user learns the axis they just entered. Three surfaces, because their
+  key semantics differ:
+    - **menu bar** (`g.NavLayer == ImGuiNavLayer_Menu`) → "left and right arrows to move between
+      menus, down arrow to open, F1 to close".
+    - **top-level menu** (a menu popup whose parent is the host window) → "up and down arrows to
+      move, enter to select, left and right arrows for the other menus, escape to go back to the
+      menu bar". Note left/right here do *not* go back — ImGui switches to the neighbouring
+      top-level menu — and escape returns to the bar.
+    - **nested submenu** (a menu popup whose parent is itself a popup) → "up and down arrows to
+      move, enter to select, left arrow to go back", because here left really does go up a level.
+
+  The surface is read from ImGui nav state, not the role string — a nested submenu entry is role
+  "menu" yet vertical, so only the nav layer / popup-parent test separates the cases. Crucially,
+  `sPrevSurfaceKey` holds the focused popup window id so a *lateral* hop between two top-level
+  menus (Left/Right while a menu is open — same "top-level menu" surface, different menu) is also
+  re-voiced. Without it only the leftmost menu, whose Left falls back to the bar, would announce
+  on exit; every other menu would switch to its neighbour silently. The directional hint and the
+  per-role activate clause are mutually exclusive within one announcement: on a surface-change
+  frame the directional hint replaces the role clause, so nothing stacks. `sPrevSurface` /
+  `sPrevSurfaceKey` reset on session open/close.
+
+  **Focus recovery on Escape.** Escape closes the last menu popup and ImGui parks nav on the host
+  window's main layer, where the arrows are dead — leaving the keyboard user stuck (only F1 still
+  works). `OnMenuBarDraw` now re-runs the menu-bar nav drop whenever the session is active but
+  focus is neither on a menu-bar item (`ImGuiNavLayer_Menu`) nor inside an open popup
+  (`g.OpenPopupStack.Size == 0`), guarded by a two-frame streak so a one-frame open/close gap does
+  not yank focus mid-transition. The net effect is that Escape from an open menu cleanly returns to
+  the menu bar (and re-announces the horizontal hint); the menu is still closed only with F1.
 - Combo popups render one raw `ImGui::Selectable` per entry (V2 `Combobox`
   `UIWidgets.cpp:820-832`, legacy `EnhancementCombobox` similarly). Focus narration
   at the helper boundary only covers the collapsed combo — arrowing through the
