@@ -118,6 +118,11 @@ suggested ordering; it is not a commitment.
   failed while the screen reader is alive), to be added later or if a real bug report
   surfaces it. Player-facing severity drops to LOW given the reassessed likelihood.
 
+  *Update (2026-07-07):* the temporary SF64-audio-engine cue path has now been
+  removed as planned — the `gAccessibilityCue3D` CVar and its F1 checkbox are gone,
+  and cues always render through the HRTF backend (`AccessibilityCues.cpp`,
+  `Cue.{cpp,h}`). The Class-2 spoken failure notice remains deferred (log-only).
+
 ### CUE3D-2 — Cue volume is uncontrollable; `Cue3D_SetGain` is wired to nothing
 - **Severity:** HIGH (player-facing). The UX reviewer recommended promoting it from
   "parked open question" to must-fix-before-default; DSP, architect, and buildsmith
@@ -137,6 +142,16 @@ suggested ordering; it is not a commitment.
   team noted that placing this wiring inside the Cue abstraction (CUE3D-5) makes it
   one site instead of N; without the abstraction it is copied into every cue's
   Refresh path (currently 2, growing).
+- **Decision (2026-07-07):** *implemented.* The effective per-source gain is now
+  `gGameMasterVolume` × `gAccessibilityCueMasterVolume` (new cue-only master, float,
+  default 1) × `gAccessibilityCueVolume.<Id>` (per-cue float, default 1), computed by
+  `Cue::PushGain` (`Cue.cpp`) and pushed via `Cue3D_SetGain` every tick a cue is
+  driven. The wiring lives in the Cue abstraction (CUE3D-5), so it is one site, not
+  N. The game master deliberately reaches the second audio device now. UI: an "All
+  cues" master slider plus a registry-generated per-cue slider under F1 → Blind
+  Starship → Cue volumes (`ImguiUI.cpp`), each with a Preview button. BGM ducking
+  (`SFX_FLAG_19`) still does not reach the second device, and TTS ducking (CUE3D-16)
+  is still open — but the gain lever both need now exists.
 
 ### CUE3D-3 — No clip guard when summed spatialized sources exceed ±1.0
 - **Severity:** Split, converging on "do it now, it's cheap." UX rated it HIGH and
@@ -154,6 +169,10 @@ suggested ordering; it is not a commitment.
   added.
 - **Team recommendation (option):** output trim (~0.5-0.7) plus a cheap safety clip in
   `ProduceBlock`.
+- **Decision (2026-07-07):** *implemented.* `Cue3DSteamAudio.cpp` now applies a
+  `kOutputTrim` of 0.6 to the hand-summed mix and then hard-clamps each output sample
+  to [-1, 1] as a safety net for a rare stack of loud overlapping cues (the summing
+  loop near `ProduceBlock`). Exactly the recommended trim-plus-clip.
 
 ### CUE3D-4 — Hardcoded 48 kHz never reconciled with the actual device rate
 - **Severity:** Split by horizon. HIGH as a foundation / cross-machine correctness
@@ -173,6 +192,13 @@ suggested ordering; it is not a commitment.
   and `Cue3D_GetSampleRate` must all follow the actual device rate, including
   rebuilding the HRTF/effects at that rate. DSP was explicit that reading the rate
   back without propagating it just moves the desync; a partial fix leaves it broken.
+- **Decision (2026-07-07):** *implemented.* The negotiated device rate is now read
+  back after `ma_device_init` (`g.sampleRate = g.device.sampleRate > 0 ? … :
+  kSampleRate`) and propagated end-to-end: the HRTF/effect `IPLAudioSettings.samplingRate`,
+  the decoder target rate (`ma_decoder_config_init(..., g.sampleRate)`), and
+  `Cue3D_GetSampleRate` all follow the actual device rate. 48 kHz is only the requested
+  hint (`cfg.sampleRate = kSampleRate`) now, not an assumption. All in
+  `Cue3DSteamAudio.cpp`.
 
 ### CUE3D-5 — Dual-backend boilerplate does not scale; no Cue abstraction
 - **Severity:** HIGH.
@@ -190,6 +216,15 @@ suggested ordering; it is not a commitment.
   once, so each future cue inherits them. The team's framing: the abstraction is not
   competing with the player-facing fixes — it is the place those fixes land in one
   spot instead of being multiplied.
+- **Decision (2026-07-07):** *implemented.* A game-agnostic `Cue` class over the Cue3D
+  seam now exists (`src/port/accessibility/Cue.{h,cpp}`): lazy load + failure latch,
+  Start/Stop/SetTarget(x,y,z,pitch), per-cue volume, preview mode, and a registry
+  (`CueRegistry_Register` / `_All` / `_TickPreviews` / `_UnloadAll`) the settings UI
+  enumerates. The duplicated dual-backend state machines are gone; `AccessibilityCues.cpp`
+  is now Star Fox policy only — it registers the two cues ("Ring guide", "Enemy
+  locator") and drives them from its `GamePostUpdateEvent` listeners. CUE3D-2 (volume)
+  and CUE3D-6 (handle nulling) live inside this layer as planned; CUE3D-1's fallback
+  became moot with the SF64 path's removal.
 
 ### CUE3D-6 — Cached `Cue3DSource*` handles dangle after shutdown (not nulled on Exit)
 - **Severity:** HIGH-latent / MEDIUM-today. The team agreed it is benign today and a
@@ -209,6 +244,12 @@ suggested ordering; it is not a commitment.
   has.
 - **Team recommendation (option):** null the cached handles in `_Exit` (one line per
   cue); it disappears into the abstraction's Exit.
+- **Decision (2026-07-07):** *implemented, structurally.* `AccessibilityCues_Exit` now
+  calls `CueRegistry_UnloadAll()`, which stops every cue and nulls its backend handle
+  (`mSource = nullptr`) before `Cue3D_Shutdown` frees the sources (`Cue.cpp`,
+  `AccessibilityCues.cpp`). Because Cue objects are process-lifetime and never hold a
+  raw cached `Cue3DSource*` past UnloadAll, no handle can dangle across a future
+  Init/Exit/Init reuse — the latency the review flagged is closed at the type level.
 
 ### CUE3D-7 — Linux/macOS: copied `libphonon.so` / `.dylib` will not load at runtime (no rpath)
 - **Severity:** Downgraded HIGH→MEDIUM during the debate. MEDIUM as a *consequence
@@ -347,6 +388,8 @@ suggested ordering; it is not a commitment.
   exists across the three streams.
 - **Team recommendation (option):** duck cues while TTS speaks once the gain lever
   (CUE3D-2) exists.
+- **Note (2026-07-07):** the gain lever this depends on now exists (CUE3D-2 implemented —
+  `Cue3D_SetGain` driven by `Cue::PushGain`). TTS ducking itself remains unbuilt.
 
 ---
 

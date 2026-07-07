@@ -183,19 +183,22 @@ to 0 i.e. change 1 to 0 on the line that looks like:
 
 ### 3D audio cues
 
-By default the ring and enemy audio cues are rendered as real 3D binaural (HRTF)
-audio via [Steam Audio](https://valvesoftware.github.io/steam-audio/), giving
-true left / right and front / back positioning through headphones. If you prefer
-the older cues driven by the game's own sound engine (stereo pan for left /
-right, pitch for above / below), you can switch back from the settings menu (f1
--> settings -> blind starship -> 3d audio cues). Or by editing the game's
-settings file `starship.cfg.json` created after first launch to the same folder
-where you have the game. Change the value of `gAccessibilityCue3D` from 1 to 0
-i.e. change 1 to 0 on the line that looks like:
+The ring and enemy audio cues are rendered as real 3D binaural (HRTF) audio via
+[Steam Audio](https://valvesoftware.github.io/steam-audio/), giving true left /
+right and front / back positioning through headphones. Wear headphones for the
+positioning to work.
 
-```
-"gAccessibilityCue3D": 1,
-```
+You can adjust how loud the cues are from the settings menu (f1 -> settings ->
+blind starship -> cue volumes). There you get an "all cues" slider that sets the
+overall cue loudness, a per-cue slider for each cue (ring guide, enemy locator),
+and a preview button beside each one that plays a short sample of that cue
+straight ahead so you can set the level by ear. The cues are also scaled by the
+game's own master volume, so turning the game down turns the cues down too.
+
+The volumes are saved in `starship.cfg.json` (created after first launch in the
+folder where you have the game) as `gAccessibilityCueMasterVolume` for the "all
+cues" slider and `gAccessibilityCueVolume.Ring` / `gAccessibilityCueVolume.Enemy`
+for the per-cue sliders, if you would rather edit them there.
 
 ### Graphics Backends
 Currently, there are three rendering APIs supported: DirectX11 (Windows), OpenGL (all platforms), and Metal (macOS). You can change which API to use in the `Settings` menu of the menubar, which requires a restart.  If you're having an issue with crashing, you can change the API in the `starship.cfg.json` file by finding the line `"Backend":{`... and changing the `id` value to `3` and set the `Name` to `OpenGL`. `DirectX 11` with id `2` is the default on Windows. `Metal` with id `4` is the default on macOS.

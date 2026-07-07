@@ -191,7 +191,7 @@ mods (screen reader, audio cues):
 - **Spawner Mod** — place a specific enemy or item on demand as a controlled cue
   target (this is already how enemy/ring cues get tuned).
 - **Console `bind` / `bind-toggle`** — bind a key to any accessibility CVar
-  (`gAccessibilityScreenReader`, `gAccessibilityCue3D`, etc.) for hands-free A/B
+  (`gAccessibilityScreenReader`, `gAccessibilityAudioCues`, etc.) for hands-free A/B
   testing, and `set`/`get` to inspect them.
 - **Log Level = trace** — surface the `SPDLOG_TRACE` instrumentation used by cue
   tuning and the object-spawn log.

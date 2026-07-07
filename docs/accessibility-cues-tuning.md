@@ -1,40 +1,29 @@
 # Tuning the accessibility audio cues
 
-The cue mod lives at `src/port/mods/AccessibilityCues.{cpp,h}` and now houses two cues sharing the `gAccessibilityAudioCues` CVar:
+The cues render through the Steam Audio HRTF backend (see
+`docs/accessibility-hrtf-cues.md`). There is no longer a second SF64-audio-engine
+path — it was removed, along with the `gAccessibilityCue3D` toggle. The pieces are:
 
-- **Ring cue** — attaches a continuous SFX to the next Training ring ahead of the Arwing (scoped to `LEVEL_TRAINING`).
-- **Enemy cue** — attaches a continuous SFX to the closest cueable enemy ahead of the Arwing's aim line, on any on-rails level. Coordinate frame is body-frame (rotated by the player's yaw + pitch) rather than world-frame; see `docs/accessibility-enemy-cue.md` for the derivation.
+- **The `Cue` layer** (`src/port/accessibility/Cue.{h,cpp}`) — game-agnostic: each cue owns its sound file, its per-cue volume CVar, the three-factor gain, and a preview mode. A registry lets the settings UI enumerate cues.
+- **The consumer mod** (`src/port/mods/AccessibilityCues.{cpp,h}`) — the Star Fox side, housing two cues sharing the `gAccessibilityAudioCues` CVar:
+  - **Ring cue** — tracks the next Training ring ahead of the Arwing (scoped to `LEVEL_TRAINING`).
+  - **Enemy cue** — tracks the closest cueable enemy ahead of the Arwing's aim line, on any on-rails level. Coordinate frame is body-frame (rotated by the player's yaw + pitch) rather than world-frame; see `docs/accessibility-enemy-cue.md` for the derivation.
 
-**Two backends exist.** By default (`gAccessibilityCue3D` on) both cues render
-through the Steam Audio HRTF backend — see `docs/accessibility-hrtf-cues.md`. The
-SF64 audio-engine path described through most of this doc is the *fallback*,
-live only when `gAccessibilityCue3D` is off; its knobs no longer affect the cue
-in the default configuration. Its constraints are kept here because the SF64-SFX
-knowledge stays relevant (the native path may live on for some cues). The
-HRTF-only knobs are called out in their own subsection below.
+Direction is now the HRTF backend's job (true left/right and front/back). The mod still drives pitch from altitude via `AccessibilityCues_ComputeFreqModFromY`, layered on top of the HRTF (the generic HRTF's own elevation cue is weak — see `docs/accessibility-hrtf-cues.md`). Distance drives volume through the backend's inverse-distance model. Most knobs below apply to either cue; function names are prefixed `Ring` or `Enemy` to disambiguate.
 
-Both cues drive pan from X, volume from distance, and pitch from altitude via the same `AccessibilityCues_ComputeFreqModFromY` helper. Almost every knob below applies to either cue — function and variable names are prefixed `Ring` or `Enemy` to disambiguate.
-
-For background on *why* the cues are shaped this way (player-relative coordinate frame, Y→pitch instead of Y→pan, bank/range constraints), see `docs/audio-system.md` and `docs/game-world.md`.
+For background on *why* the cues are shaped this way (player-relative coordinate frame, Y→pitch instead of Y→pan), see `docs/audio-system.md` and `docs/game-world.md`.
 
 ---
 
 ## The knobs, in order of "most likely to matter"
 
-### The SFX itself
+### The sound file
 
-`RING_CUE_SFX` (Training-ring cue) and `ENEMY_CUE_SFX` (enemy cue) macros near the top of `AccessibilityCues.cpp`. Alternative candidates considered for the ring cue are listed in a comment above the macro definition. When picking the enemy cue's SFX, favor a sound with a clearly different timbre from the ring cue's, so both can fire simultaneously on Training without blending into one sound.
+Each cue loads a WAV from `assets/accessibility/` (`ring.wav`, `enemy.wav`), named in `AccessibilityCues_Init` where the cues are registered. Swap the file to change the sound. Favor sounds with clearly different timbres between the two cues, so both can fire simultaneously on Training without blending into one sound. Unlike the old SF64-SFX path, there are no bank/flag/range constraints — the HRTF backend plays an arbitrary mono WAV; distance, direction, and pitch are all applied by the backend or the mod, not baked into the sound.
 
-Constraints to keep in mind if reaching for another `NA_SE_*`:
+### Ring cue distance falloff
 
-- **Bank nibble** (top hex digit of the ID) must be 1, 2, or 3. Bank 0 (player) has a "force center pan when source z is in ±200" special case that fires at the worst possible moment for our cue; bank 4 (system) ignores position entirely.
-- **Avoid `SFX_FLAG_22`** — would disable distance attenuation and so kill the volume-from-distance cue.
-- **Avoid `SFX_FLAG_23`** — random per-frame pitch wobble; fights the Y→pitch mapping.
-- **Prefer range 2 or 3** (the two bits at position 16/17 of the ID; see `docs/audio-system.md` §3 for the decoding). Range 0/1 dies at ~1650/2200 world units; rings spawn ~3000 units ahead, so a low-range SFX would be inaudible until the player is already close.
-
-### Ring cue distance falloff (Cue3D / HRTF backend only)
-
-Two knobs near the top of `src/port/accessibility/Cue3DSteamAudio.cpp`, applying **only** to the HRTF ring cue (`gAccessibilityCue3D` on). The SF64 SFX-engine path attenuates internally and ignores them.
+Two knobs near the top of `src/port/accessibility/Cue3DSteamAudio.cpp`, controlling the HRTF distance model for every cue.
 
 Unlike the SFX engine — which folds distance, pan, and elevation into one opaque path — the HRTF backend splits the jobs: Steam Audio's binaural effect handles *direction*, and a separate inverse-distance model handles *loudness-vs-distance*. `ProduceBlock` calls `iplDistanceAttenuationCalculate` (type `INVERSEDISTANCE`, gain ≈ 1/d past the near plateau) once per audio block, using the magnitude of the player-relative position the cue pushes through `Cue3D_SetPosition`.
 
@@ -43,9 +32,9 @@ The wrinkle: Steam Audio measures distance in **meters**, but SF64 world units a
 - `kWorldUnitsPerMeter` (default 1000) — overall steepness/loudness. It sits in the numerator of the gain (`1 / (units / thisKnob)`), so **larger = louder and flatter** (a given distance maps to fewer "meters", hence less falloff), **smaller = quieter and steeper**. Raise it if a distant ring fades out too aggressively; lower it if a far ring is distractingly loud. At 1000: 3000u → 3m → gain ~0.33; 5000u → 5m → 0.2.
 - `kMinDistanceMeters` (default 1) — near plateau. A source closer than this gets no attenuation (gain capped at full), so the cue stops getting louder once you're basically on top of the ring. Larger = a wider full-volume bubble at close range.
 
-`Cue3D_SetGain` is a separate, distance-*independent* multiplier applied on top of this falloff — reserved for a per-cue trim or a future master-volume / pause-silence lever, not for shaping distance.
+`Cue3D_SetGain` is a separate, distance-*independent* multiplier applied on top of this falloff. It is now wired to the three-factor volume chain (see "Cue volume" below), not just reserved — it does *not* shape distance.
 
-Elevation caveat: this is a *pure* inverse-distance model — it uses the full 3D distance including the vertical component, so a ring high above reads as genuinely farther (quieter). The SF64 path de-emphasised vertical separation (`y/2.5`); if a high ring sounds too faint here, dividing the y component before the distance calc is the equivalent knob to add.
+Elevation caveat: this is a *pure* inverse-distance model — it uses the full 3D distance including the vertical component, so a ring high above reads as genuinely farther (quieter). If a high ring sounds too faint, dividing the y component before the distance calc is the equivalent knob to add (the older SF64 path de-emphasised vertical separation at `y/2.5`).
 
 ### Y→pitch sensitivity
 
@@ -61,21 +50,12 @@ Also in `AccessibilityCues_ComputeFreqModFromY`: `octaves = y / 1000.0f`. Negate
 
 ### "Drop the cue when behind the player"
 
-- Ring cue, `AccessibilityCues_FindNextTrainingRing`: `if (dz >= 0.0f) continue;` filters by world Z relative to `player->trueZpos`. As written, the moment a ring is at or behind the Arwing it stops contributing. Could be relaxed to `dz >= someThreshold` if you want a brief tail as you pass through — but in practice the engine's distance falloff already fades the trailing ring, and the next ring becomes the target on the very next tick.
-- Enemy cue, `AccessibilityCues_FindClosestEnemyAhead`: `if (bodyDelta.z >= 0.0f) continue;` filters by body-frame Z (i.e., behind the *aim line*, not behind world position). Relaxing this would mean cueing enemies behind the Arwing too; expect ambiguous-direction center-pan because the engine's stereo path uses `|z|` — pitch can still convey altitude.
+- Ring cue, `AccessibilityCues_FindNextTrainingRing`: `if (dz >= 0.0f) continue;` filters by world Z relative to `player->trueZpos`. As written, the moment a ring is at or behind the Arwing it stops contributing. Could be relaxed to `dz >= someThreshold` if you want a brief tail as you pass through — but in practice the distance falloff already fades the trailing ring, and the next ring becomes the target on the very next tick.
+- Enemy cue, `AccessibilityCues_FindClosestEnemyAhead`: `if (bodyDelta.z >= 0.0f) continue;` filters by body-frame Z (i.e., behind the *aim line*, not behind world position). The HRTF backend can render behind-you sources, so relaxing this to also cue enemies behind the aim is now technically possible — the drop is a deliberate design choice (keep the cue to threats you can turn toward) rather than a backend limitation as it was on the old SF64 path.
 
-### Volume and reverb the cue gets
+### Cue volume
 
-Per-cue: `sRingCueVolMod` / `sRingCueReverb` and `sEnemyCueVolMod` / `sEnemyCueReverb` (file statics, defaults `1.0f` / `0`). The engine reads these every audio frame.
-
-- A cue feels drowned out by gameplay SFX → bump its `*VolMod` to ~1.5–2.0.
-- A cue feels too dry / disembodied → add small `*Reverb` (e.g. 20–40 out of 127); gives it more "space."
-
-### Pan saturation at distance
-
-Not a variable, but worth knowing: the engine internally clamps `|x|` to 1200 before computing pan, so anything past 1200 world units of lateral offset reads as "fully left/right." If a ring appears far to one side, pan is already pinned.
-
-To get finer directional discrimination at long distances, pre-clamp `sRingCueSrc[0]` / `sEnemyCueSrc[0]` to a smaller window (e.g. ±800) in the corresponding `RefreshRingSource` / `RefreshEnemySource` before calling `Object_ClampSfxSource`, so the engine's pan ramp stays in the useful compressing range rather than instantly saturating.
+Volume is a per-cue CVar, not a file static. The effective per-source gain is `gGameMasterVolume` × `gAccessibilityCueMasterVolume` × `gAccessibilityCueVolume.<Id>` (e.g. `.Ring` / `.Enemy`), computed by `Cue::PushGain` and pushed to `Cue3D_SetGain` every tick the cue is driven. All three are exposed as sliders under F1 → Blind Starship → Cue volumes ("All cues" master + one per cue), each with a Preview button. If a cue feels drowned out, raise its per-cue slider (or the WAV's own level); the per-cue CVar defaults to 1. Reverb is no longer a knob — the HRTF backend has no reverb stage, so if a cue sounds too dry, bake the "space" into the WAV.
 
 ### Which levels the cues fire in
 
@@ -95,8 +75,8 @@ To get finer directional discrimination at long distances, pre-clamp `sRingCueSr
 
 ## What's not easily tunable from this file
 
-A few limits are real constraints of the SF64 audio path rather than dial settings:
+A few limits live in the HRTF backend or its integration rather than in dial settings here:
 
-- **No "directly behind" pan in stereo.** The engine's stereo pan uses `|z|`, so a source straight in front and a source straight behind both pan center. We sidestep this by dropping the cue when the ring is no longer ahead — but it's the reason "things behind me" can't be conveyed with the engine alone in stereo.
-- **Y → distance only, not pan.** Altitude contributes only to distance falloff (at ÷2.5 weight) and never to L/R pan. That's why we drive pitch from Y ourselves; there is no panning lever for elevation.
-- **Polyphony eviction.** If a scene fills the bank's slots, the engine evicts by importance. The current pick has importance 0x60 so it should win most evictions, but an unusually busy moment could still drop it. Authoring a custom sample with a higher importance byte would be the fix.
+- **Elevation from the generic HRTF is weak.** `IPL_HRTFTYPE_DEFAULT` only renders a strong vertical cue when the source is near the aim line, which is why the Y→pitch layer above exists at all. Sharpening the HRTF's *own* elevation means a personalized SOFA HRTF (`IPL_HRTFTYPE_SOFA` + a user-supplied file); see `docs/accessibility-hrtf-cues.md`.
+- **No BGM ducking / cross-stream priority.** The cues play on a second OS audio device the game's audio path never reaches, so BGM ducking (`SFX_FLAG_19`) does not touch them, and there is no automatic ducking of the cues while TTS speaks (review CUE3D-16). The gain lever to build ducking on now exists (`Cue3D_SetGain` via `Cue::PushGain`) but nothing drives it for ducking yet.
+- **No mixing/limiter beyond the backend's output trim.** Steam Audio spatializes but does not mix; the backend sums sources by hand with a `kOutputTrim` (0.6) plus a hard safety clip (`Cue3DSteamAudio.cpp`). Many simultaneous loud cues still lean on that clip — the practical ceiling on how many cues can overlap before the mix is compressed.

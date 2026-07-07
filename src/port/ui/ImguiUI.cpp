@@ -12,6 +12,7 @@
 #include <Fast3D/interpreter.h>
 #include "port/Engine.h"
 #include "port/mods/accessibility_screens/ImGuiMenu.h"
+#include "port/accessibility/Cue.h"
 #include "port/notification/notification.h"
 #include "utils/StringHelper.h"
 
@@ -398,10 +399,56 @@ void DrawSettingsMenu(){
                 .tooltip = "Positional audio cues that guide you toward the next ring and the closest lockable enemy.",
                 .defaultValue = true
             });
-            UIWidgets::CVarCheckbox("3D audio cues", "gAccessibilityCue3D", {
-                .tooltip = "Renders the audio cues as real HRTF 3D sound. Turn off to use the legacy in-game SFX cues instead.",
-                .defaultValue = true
-            });
+            if (UIWidgets::BeginMenu("Cue volumes")) {
+                // Slider changes are pushed to the live sources immediately so a running
+                // preview (and any in-level cue) tracks the drag; gameplay ticks would pick
+                // the CVars up anyway, but the preview only re-reads gain when told to.
+                if (UIWidgets::CVarSliderFloat("All cues", kCueMasterVolumeCVar, 0.0f, 1.0f, 1.0f, {
+                    .format = "%.0f%%",
+                    .isPercentage = true,
+                })) {
+                    for (Cue* cue : CueRegistry_All()) {
+                        cue->PushGain();
+                    }
+                }
+                // CVarSliderFloat's label doubles as the printf-style format for its value
+                // readout (UIWidgets::FormatValue), so any literal '%' arriving from a cue
+                // name must be escaped to '%%' or a mismatched specifier is UB.
+                auto escapePercents = [](const char* text) {
+                    std::string out;
+                    for (const char* p = text; *p != '\0'; p++) {
+                        out += *p;
+                        if (*p == '%') {
+                            out += '%';
+                        }
+                    }
+                    return out;
+                };
+                for (Cue* cue : CueRegistry_All()) {
+                    std::string sliderLabel = escapePercents(cue->Name()) + "##CueVolume" + cue->Id();
+                    if (UIWidgets::CVarSliderFloat(sliderLabel.c_str(), cue->VolumeCVar(), 0.0f, 1.0f, 1.0f, {
+                        .tooltip = cue->Description(),
+                        .format = "%.0f%%",
+                        .isPercentage = true,
+                    })) {
+                        cue->PushGain();
+                    }
+                    // "###" keeps one ImGui ID across the label flip so focus stays put.
+                    std::string buttonLabel = StringHelper::Sprintf(
+                        "%s %s###CuePreview%s", cue->IsPreviewing() ? "Stop preview of" : "Preview", cue->Name(),
+                        cue->Id());
+                    if (UIWidgets::Button(buttonLabel.c_str(), {
+                        .tooltip = "Plays a short sample of this cue, straight ahead, at the volume set above.",
+                    })) {
+                        if (cue->IsPreviewing()) {
+                            cue->StopPreview();
+                        } else {
+                            cue->StartPreview();
+                        }
+                    }
+                }
+                ImGui::EndMenu();
+            }
             UIWidgets::CVarCheckbox("Score announcements", "gAccessibilityScoreAnnounce", {
                 .tooltip = "Speaks hit/bonus popups and the Training ring streak.",
                 .defaultValue = true

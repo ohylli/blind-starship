@@ -1,9 +1,10 @@
 # HRTF positional audio cues (Steam Audio backend)
 
-The accessibility cues now render as real 3D HRTF audio instead of through the
-SF64 audio engine. A blind player gets true binaural direction (left/right and
-front/back) plus a distance model, which the SF64 engine cannot do (see
-`audio-system.md` §9 for that ceiling).
+The accessibility cues render as real 3D HRTF audio. A blind player gets true
+binaural direction (left/right and front/back) plus a distance model, which the
+SF64 audio engine cannot do (see `audio-system.md` §9 for that ceiling). This is
+now the *only* cue path — the earlier SF64-audio-engine path was removed once the
+HRTF backend proved out (see "What was chosen and why" below).
 
 This doc records the **decision and the open questions**. It deliberately does
 not duplicate the API or the implementation — those live in the code and its
@@ -15,9 +16,13 @@ comments:
 - `src/port/accessibility/Cue3DSteamAudio.cpp` — the Steam Audio + miniaudio
   backend: the −Z axis mapping, the per-source binaural effect, the lock-free
   publish, and the inverse-distance model.
-- `src/port/mods/AccessibilityCues.cpp` — the two cue consumers (ring + enemy),
-  the dual-backend switching, and the lazy load / pause handling.
-- `docs/accessibility-cues-tuning.md` — the tunable knobs on both paths.
+- `src/port/accessibility/Cue.{h,cpp}` — the game-agnostic `Cue` layer over the
+  seam: one named cue owns its sound (lazy load + failure latch), its per-cue
+  volume CVar, the three-factor gain, a preview mode, and a registry the settings
+  UI enumerates. This sits between the consumer mod and the seam.
+- `src/port/mods/AccessibilityCues.cpp` — the Star Fox side: registers the two
+  cues (ring + enemy) and decides, per game tick, what each one targets.
+- `docs/accessibility-cues-tuning.md` — the tunable knobs.
 
 ## What was chosen and why
 
@@ -43,29 +48,93 @@ Build integration mirrors PRISM: Steam Audio 4.8.1 (prebuilt zip) and miniaudio
 is POST_BUILD-copied next to the exe. See the Steam Audio block in
 `CMakeLists.txt`.
 
-The SF64-engine cue path is **kept but suppressed** while the 3D path is active.
-The runtime CVar `gAccessibilityCue3D` (default on) selects the backend for both
-cues, and flipping it mid-level switches cleanly. The native path may be removed
-later if HRTF proves sufficient, but the SF64-SFX knowledge is preserved in the
-tuning doc since the game-native SFX may still be used for other things.
+### Three layers
+
+The cue code is now split into three layers, so a new cue is a few lines of Star
+Fox policy rather than a copy of the whole backend dance:
+
+- **The `Cue3D` seam** (`Cue3D.h` + `Cue3DSteamAudio.cpp`) — the backend. Knows
+  Steam Audio and the OS audio device; knows nothing above it.
+- **The `Cue` layer** (`Cue.{h,cpp}`) — game-agnostic. Each `Cue` is one named
+  cue that owns its sound file, its lazy load (with a failure latch so a broken
+  file isn't retried every frame), its per-cue volume CVar, the three-factor gain
+  push, and a preview mode. A small registry (`CueRegistry_Register` / `_All` /
+  `_TickPreviews` / `_UnloadAll`) lets the settings UI enumerate every cue. This
+  layer knows about sounds, volumes, and 3D positions, but nothing about Star Fox.
+- **The consumer mod** (`AccessibilityCues.cpp`) — the Star Fox side. Registers
+  the two cues ("Ring guide", "Enemy locator") and drives them from its
+  `GamePostUpdateEvent` listeners, deciding each tick what each cue targets.
+
+### The SF64-engine path is gone
+
+We had briefly kept the SF64-audio-engine cue path alongside the 3D one, selected
+by a `gAccessibilityCue3D` CVar. That path — and the CVar and its F1 checkbox —
+have now been **removed** (the CUE3D-1 decision of 2026-06-30 recorded it as
+temporary scaffolding). Cues always render through the HRTF backend. The SF64
+engine's camera-relative panning and per-frame SFX lifetime made it a dead end for
+*continuous* navigation cues; game SFX are reserved for future one-shot flourishes,
+not primary cues. One consequence: a build without `HAVE_STEAM_AUDIO` (e.g. Switch)
+has no cues at all. The seam still keeps OpenAL Soft a one-file swap away if Steam
+Audio ever disappoints.
 
 ## Known limitations / open questions
 
 These are the live unknowns to pick up if we return to this — none block the
 current cues, but each is a real gap.
 
-- **Master volume / BGM integration is not wired.** Running a second OS audio
-  device means the cues bypass the game's audio integration: BGM ducking
-  (`SFX_FLAG_19`) and the `gGameMasterVolume` CVar do **not** apply to the Steam
-  Audio stream. The seam reserves `Cue3D_SetGain` (a distance-independent
-  multiplier layered on top of the backend's falloff) as the lever to wire a
-  master-volume control by hand, but nothing drives it yet.
+- **Volume is now wired; BGM/TTS ducking is not.** The cues run on a second OS
+  audio device that the game's audio path never reaches, so the game master volume
+  used to skip them. That is fixed: the effective per-source gain is now
+  **`gGameMasterVolume` × `gAccessibilityCueMasterVolume` ×
+  `gAccessibilityCueVolume.<Id>`** (the game's existing master, deliberately made
+  to reach the second device; a new cue-only master, default 1; and a per-cue
+  trim, default 1 — e.g. `gAccessibilityCueVolume.Ring` / `.Enemy`). `Cue::PushGain`
+  computes this and pushes it via `Cue3D_SetGain` every tick a cue is driven. What
+  is **still not wired**: BGM ducking (`SFX_FLAG_19`) does not reach the second
+  device, and there is no ducking of the cues while TTS speaks (review CUE3D-16).
+  The gain lever those would need now exists, so ducking is a future subtraction
+  on top of it rather than new plumbing.
+  - *Volume UI.* The F1 → Blind Starship → **Cue volumes** submenu exposes an "All
+    cues" master slider, one slider per registered cue (generated from the
+    registry, so future cues appear automatically), and a per-cue **Preview**
+    button that plays the cue for ~3 s straight ahead at the distance the backend
+    renders at unity gain — so the preview's loudness *is* the volume setting.
+    Previews suspend gameplay control of that cue and auto-expire via a game-tick
+    listener. This is the seed of a planned "cue glossary" (browse cues, hear
+    samples).
   - *Pause silence is already solved* — don't re-investigate it. The draw loop
     (and thus `GamePostUpdateEvent`) keeps firing while `gPlayState ==
     PLAY_PAUSE`, so a looping cue kept sounding through an in-level pause;
     `AccessibilityCues_IsPaused()` now gates both listeners so pause stops the
     cue like any other failed precondition. Because the frozen game state means
     the next unpaused tick re-acquires the same target, the cue restarts cleanly.
+
+- **One `Cue` is one voice — simultaneous instances of the same cue (e.g. cueing
+  the closest N enemies, not just the closest one) need a small, contained
+  extension.** Today a `Cue` owns exactly one backend source, one target, and one
+  Idle/Playing/Previewing state, so the same cue cannot sound at two positions at
+  once. The backend already supports it (16 independent source slots; each
+  `Cue3D_Load` of the same WAV is an independent source), and no call sites or
+  seam changes are needed — the extension lives entirely inside `Cue`: split "cue
+  definition" (identity, WAV, description, the **one** volume CVar and glossary
+  entry — players tune "Enemy locator" once, not per slot) from "voice" (a
+  `{source, state, target}` tuple), give the definition a small voice pool with
+  an acquire/per-voice-SetTarget API, and keep the current single-voice methods
+  as the convenience path so existing cues don't change. Preview stays
+  per-definition. Do **not** fake it by registering the same WAV as a second cue —
+  that grows a second volume slider and glossary entry, the wrong player-facing
+  shape. Non-plumbing work that comes with it: sticky enemy→voice assignment so
+  targets don't swap voices frame-to-frame (compounds the target-jitter/click
+  question, review CUE3D-15), per-voice pitch/timbre offsets so identical loops
+  stay distinguishable, clip-guard headroom with more concurrent voices, and
+  (only if it ever matters) a shared-PCM load in the seam, since each voice
+  currently keeps its own decoded copy.
+
+- **Spoken failure notice (Class-2) not yet built.** The CUE3D-1 decision deferred
+  a one-time spoken PRISM notice for the case where Steam Audio init or asset load
+  fails while the OS audio path (and thus the screen reader) is still alive. The
+  failure points log today; the spoken notice remains a cheap, narrowly scoped
+  follow-up, not yet implemented.
 
 - **Elevation is weak under the generic HRTF, so Y→pitch was kept on top.** HRTF
   gives a *real* elevation cue from source Y, but with the default
@@ -94,7 +163,6 @@ current cues, but each is a real gap.
   coordinate handling (§6).
 - `docs/audio-backend-alternatives.md` — the original backend survey (superseded
   by this doc); preserved for the OpenAL Soft fallback framing.
-- `docs/accessibility-cues-tuning.md` — the tunable knobs on both the HRTF and
-  SF64-engine paths.
+- `docs/accessibility-cues-tuning.md` — the tunable knobs on the HRTF cues.
 - `docs/accessibility-prism-spike-result.md` — the PRISM integration this build
   setup mirrors.

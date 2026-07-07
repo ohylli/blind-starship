@@ -38,11 +38,18 @@ void Cue3D_Init(void);
 // even if Init never ran or failed.
 void Cue3D_Shutdown(void);
 
-// The backend's fixed output sample rate, in Hz — the rate Cue3D_LoadPcm expects
-// its PCM to already be at. Lets a caller synthesize PCM at the right rate instead
-// of hardcoding a constant that must track the backend. Returns 0 if no backend is
-// compiled in.
+// The backend's negotiated output sample rate, in Hz — the rate Cue3D_LoadPcm
+// expects its PCM to already be at. Determined at Cue3D_Init when the OS device is
+// opened (it may differ from the 48 kHz request); before Init it reports the default
+// request rate. Lets a caller synthesize PCM at the right rate instead of hardcoding
+// a constant that must track the backend. Returns 0 if no backend is compiled in.
 int Cue3D_GetSampleRate(void);
+
+// The distance, in the game's world units, at or inside which the backend applies no
+// distance attenuation — a source placed exactly here renders at unity gain. Lets a
+// caller position a sound at "reference loudness" (the settings-menu preview) without
+// duplicating the backend's attenuation tuning. Returns 0 if no backend is compiled in.
+float Cue3D_GetUnityGainDistance(void);
 
 // Load a sound from a file (any format miniaudio decodes — WAV/FLAC/MP3),
 // downmixed to mono and resampled to the backend's rate. Returns NULL on failure
@@ -65,11 +72,11 @@ void Cue3D_Play(Cue3DSource* source);
 void Cue3D_SetPosition(Cue3DSource* source, float x, float y, float z);
 
 // Set a flat linear gain on the source (1.0 = unchanged), applied on TOP of the
-// backend's distance attenuation. Use it for distance-independent level (per-cue
-// trim, or a future master-volume / pause-silence lever) — not for falloff, which
-// the backend derives from the position passed to Cue3D_SetPosition.
-// NOTE: the game's master volume (gGameMasterVolume) and BGM ducking do NOT reach
-// this second audio device; wiring them through this gain is still open work — see
+// backend's distance attenuation. Use it for distance-independent level — not for
+// falloff, which the backend derives from the position passed to Cue3D_SetPosition.
+// The Cue layer (Cue.h) drives this every tick with game master x cue master x
+// per-cue volume; it is also the lever a future TTS-ducking pass would use. BGM
+// ducking (SFX_FLAG_19) still does not reach this second audio device — see
 // docs/accessibility-hrtf-cues.md "Known limitations".
 void Cue3D_SetGain(Cue3DSource* source, float gain);
 

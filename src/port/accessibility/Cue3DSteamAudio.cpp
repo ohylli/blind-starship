@@ -30,8 +30,15 @@
 
 namespace {
 
-constexpr int kSampleRate = 48000;
-constexpr int kFrameSize = 1024; // Steam Audio fixed processing block
+constexpr int kSampleRate = 48000; // requested device rate (a hint); the real rate is read back at Init
+constexpr int kFrameSize = 1024;   // Steam Audio fixed processing block
+
+// Output trim on the summed mix. Steam Audio spatializes but does not mix, so
+// ProduceBlock sums up to kMaxSources stereo streams by hand; without headroom the
+// summed peaks can exceed ±1.0 and hard-clip exactly when several cues overlap near
+// the aim line. The trim pulls the common case back under unity; the safety clip in
+// ProduceBlock is the last-resort backstop. Tuned by ear (0.5-0.7 range).
+constexpr float kOutputTrim = 0.6f;
 
 // Distance attenuation: cue loudness falls off with distance via Steam Audio's
 // inverse-distance model (1/d past kMinDistanceMeters). iplDistanceAttenuationCalculate
@@ -64,7 +71,7 @@ struct Cue3DSource {
     // likewise atomic-free — do NOT write it from the game thread without adding
     // synchronization.
     IPLBinauralEffect effect = nullptr; // one per source — holds interpolation state
-    std::vector<float> pcm;             // decoded mono @ kSampleRate, owned
+    std::vector<float> pcm;             // decoded mono at the device rate (g.sampleRate), owned
     int frameCount = 0;
     double cursor = 0.0; // fractional playback position, frames (audio-thread-only)
     bool loop = false;
@@ -93,6 +100,13 @@ struct SpatialState {
     IPLAudioBuffer tmpOut{}; // stereo, kFrameSize — reused per source
 
     ma_device device{};
+
+    // Actual device sample rate, read back from miniaudio after ma_device_init (the
+    // requested rate is only a hint). Everything that bakes in a rate follows this —
+    // the HRTF, the per-source binaural effects, the decoder target, and
+    // Cue3D_GetSampleRate — so a device the OS opens at 44.1 kHz stays in tune rather
+    // than playing ~8.8% slow. kSampleRate until Init reconciles it.
+    int sampleRate = kSampleRate;
 
     // Planar stereo accumulator: sources are summed here before interleaving.
     float accL[kFrameSize] = { 0 };
@@ -129,8 +143,10 @@ Cue3DSource* CreateSource(const float* monoPcm, int frames, bool loop) {
     }
     Cue3DSource& s = g_sources[slot];
 
+    // Match the effect to the negotiated device rate (set at Init). Sources are only
+    // ever created after Init, so g.sampleRate is already reconciled here.
     IPLAudioSettings audioSettings{};
-    audioSettings.samplingRate = kSampleRate;
+    audioSettings.samplingRate = g.sampleRate;
     audioSettings.frameSize = kFrameSize;
     IPLBinauralEffectSettings effectSettings{};
     effectSettings.hrtf = g.hrtf;
@@ -275,8 +291,13 @@ void ProduceBlock() {
     }
 
     for (int n = 0; n < kFrameSize; n++) {
-        g.block[2 * n] = g.accL[n];
-        g.block[2 * n + 1] = g.accR[n];
+        // Trim for headroom, then hard-clamp to [-1, 1] so a rare stack of loud,
+        // in-phase sources can never hand the device an out-of-range sample. Both
+        // are branch-cheap and allocation-free (this is the audio callback thread).
+        float l = g.accL[n] * kOutputTrim;
+        float r = g.accR[n] * kOutputTrim;
+        g.block[2 * n] = l < -1.0f ? -1.0f : (l > 1.0f ? 1.0f : l);
+        g.block[2 * n + 1] = r < -1.0f ? -1.0f : (r > 1.0f ? 1.0f : r);
     }
     g.blockAvail = kFrameSize;
     g.blockPos = 0;
@@ -316,24 +337,11 @@ extern "C" void Cue3D_Init(void) {
         return;
     }
 
-    IPLAudioSettings audioSettings{};
-    audioSettings.samplingRate = kSampleRate;
-    audioSettings.frameSize = kFrameSize;
-
-    IPLHRTFSettings hrtfSettings{};
-    hrtfSettings.type = IPL_HRTFTYPE_DEFAULT;
-    hrtfSettings.volume = 1.0f;
-    hrtfSettings.normType = IPL_HRTFNORMTYPE_NONE;
-    if (iplHRTFCreate(g.ctx, &audioSettings, &hrtfSettings, &g.hrtf) != IPL_STATUS_SUCCESS) {
-        SPDLOG_ERROR("Cue3D: iplHRTFCreate failed; 3D audio disabled");
-        iplContextRelease(&g.ctx);
-        return;
-    }
-
-    // Reused per source by the callback; effects are per-source, created on load.
-    iplAudioBufferAllocate(g.ctx, 1, kFrameSize, &g.inBuf);
-    iplAudioBufferAllocate(g.ctx, 2, kFrameSize, &g.tmpOut);
-
+    // Open the device BEFORE building the HRTF: cfg.sampleRate is only a hint, so the
+    // real rate isn't known until miniaudio negotiates one, and the HRTF (and every
+    // per-source effect) has to be baked at that rate. ma_device_init does not run the
+    // callback — ma_device_start (below) does — so it is safe to create the Steam Audio
+    // objects the callback depends on in the window between init and start.
     ma_device_config cfg = ma_device_config_init(ma_device_type_playback);
     cfg.playback.format = ma_format_f32;
     cfg.playback.channels = 2;
@@ -342,12 +350,32 @@ extern "C" void Cue3D_Init(void) {
     cfg.dataCallback = DataCallback;
     if (ma_device_init(nullptr, &cfg, &g.device) != MA_SUCCESS) {
         SPDLOG_ERROR("Cue3D: ma_device_init failed; 3D audio disabled");
-        iplAudioBufferFree(g.ctx, &g.tmpOut);
-        iplAudioBufferFree(g.ctx, &g.inBuf);
-        iplHRTFRelease(&g.hrtf);
         iplContextRelease(&g.ctx);
         return;
     }
+
+    // Read back what the OS actually opened; everything rate-dependent follows this.
+    g.sampleRate = g.device.sampleRate > 0 ? (int) g.device.sampleRate : kSampleRate;
+
+    IPLAudioSettings audioSettings{};
+    audioSettings.samplingRate = g.sampleRate;
+    audioSettings.frameSize = kFrameSize;
+
+    IPLHRTFSettings hrtfSettings{};
+    hrtfSettings.type = IPL_HRTFTYPE_DEFAULT;
+    hrtfSettings.volume = 1.0f;
+    hrtfSettings.normType = IPL_HRTFNORMTYPE_NONE;
+    if (iplHRTFCreate(g.ctx, &audioSettings, &hrtfSettings, &g.hrtf) != IPL_STATUS_SUCCESS) {
+        SPDLOG_ERROR("Cue3D: iplHRTFCreate failed; 3D audio disabled");
+        ma_device_uninit(&g.device);
+        iplContextRelease(&g.ctx);
+        return;
+    }
+
+    // Reused per source by the callback; effects are per-source, created on load.
+    iplAudioBufferAllocate(g.ctx, 1, kFrameSize, &g.inBuf);
+    iplAudioBufferAllocate(g.ctx, 2, kFrameSize, &g.tmpOut);
+
     if (ma_device_start(&g.device) != MA_SUCCESS) {
         SPDLOG_ERROR("Cue3D: ma_device_start failed; 3D audio disabled");
         ma_device_uninit(&g.device);
@@ -359,7 +387,7 @@ extern "C" void Cue3D_Init(void) {
     }
 
     g.active = true;
-    SPDLOG_INFO("Cue3D: Steam Audio {} backend ready", STEAMAUDIO_VERSION);
+    SPDLOG_INFO("Cue3D: Steam Audio {} backend ready @ {} Hz", STEAMAUDIO_VERSION, g.sampleRate);
 }
 
 extern "C" void Cue3D_Shutdown(void) {
@@ -391,7 +419,13 @@ extern "C" void Cue3D_Shutdown(void) {
 }
 
 extern "C" int Cue3D_GetSampleRate(void) {
-    return kSampleRate;
+    return g.sampleRate;
+}
+
+extern "C" float Cue3D_GetUnityGainDistance(void) {
+    // The inverse-distance model's near plateau: closer than kMinDistanceMeters the
+    // gain is capped at 1.0 (see ProduceBlock's distance attenuation).
+    return kMinDistanceMeters * kWorldUnitsPerMeter;
 }
 
 extern "C" Cue3DSource* Cue3D_Load(const char* path, bool loop) {
@@ -399,8 +433,8 @@ extern "C" Cue3DSource* Cue3D_Load(const char* path, bool loop) {
         return nullptr;
     }
 
-    // Force mono downmix + resample to the backend rate + float samples.
-    ma_decoder_config cfg = ma_decoder_config_init(ma_format_f32, 1, kSampleRate);
+    // Force mono downmix + resample to the negotiated device rate + float samples.
+    ma_decoder_config cfg = ma_decoder_config_init(ma_format_f32, 1, g.sampleRate);
     ma_decoder decoder;
     if (ma_decoder_init_file(path, &cfg, &decoder) != MA_SUCCESS) {
         SPDLOG_ERROR("Cue3D: failed to open '{}'", path);
@@ -489,6 +523,9 @@ extern "C" void Cue3D_Init(void) {}
 extern "C" void Cue3D_Shutdown(void) {}
 extern "C" int Cue3D_GetSampleRate(void) {
     return 0;
+}
+extern "C" float Cue3D_GetUnityGainDistance(void) {
+    return 0.0f;
 }
 extern "C" Cue3DSource* Cue3D_Load(const char* path, bool loop) {
     (void) path;

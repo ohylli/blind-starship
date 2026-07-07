@@ -4,7 +4,9 @@ This document is the working brief for adding a positional audio cue that helps 
 
 First scope is on-rails levels. All-range is a follow-up, but the design below was chosen so the same code works in both modes.
 
-**Status: implemented.** The first pass lives alongside the ring cue in `src/port/mods/AccessibilityCues.cpp`. SFX is `NA_SE_KA_UFO_ENGINE`, single closest enemy ahead of the aim line, fired on every `LEVELMODE_ON_RAILS` level. The sections below are the design rationale and remaining open questions; code is the source of truth for current behavior.
+**Status: implemented.** The first pass lives alongside the ring cue in `src/port/mods/AccessibilityCues.cpp`: single closest enemy ahead of the aim line, fired on every `LEVELMODE_ON_RAILS` level. The sections below are the design rationale and remaining open questions; code is the source of truth for current behavior.
+
+**Note on the audio path (later change).** This doc was written when the cue was emitted as an SF64 game SFX (`NA_SE_KA_UFO_ENGINE`) through the game audio engine. That path was later removed: cues now render through the HRTF (Steam Audio) backend via the game-agnostic `Cue` layer (`src/port/accessibility/Cue.{h,cpp}`), and the enemy cue loads a WAV (`assets/accessibility/enemy.wav`) rather than referencing an `NA_SE_*` id. The *design* below — aim-relative body-frame panning, the lock-on target predicate, Y→pitch elevation — is unchanged and still current; only the emission mechanism moved. Where the text mentions SF64-engine specifics (`Audio_PlaySfx`, SFX bank/flag/range, stereo `|z|` panning), read it as historical rationale. See `docs/accessibility-hrtf-cues.md` and `docs/accessibility-cues-tuning.md` for the current path.
 
 For background on how the world is laid out (where enemies live, how to iterate them, hitbox/targetability fields), see `docs/game-world.md`. For how a positional SFX is emitted and which knobs the audio engine exposes, see `docs/audio-system.md` and `docs/accessibility-cues-tuning.md`.
 
@@ -123,7 +125,7 @@ Decision for the first pass: keep the raw-distance form, matching the ring cue. 
 
 ## Open questions (for future sessions)
 
-- **Cue SFX choice.** *Resolved (first pass):* `NA_SE_KA_UFO_ENGINE` — bank 1, range 3, no `SFX_FLAG_22/23`, importance 0x70, sustained UFO whir clearly distinct from the ring cue's beam-charge tone. Revisit if play-testing finds it competes with combat SFX or blends with engine drones.
+- **Cue SFX choice.** *Resolved (first pass):* originally `NA_SE_KA_UFO_ENGINE`, a sustained UFO whir clearly distinct from the ring cue's tone. *Superseded:* the cue now plays a WAV (`assets/accessibility/enemy.wav`) through the HRTF backend rather than a game SFX id (see the audio-path note near the top). Pick still stands: keep a timbre distinct from the ring cue so both read simultaneously on Training.
 - **Single vs. multiple simultaneous cues.** *Resolved (first pass):* single closest enemy ahead of aim (3D Euclidean distance in body-frame coordinates). Revisit once all-range lands and the higher enemy density makes the trade-off concrete.
 - **All-range mode pass.** The math is mode-agnostic. The lock-on predicate already handles the teammates-vs-enemies distinction (teammate `targetOffset` is zeroed by the game), so all-range works without modification — the only gate is the `gLevelMode == LEVELMODE_ON_RAILS` check in `AccessibilityCues_OnEnemyPostUpdate`. The higher enemy count in all-range may force the single-vs-multiple question to a head.
 - **Forward-of-aim filter.** *Resolved (first pass):* drop enemies behind the aim line (`bodyDelta.z >= 0`). Reason: the engine's stereo pan uses `|z|`, so behind-aim sources pan center and are ambiguous with directly-ahead. Cost: blind to threats from behind. Revisit if "rear-attack awareness" reads as more important than the directional ambiguity.
