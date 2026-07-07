@@ -276,7 +276,7 @@ void DrawSettingsMenu(){
             }
             bool audioApiComboOpen = ImGui::BeginCombo("##AApi", audioBackendNames[currentAudioBackend]);
             if (ImGui::IsItemFocused()) {
-                AccessibilityImGuiMenu_ItemFocused("Audio API", "combo box", audioBackendNames[currentAudioBackend]);
+                AccessibilityImGuiMenu_ItemFocused("Audio API", AccessibilityRole::ComboBox, audioBackendNames[currentAudioBackend]);
             }
             if (audioApiComboOpen) {
                 for (uint8_t i = 0; i < Ship::Context::GetInstance()->GetAudio()->GetAvailableAudioBackends()->size(); i++) {
@@ -287,7 +287,7 @@ void DrawSettingsMenu(){
                         AccessibilityImGuiMenu_ValueChanged("Audio API", audioBackendNames[backend]);
                     }
                     if (ImGui::IsItemFocused()) {
-                        AccessibilityImGuiMenu_ItemFocused(audioBackendNames[backend], "option", isSelected ? "selected" : nullptr);
+                        AccessibilityImGuiMenu_ItemFocused(audioBackendNames[backend], AccessibilityRole::Option, isSelected ? "selected" : nullptr);
                     }
                 }
                 ImGui::EndCombo();
@@ -425,7 +425,7 @@ void DrawSettingsMenu(){
                 AccessibilityImGuiMenu_ValueChanged("FPS", StringHelper::Sprintf("%d", fpsSlider).c_str());
             }
             if (ImGui::IsItemFocused()) {
-                AccessibilityImGuiMenu_ItemFocused("Decrease FPS", "button", "");
+                AccessibilityImGuiMenu_ItemFocused("Decrease FPS", AccessibilityRole::Button, "");
             }
             ImGui::SameLine();
             ImGui::SetCursorPosX(ImGui::GetCursorPosX() - 7.0f);
@@ -435,7 +435,7 @@ void DrawSettingsMenu(){
             ImGui::PushItemWidth(std::min((ImGui::GetContentRegionAvail().x - 60.0f), 260.0f));
             ImGui::SliderInt("##WiiUFPSSlider", &fpsSlider, 1, 3, "", ImGuiSliderFlags_AlwaysClamp);
             if (ImGui::IsItemFocused()) {
-                AccessibilityImGuiMenu_ItemFocused("FPS", "slider", StringHelper::Sprintf("%d", fpsSlider).c_str());
+                AccessibilityImGuiMenu_ItemFocused("FPS", AccessibilityRole::Slider, StringHelper::Sprintf("%d", fpsSlider).c_str());
             }
             ImGui::PopItemWidth();
 
@@ -446,7 +446,7 @@ void DrawSettingsMenu(){
                 AccessibilityImGuiMenu_ValueChanged("FPS", StringHelper::Sprintf("%d", fpsSlider).c_str());
             }
             if (ImGui::IsItemFocused()) {
-                AccessibilityImGuiMenu_ItemFocused("Increase FPS", "button", "");
+                AccessibilityImGuiMenu_ItemFocused("Increase FPS", AccessibilityRole::Button, "");
             }
 
             if (CVarGetInteger("gMatchRefreshRate", 0)) {
@@ -515,7 +515,7 @@ void DrawSettingsMenu(){
         }
         bool rendererApiComboOpen = ImGui::BeginCombo("##RApi", windowBackendNames[configWindowBackend]);
         if (ImGui::IsItemFocused()) {
-            AccessibilityImGuiMenu_ItemFocused("Renderer API", "combo box", windowBackendNames[configWindowBackend]);
+            AccessibilityImGuiMenu_ItemFocused("Renderer API", AccessibilityRole::ComboBox, windowBackendNames[configWindowBackend]);
         }
         if (rendererApiComboOpen) {
             for (size_t i = 0; i < Ship::Context::GetInstance()->GetWindow()->GetAvailableWindowBackends()->size(); i++) {
@@ -529,7 +529,7 @@ void DrawSettingsMenu(){
                     AccessibilityImGuiMenu_ValueChanged("Renderer API", windowBackendNames[backend]);
                 }
                 if (ImGui::IsItemFocused()) {
-                    AccessibilityImGuiMenu_ItemFocused(windowBackendNames[backend], "option", isSelected ? "selected" : nullptr);
+                    AccessibilityImGuiMenu_ItemFocused(windowBackendNames[backend], AccessibilityRole::Option, isSelected ? "selected" : nullptr);
                 }
             }
             ImGui::EndCombo();

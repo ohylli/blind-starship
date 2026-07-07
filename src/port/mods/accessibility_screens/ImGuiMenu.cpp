@@ -23,22 +23,27 @@ static ImGuiID sActiveEditItemId = 0;
 static bool sActiveEditWasTextInput = false;
 // The nav "surface" the last-focused item lived on, so the directional "how to move around
 // here" instructions are spoken once when the surface changes rather than on every item.
-// Three surfaces, because their key semantics differ:
+// Four surfaces, because their key semantics differ:
 //   - MenuBar   : the horizontal top-level bar (left/right between menus, down to open).
 //   - TopMenu   : an open top-level menu's item list. Vertical (up/down), but left/right here
 //                 do NOT go "back" — ImGui switches to the neighbouring top-level menu — and
 //                 escape is what closes back to the bar.
 //   - Submenu   : a nested submenu (a menu opened from within a menu). Vertical, and here left
 //                 really does go back to the parent.
-// The distinction between MenuBar and the two popup surfaces is g.NavLayer (menu-bar items live
-// on ImGuiNavLayer_Menu); the distinction between TopMenu and Submenu is whether the focused
-// popup's parent is itself a popup. Using nav state rather than the role string is what keeps a
-// nested submenu entry (role "menu", yet vertical) classified correctly.
+//   - ComboList : an open combo-box dropdown. Vertical, but left does NOT go back (EndCombo has
+//                 none of EndMenu's left-arrow handling) — only escape or picking an option
+//                 closes it. Detected by role "option": those are the dropdown's entries.
+// The distinction between MenuBar and the popup surfaces is g.NavLayer (menu-bar items live on
+// ImGuiNavLayer_Menu); ComboList is split off first (by role) because a combo opened from inside
+// a menu shares the menu's popup ancestry and would otherwise be mistaken for a nested submenu;
+// TopMenu vs Submenu is then whether the focused popup's parent is itself a popup. Using nav
+// state rather than the role string for the menu split is what keeps a nested submenu entry
+// (role "menu", yet vertical) classified correctly.
 // sPrevSurfaceKey is the focused popup window's id, so a lateral hop between two top-level menus
 // (Left/Right while open) — same TopMenu surface, different menu — is still caught and re-voiced;
 // without it, leaving any menu but the leftmost would land in the next menu silently.
-enum FocusSurface { kSurfaceNone = 0, kSurfaceMenuBar, kSurfaceTopMenu, kSurfaceSubmenu };
-static int sPrevSurface = kSurfaceNone;
+enum FocusSurface { kSurfaceNone = 0, kSurfaceMenuBar, kSurfaceTopMenu, kSurfaceSubmenu, kSurfaceComboList };
+static FocusSurface sPrevSurface = kSurfaceNone;
 static ImGuiID sPrevSurfaceKey = 0;
 // Consecutive frames the session has had keyboard focus outside the menu (no menu-bar item and
 // no open popup). Pressing Escape closes the last menu popup and ImGui drops nav to the host's
@@ -146,28 +151,54 @@ static const char* HintForRole(const char* role) {
     if (role == nullptr) {
         return nullptr;
     }
-    if (std::strcmp(role, "slider") == 0) {
+    if (std::strcmp(role, AccessibilityRole::Slider) == 0) {
         return "space to adjust, enter to input a value";
     }
-    if (std::strcmp(role, "checkbox") == 0) {
+    if (std::strcmp(role, AccessibilityRole::Checkbox) == 0) {
         return "enter to toggle";
     }
-    if (std::strcmp(role, "combo box") == 0) {
+    if (std::strcmp(role, AccessibilityRole::ComboBox) == 0) {
         return "enter to open the list";
     }
-    if (std::strcmp(role, "button") == 0) {
+    if (std::strcmp(role, AccessibilityRole::Button) == 0) {
         return "enter to activate";
     }
-    if (std::strcmp(role, "menu item") == 0) {
+    if (std::strcmp(role, AccessibilityRole::MenuItem) == 0) {
         return "enter to select";
     }
-    if (std::strcmp(role, "menu") == 0) {
+    if (std::strcmp(role, AccessibilityRole::Menu) == 0) {
         return "enter to open";
     }
-    if (std::strcmp(role, "option") == 0) {
+    if (std::strcmp(role, AccessibilityRole::Option) == 0) {
         return "enter to choose";
     }
     return nullptr;
+}
+
+// Which nav surface the currently focused item lives on, plus (via outKey) the focused popup
+// window's id so a lateral hop between two same-surface menus can still be detected. Reads
+// ImGui nav internals; keep it next to OnMenuBarDraw's similar coupling. `role` is the app-level
+// role string of the focused item — "option" is the only reliable signal that focus is inside an
+// open combo dropdown rather than a menu, since a combo opened from inside a menu shares the
+// menu's popup ancestry.
+static FocusSurface ClassifyFocusSurface(const char* role, ImGuiID& outKey) {
+    ImGuiContext& g = *ImGui::GetCurrentContext();
+    outKey = 0;
+    if (g.NavLayer == ImGuiNavLayer_Menu) {
+        return kSurfaceMenuBar;
+    }
+    if (role != nullptr && std::strcmp(role, AccessibilityRole::Option) == 0) {
+        outKey = (g.NavWindow != nullptr) ? g.NavWindow->ID : 0;
+        return kSurfaceComboList;
+    }
+    ImGuiWindow* navWin = g.NavWindow;
+    // A top-level menu popup is spawned by the host window; a nested submenu is spawned by
+    // another menu popup. So a popup parent that is itself a popup/menu => nested (vertical,
+    // left goes back); otherwise it is a top-level menu (left/right switch menus instead).
+    const bool nested = navWin != nullptr && navWin->ParentWindow != nullptr &&
+                        (navWin->ParentWindow->Flags & (ImGuiWindowFlags_Popup | ImGuiWindowFlags_ChildMenu)) != 0;
+    outKey = (navWin != nullptr) ? navWin->ID : 0;
+    return nested ? kSurfaceSubmenu : kSurfaceTopMenu;
 }
 
 // "##" hides the prefix from display, "###" replaces the id — either way the spoken
@@ -192,25 +223,12 @@ void AccessibilityImGuiMenu_ItemFocused(const char* label, const char* role, con
     sLastSpokenItemId = itemId;
 
     // Pick the trailing hint clause. When focus arrives on a different nav surface — the menu bar,
-    // a top-level menu, or a nested submenu — or hops laterally to a different top-level menu,
-    // speak the directional instructions for where the user now is; otherwise fall back to the
-    // item's own activate clause. The two are mutually exclusive, so one announcement never stacks
-    // "up and down arrows..." with "enter to toggle".
-    ImGuiContext& g = *ImGui::GetCurrentContext();
-    int surface;
+    // a top-level menu, a nested submenu, or a combo dropdown — or hops laterally to a different
+    // top-level menu, speak the directional instructions for where the user now is; otherwise fall
+    // back to the item's own activate clause. The two are mutually exclusive, so one announcement
+    // never stacks "up and down arrows..." with "enter to toggle".
     ImGuiID surfaceKey = 0;
-    if (g.NavLayer == ImGuiNavLayer_Menu) {
-        surface = kSurfaceMenuBar;
-    } else {
-        ImGuiWindow* navWin = g.NavWindow;
-        // A top-level menu popup is spawned by the host window; a nested submenu is spawned by
-        // another menu popup. So a popup parent that is itself a popup/menu => nested (vertical,
-        // left goes back); otherwise it is a top-level menu (left/right switch menus instead).
-        const bool nested = navWin != nullptr && navWin->ParentWindow != nullptr &&
-                            (navWin->ParentWindow->Flags & (ImGuiWindowFlags_Popup | ImGuiWindowFlags_ChildMenu)) != 0;
-        surface = nested ? kSurfaceSubmenu : kSurfaceTopMenu;
-        surfaceKey = (navWin != nullptr) ? navWin->ID : 0;
-    }
+    const FocusSurface surface = ClassifyFocusSurface(role, surfaceKey);
 
     const bool lateralTopMenuSwitch = (surface == kSurfaceTopMenu && surfaceKey != sPrevSurfaceKey);
     const char* transitionHint = nullptr;
@@ -227,13 +245,16 @@ void AccessibilityImGuiMenu_ItemFocused(const char* label, const char* role, con
             case kSurfaceSubmenu:
                 transitionHint = "up and down arrows to move, enter to select, left arrow to go back";
                 break;
+            case kSurfaceComboList:
+                transitionHint = "up and down arrows to move, enter to choose, escape to close the list";
+                break;
             default:
                 break;
         }
     }
     sPrevSurface = surface;
     sPrevSurfaceKey = surfaceKey;
-    SPDLOG_TRACE("accessibility menu: focus surface {} (key {})", surface, surfaceKey);
+    SPDLOG_TRACE("accessibility menu: focus surface {} (key {})", static_cast<int>(surface), surfaceKey);
     const char* hint = (transitionHint != nullptr) ? transitionHint : HintForRole(role);
 
     std::string text = StripImGuiIdSuffix(label);

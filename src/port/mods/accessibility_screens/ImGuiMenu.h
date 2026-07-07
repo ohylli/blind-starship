@@ -7,6 +7,21 @@
 // because both callers run inside push_frame() in Game.cpp — the ImGui draw via
 // Graphics_ThreadUpdate/ProcessGfxCommands and GameEngine::StartFrame.
 
+// Widget role labels spoken after a focused item ("checkbox", "slider", …) and matched by
+// HintForRole to pick the item's activation hint. Defined once here so the call sites in
+// UIWidgets.cpp / ImguiUI.cpp and the matcher in ImGuiMenu.cpp share a single spelling — a
+// rename becomes a compile error instead of a silently dropped hint. Role "option" also flags
+// the focus as being inside an open combo dropdown for the nav-surface classifier.
+namespace AccessibilityRole {
+constexpr const char* Checkbox = "checkbox";
+constexpr const char* ComboBox = "combo box";
+constexpr const char* Option = "option";
+constexpr const char* Button = "button";
+constexpr const char* MenuItem = "menu item";
+constexpr const char* Menu = "menu";
+constexpr const char* Slider = "slider";
+} // namespace AccessibilityRole
+
 void AccessibilityImGuiMenu_Register();
 
 // Called every game frame from GameEngine::StartFrame(). A session is "menu visible

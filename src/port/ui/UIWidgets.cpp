@@ -197,7 +197,7 @@ namespace UIWidgets {
         // Narration — the RenderText/RenderFrame calls above add no item, so g.LastItemData is
         // still this checkbox (docs/accessibility-imgui-menu-plan.md).
         if (ImGui::IsItemFocused()) {
-            AccessibilityImGuiMenu_ItemFocused(label, "checkbox",
+            AccessibilityImGuiMenu_ItemFocused(label, AccessibilityRole::Checkbox,
                                                disabled ? "unavailable" : (*v ? "checked" : "unchecked"));
         }
         if (pressed) {
@@ -268,14 +268,14 @@ namespace UIWidgets {
         // still conveys the selection.
         bool comboOpen = ImGui::BeginCombo(comboName.c_str(), comboArray[selected]);
         if (ImGui::IsItemFocused()) {
-            AccessibilityImGuiMenu_ItemFocused(comboName.c_str(), "combo box", comboArray[selected]);
+            AccessibilityImGuiMenu_ItemFocused(comboName.c_str(), AccessibilityRole::ComboBox, comboArray[selected]);
         }
         if (comboOpen) {
             for (uint8_t i = 0; i < comboArray.size(); i++) {
                 if (strlen(comboArray[i]) > 1) {
                     bool sel = ImGui::Selectable(comboArray[i], i == selected);
                     if (ImGui::IsItemFocused()) {
-                        AccessibilityImGuiMenu_ItemFocused(comboArray[i], "option", i == selected ? "selected" : nullptr);
+                        AccessibilityImGuiMenu_ItemFocused(comboArray[i], AccessibilityRole::Option, i == selected ? "selected" : nullptr);
                     }
                     if (sel) {
                         CVarSetInteger(cvarName, i);
@@ -657,7 +657,7 @@ namespace UIWidgets {
         // ImGui restores LastItemData after BeginMenu (see imgui_widgets.cpp "Restore LastItemData"),
         // so this focus check refers to the menu-bar item whether or not the menu is open.
         if (ImGui::IsItemFocused()) {
-            AccessibilityImGuiMenu_ItemFocused(label, "menu", nullptr);
+            AccessibilityImGuiMenu_ItemFocused(label, AccessibilityRole::Menu, nullptr);
         }
         PopStyleMenu();
         return open;
@@ -677,7 +677,7 @@ namespace UIWidgets {
         PushStyleMenuItem(color);
         bool activated = ImGui::MenuItem(label, shortcut);
         if (ImGui::IsItemFocused()) {
-            AccessibilityImGuiMenu_ItemFocused(label, "menu item", nullptr);
+            AccessibilityImGuiMenu_ItemFocused(label, AccessibilityRole::MenuItem, nullptr);
         }
         PopStyleMenuItem();
         return activated;
@@ -709,7 +709,7 @@ namespace UIWidgets {
         PushStyleButton(options.color);
         bool dirty = ImGui::Button(label, options.size);
         if (!suppressNarration && ImGui::IsItemFocused()) {
-            AccessibilityImGuiMenu_ItemFocused(narrateLabel != nullptr ? narrateLabel : label, "button",
+            AccessibilityImGuiMenu_ItemFocused(narrateLabel != nullptr ? narrateLabel : label, AccessibilityRole::Button,
                                                narrateState);
         }
         PopStyleButton();
@@ -788,7 +788,7 @@ namespace UIWidgets {
         // Must be before the label Text calls below — those submit items and would clobber
         // g.LastItemData (docs/accessibility-imgui-menu-plan.md).
         if (ImGui::IsItemFocused()) {
-            AccessibilityImGuiMenu_ItemFocused(label, "checkbox",
+            AccessibilityImGuiMenu_ItemFocused(label, AccessibilityRole::Checkbox,
                                                options.disabled ? "unavailable" : (*value ? "checked" : "unchecked"));
         }
         if (dirty) {
@@ -890,7 +890,7 @@ namespace UIWidgets {
         }
         bool comboOpen = ImGui::BeginCombo(invisibleLabel, comboArray[*value], options.flags);
         if (ImGui::IsItemFocused()) {
-            AccessibilityImGuiMenu_ItemFocused(label, "combo box", comboArray[*value]);
+            AccessibilityImGuiMenu_ItemFocused(label, AccessibilityRole::ComboBox, comboArray[*value]);
         }
         if (comboOpen) {
             ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(10.0f, 10.0f));
@@ -899,7 +899,7 @@ namespace UIWidgets {
                     bool sel = ImGui::Selectable(comboArray[i], i == *value);
                     // Each open-popup entry needs its own focus check, else arrowing is silent.
                     if (ImGui::IsItemFocused()) {
-                        AccessibilityImGuiMenu_ItemFocused(comboArray[i], "option", i == *value ? "selected" : nullptr);
+                        AccessibilityImGuiMenu_ItemFocused(comboArray[i], AccessibilityRole::Option, i == *value ? "selected" : nullptr);
                     }
                     if (sel) {
                         *value = i;
@@ -1012,7 +1012,7 @@ namespace UIWidgets {
         }
         if (AccessibilityImGuiMenu_IsSessionActive()) {
             if (ImGui::IsItemFocused()) {
-                AccessibilityImGuiMenu_ItemFocused(FormatValue(label, *value).c_str(), "slider",
+                AccessibilityImGuiMenu_ItemFocused(FormatValue(label, *value).c_str(), AccessibilityRole::Slider,
                                                    FormatValue(options.format, *value).c_str());
             }
             // Capture here, before the + button below clobbers LastItemData: on the frame the
@@ -1111,7 +1111,7 @@ namespace UIWidgets {
         if (AccessibilityImGuiMenu_IsSessionActive()) {
             if (ImGui::IsItemFocused()) {
                 float dv = options.isPercentage ? *value * 100.0f : *value;
-                AccessibilityImGuiMenu_ItemFocused(FormatValue(label, dv).c_str(), "slider",
+                AccessibilityImGuiMenu_ItemFocused(FormatValue(label, dv).c_str(), AccessibilityRole::Slider,
                                                    FormatValue(options.format, dv).c_str());
             }
             // Capture here, before the + button below clobbers LastItemData: on the frame the
