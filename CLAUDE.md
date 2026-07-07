@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Starship is a native PC port of *Star Fox 64*, built on top of libultraship. The repository combines decompiled SF64 game code (C) with a C++ "port" layer that integrates the game with libultraship's window, audio, input, and Fast3D rendering. No copyrighted assets ship with the source — the user's own ROM is extracted into `.o2r` archives at first run (or via the `ExtractAssets` cmake target).
 
-This fork's active direction is an exploratory accessibility mod for blind players — see the "Accessibility fork" section below.
+This fork's (named Blind Starship) active direction is an exploratory accessibility mod for blind players — see the "Accessibility fork" section below.
 
 ## Prerequisites — submodules
 
@@ -81,7 +81,7 @@ The codebase has two distinct halves wired together by `src/port/Engine.{h,cpp}`
 
 ## Accessibility fork
 
-This fork is exploring an accessibility mod for blind players (the maintainer is blind/low-vision).
+The Blind Starship fork is exploring an accessibility mod for blind players (the maintainer is blind/low-vision).
 
 **Current status:**
 - Screen-reader announcement layer via PRISM (https://github.com/ethindp/prism), toggled by the `gAccessibilityScreenReader` CVar
