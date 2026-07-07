@@ -14,7 +14,8 @@ There is a early proof-of-concept [alpha
 release](https://github.com/ohylli/blind-starship/releases/tag/alpha) that is
 kept up to date with the latest publicly released code. It has a screen reader
 integration via [PRISM](https://github.com/ethindp/prism). Currently used to
-make the game's main menu, sounds options and pause menu accessible.
+make the game's main menu, sounds options and pause menu accessible. The port's
+own settings menu accessed via F1 is also accessible.
 
 For gameplay there is partial accessibility for the game's training mode. In
 training you practice maneuvering you ship by flying through rings and fighting
@@ -62,7 +63,6 @@ In no particular order planned features or things to investigate include:
 - Making more game menus and screens accessible.
 - Adding more screen reader announcements to gameplay: health, remaining lives,
   number of bombs etc.
-- Making the ports own configuration UI accessed via F1 accessible.
 - Possibly simplifying some levels if there simply is too much stuff going
   on that cannot be communicated via audio.
 - Adding audio description to cut scenes.
@@ -136,7 +136,7 @@ default key/button on keyboard and Xbox controllers, and the original Nintendo
 ### Other shortcuts
 | Keys | Action |
 | - | - |
-| F1 | Toggle menubar (not yet accessibile) |
+| F1 | Toggle menubar (note freezes all game controls so pause first during gameplay.) |
 | F4 | Reset |
 | F11 | Fullscreen |
 | Tab | Toggle Alternate assets |
@@ -144,7 +144,8 @@ default key/button on keyboard and Xbox controllers, and the original Nintendo
 ### Simplified training mode
 
 As mentioned in current status by default the training mode is simplified. if
-you want the original training back you can do it by editing the game's settings
+you want the original training back you can do it from the settings menu (f1 ->
+settings -> blind starship -> minimal training). Or by editing the game's settings
 file `starship.cfg.json` created after first launch to the same folder where
 you have the game. Change the value of `AccessibilityTrainingMinimal` from 1 to
 0 i.e. change 1 to 0 on the line tthat looks like:
@@ -156,7 +157,8 @@ you have the game. Change the value of `AccessibilityTrainingMinimal` from 1 to
 ### Gameplay announcements
 
 The spoken score and training ring streak announcements are on by default. If
-you find them too chatty you can turn them both off by editing the game's
+you find them too chatty you can turn them both off from the settings menu (f1
+-> settings -> blind starship -> score announcements). Or by editing the game's
 settings file `starship.cfg.json` created after first launch to the same folder
 where you have the game. Change the value of `gAccessibilityScoreAnnounce` from 1
 to 0 i.e. change 1 to 0 on the line that looks like:
@@ -171,7 +173,8 @@ By default the ring and enemy audio cues are rendered as real 3D binaural (HRTF)
 audio via [Steam Audio](https://valvesoftware.github.io/steam-audio/), giving
 true left / right and front / back positioning through headphones. If you prefer
 the older cues driven by the game's own sound engine (stereo pan for left /
-right, pitch for above / below), you can switch back by editing the game's
+right, pitch for above / below), you can switch back from the settings menu (f1
+-> settings -> blind starship -> 3d audio cues). Or by editing the game's
 settings file `starship.cfg.json` created after first launch to the same folder
 where you have the game. Change the value of `gAccessibilityCue3D` from 1 to 0
 i.e. change 1 to 0 on the line that looks like:
