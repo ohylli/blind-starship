@@ -372,6 +372,32 @@ void DrawSettingsMenu(){
             ImGui::EndMenu();
         }
 
+        UIWidgets::Spacer(0);
+
+        if (UIWidgets::BeginMenu("Blind Starship")) {
+            UIWidgets::CVarCheckbox("Screen reader", "gAccessibilityScreenReader", {
+                .tooltip = "Speaks menus, screens, and gameplay events through your system screen reader.",
+                .defaultValue = true
+            });
+            UIWidgets::CVarCheckbox("Audio cues", "gAccessibilityAudioCues", {
+                .tooltip = "Positional audio cues that guide you toward the next ring and the closest lockable enemy.",
+                .defaultValue = true
+            });
+            UIWidgets::CVarCheckbox("3D audio cues", "gAccessibilityCue3D", {
+                .tooltip = "Renders the audio cues as real HRTF 3D sound. Turn off to use the legacy in-game SFX cues instead.",
+                .defaultValue = true
+            });
+            UIWidgets::CVarCheckbox("Score announcements", "gAccessibilityScoreAnnounce", {
+                .tooltip = "Speaks hit/bonus popups and the Training ring streak.",
+                .defaultValue = true
+            });
+            UIWidgets::CVarCheckbox("Minimal training", "gAccessibilityTrainingMinimal", {
+                .tooltip = "Strips collidable obstacles from Training's on-rails phase while keeping enemies as cue targets.",
+                .defaultValue = true
+            });
+            ImGui::EndMenu();
+        }
+
         ImGui::EndMenu();
     }
 
@@ -938,6 +964,24 @@ void DrawDebugMenu() {
         UIWidgets::WindowButton("Console", "gConsoleEnabled", GameUI::mConsoleWindow, {
             .tooltip = "Enables the console window, allowing you to input commands, type help for some examples"
         });
+
+        UIWidgets::Spacer(0);
+
+        if (UIWidgets::BeginMenu("Blind Starship")) {
+            UIWidgets::CVarCheckbox("Object spawn log", "gObjectSpawnLog", {
+                .tooltip = "Logs one trace line per object spawn (used to tune Minimal training). Also requires Log Level = trace.",
+                .defaultValue = false
+            });
+            UIWidgets::CVarCheckbox("Enemy audio cue logging", "gAccessibilityEnemyCueLog", {
+                .tooltip = "Verbose per-frame trace of enemy-cue targeting and backend state.",
+                .defaultValue = false
+            });
+            UIWidgets::CVarCheckbox("Spatial audio test", "gAccessibilitySpatialTest", {
+                .tooltip = "Plays an orbiting tone through the 3D audio backend as a smoke test. Takes effect after a restart.",
+                .defaultValue = false
+            });
+            ImGui::EndMenu();
+        }
 
         ImGui::EndMenu();
     }
