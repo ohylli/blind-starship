@@ -141,6 +141,20 @@ default key/button on keyboard and Xbox controllers, and the original Nintendo
 | F11 | Fullscreen |
 | Tab | Toggle Alternate assets |
 
+### Screen reader
+
+The spoken menu, screen, and gameplay announcements are on by default and are
+what make the game playable without sight. If for some reason you want to turn
+them off you can do it from the settings menu (f1 -> settings -> blind starship
+-> screen reader). Or by editing the game's settings file `starship.cfg.json`
+created after first launch to the same folder where you have the game. Change
+the value of `gAccessibilityScreenReader` from 1 to 0 i.e. change 1 to 0 on the
+line that looks like:
+
+```
+"gAccessibilityScreenReader": 1,
+```
+
 ### Simplified training mode
 
 As mentioned in current status by default the training mode is simplified. if
