@@ -238,6 +238,12 @@ void DrawSettingsMenu(){
                 .format = "%.0f%%",
                 .isPercentage = true,
             });
+            // Music/voice/SFX volumes are backed by the game save, not just the CVar: at boot
+            // GSTATE_INIT rebuilds these CVars from gSaveFile (fox_game.c), so unless we persist
+            // the save the change reverts on the next launch. Update the live audio on every change,
+            // but flush the save only when the slider is released (IsItemDeactivatedAfterEdit) so a
+            // mouse drag doesn't hammer the emulated-EEPROM write path each frame — matching the
+            // native sound menu, which saves once on exit (fox_option.c).
             if (UIWidgets::CVarSliderFloat("Main Music Volume", "gMainMusicVolume", 0.0f, 1.0f, 1.0f, {
                 .format = "%.0f%%",
                 .isPercentage = true,
@@ -245,6 +251,9 @@ void DrawSettingsMenu(){
                 float val = CVarGetFloat("gMainMusicVolume", 1.0f) * 100;
                 gSaveFile.save.data.musicVolume = (u8) val;
                 Audio_SetVolume(AUDIO_TYPE_MUSIC, (u8) val);
+            }
+            if (ImGui::IsItemDeactivatedAfterEdit()) {
+                Save_Write();
             }
             if (UIWidgets::CVarSliderFloat("Voice Volume", "gVoiceVolume", 0.0f, 1.0f, 1.0f, {
                 .format = "%.0f%%",
@@ -254,6 +263,9 @@ void DrawSettingsMenu(){
                 gSaveFile.save.data.voiceVolume = (u8) val;
                 Audio_SetVolume(AUDIO_TYPE_VOICE, (u8) val);
             }
+            if (ImGui::IsItemDeactivatedAfterEdit()) {
+                Save_Write();
+            }
             if (UIWidgets::CVarSliderFloat("Sound Effects Volume", "gSFXMusicVolume", 0.0f, 1.0f, 1.0f, {
                 .format = "%.0f%%",
                 .isPercentage = true,
@@ -261,6 +273,9 @@ void DrawSettingsMenu(){
                 float val = CVarGetFloat("gSFXMusicVolume", 1.0f) * 100;
                 gSaveFile.save.data.sfxVolume = (u8) val;
                 Audio_SetVolume(AUDIO_TYPE_SFX, (u8) val);
+            }
+            if (ImGui::IsItemDeactivatedAfterEdit()) {
+                Save_Write();
             }
 
             static std::unordered_map<Ship::AudioBackend, const char*> audioBackendNames = {
