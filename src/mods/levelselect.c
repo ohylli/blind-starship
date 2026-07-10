@@ -24,18 +24,32 @@ static PlanetId sPlanetArray[][3] = {
     { PLANET_VENOM, PLANET_VENOM, SAVE_SLOT_VENOM_2 },
 };
 
-static const char* Map_LevelSelect_StartOptionName(PlanetId planetId, s32 startOption) {
+typedef struct {
+    PlanetId planetId;
+    const char* spokenName;
+    char* displayText;
+    s32 displayX;
+} LevelSelectStartOption;
+
+// Single source of truth for the alternate-start set: the spoken name (event payload) and the
+// drawn text/position come from the same entry so speech cannot desync from the screen.
+static const LevelSelectStartOption sStartOptions[] = {
+    { PLANET_METEO, "Warp Zone", "WARP ZONE", 80 + 60 + 10 },
+    { PLANET_SECTOR_X, "Warp Zone", "WARP ZONE", 80 + 60 + 10 },
+    { PLANET_VENOM, "Andross", "ANDROSS", 80 + 60 + 3 },
+    { PLANET_AREA_6, "Beta SB", "BETA SB", 80 + 60 - 3 },
+};
+
+static const LevelSelectStartOption* Map_LevelSelect_StartOption(PlanetId planetId, s32 startOption) {
+    s32 i;
+
     if (!startOption) {
         return NULL;
     }
-    if ((planetId == PLANET_SECTOR_X) || (planetId == PLANET_METEO)) {
-        return "Warp Zone";
-    }
-    if (planetId == PLANET_VENOM) {
-        return "Andross";
-    }
-    if (planetId == PLANET_AREA_6) {
-        return "Beta SB";
+    for (i = 0; i < ARRAY_COUNT(sStartOptions); i++) {
+        if (sStartOptions[i].planetId == planetId) {
+            return &sStartOptions[i];
+        }
     }
     return NULL;
 }
@@ -54,6 +68,7 @@ void Map_LevelSelect(void) {
     static s32 startOption = 0;
     static s32 timer = 30;
     static s32 startLevel = 0;
+    static s32 announcedSelection = -1;
 
     // static f32 zStart = 0.0f;
     // f32 zInc;
@@ -93,30 +108,34 @@ void Map_LevelSelect(void) {
         }
     }
 
-    nextPlanetId =
-        (sPlanetArray[mission][difficulty] == SAVE_SLOT_VENOM_2) ? PLANET_VENOM : sPlanetArray[mission][difficulty];
-    const bool selectionChanged = sCurrentPlanetId != nextPlanetId;
-    if (selectionChanged) {
+    const s32 rawSelection = sPlanetArray[mission][difficulty];
+    nextPlanetId = (rawSelection == SAVE_SLOT_VENOM_2) ? PLANET_VENOM : rawSelection;
+    if (sCurrentPlanetId != nextPlanetId) {
         sCurrentPlanetId = nextPlanetId;
         startOption = 0;
         Map_CurrentLevel_Setup();
         Map_PositionCursor();
     }
-    const char* startOptionName = Map_LevelSelect_StartOptionName(sCurrentPlanetId, startOption);
+    const LevelSelectStartOption* startOptionInfo = Map_LevelSelect_StartOption(sCurrentPlanetId, startOption);
     if (!sLevelSelectorActive) {
         sLevelSelectorActive = true;
-        CALL_EVENT(LevelSelectorReadyEvent, sLevelSelectPlanetNames[sPlanetArray[mission][difficulty]], startOptionName);
-    } else if (selectionChanged) {
-        CALL_EVENT(LevelSelectorSelectionChangedEvent, sLevelSelectPlanetNames[sPlanetArray[mission][difficulty]],
-                   startOptionName);
+        announcedSelection = rawSelection;
+        CALL_EVENT(LevelSelectorReadyEvent, sLevelSelectPlanetNames[rawSelection],
+                   startOptionInfo != NULL ? startOptionInfo->spokenName : NULL);
+    } else if (rawSelection != announcedSelection) {
+        // Venom 1 and Venom 2 share sCurrentPlanetId, so track the raw selection (which the
+        // displayed name is indexed by) rather than the planet change.
+        announcedSelection = rawSelection;
+        CALL_EVENT(LevelSelectorSelectionChangedEvent, sLevelSelectPlanetNames[rawSelection],
+                   startOptionInfo != NULL ? startOptionInfo->spokenName : NULL);
     }
     if (contPress->button & L_TRIG) {
-        const char* previousStartOptionName = startOptionName;
+        const LevelSelectStartOption* previousStartOptionInfo = startOptionInfo;
         startOption ^= 1;
-        startOptionName = Map_LevelSelect_StartOptionName(sCurrentPlanetId, startOption);
-        if (previousStartOptionName != startOptionName) {
-            CALL_EVENT(LevelSelectorStartOptionChangedEvent, sLevelSelectPlanetNames[sPlanetArray[mission][difficulty]],
-                       startOptionName);
+        startOptionInfo = Map_LevelSelect_StartOption(sCurrentPlanetId, startOption);
+        if (previousStartOptionInfo != startOptionInfo) {
+            CALL_EVENT(LevelSelectorStartOptionChangedEvent, sLevelSelectPlanetNames[rawSelection],
+                       startOptionInfo != NULL ? startOptionInfo->spokenName : NULL);
         }
     }
 
@@ -130,14 +149,8 @@ void Map_LevelSelect(void) {
         Graphics_DisplaySmallText(20, y, 1.0f, 1.0f, "PLANET:");
         Graphics_DisplaySmallText(80, y, 1.0f, 1.0f, sLevelSelectPlanetNames[sPlanetArray[mission][difficulty]]);
 
-        if (startOptionName != NULL) {
-            if ((sCurrentPlanetId == PLANET_SECTOR_X) || (sCurrentPlanetId == PLANET_METEO)) {
-                Graphics_DisplaySmallText(80 + 60 + 10, y, 1.0f, 1.0f, "WARP ZONE");
-            } else if (sCurrentPlanetId == PLANET_VENOM) {
-                Graphics_DisplaySmallText(80 + 60 + 3, y, 1.0f, 1.0f, "ANDROSS");
-            } else if (sCurrentPlanetId == PLANET_AREA_6) {
-                Graphics_DisplaySmallText(80 + 60 - 3, y, 1.0f, 1.0f, "BETA SB");
-            }
+        if (startOptionInfo != NULL) {
+            Graphics_DisplaySmallText(startOptionInfo->displayX, y, 1.0f, 1.0f, startOptionInfo->displayText);
         }
     }
 
