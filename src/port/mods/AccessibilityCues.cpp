@@ -36,6 +36,14 @@ static s32 AccessibilityCues_EnemyCueVoiceCount() {
     return count;
 }
 
+// All-range enemy-cue range limit, in world units. On-rails needs no cutoff — the
+// engine's object streaming keeps gActors[] populated with only nearby entities — but
+// all-range loads the whole arena at once, and past Object_ClampSfxSource's ±5000 box
+// every target sounds the same ~15% volume regardless of distance, so unbounded scanning
+// would drone about enemies too far to be actionable. Rebuild-to-tune constant (see
+// docs/accessibility-cues-tuning.md); promote to a CVar if by-ear tuning wants it live.
+static constexpr f32 kEnemyCueAllRangeMaxDist = 10000.0f;
+
 // True while the level is paused (START during play -> gPlayState == PLAY_PAUSE,
 // see fox_play.c). The 3D cue backend runs its own OS audio device that the
 // game's pause doesn't reach, so a looping Cue3D source keeps sounding through a
@@ -198,13 +206,13 @@ static bool AccessibilityCues_IsCueableEnemy(Actor* actor) {
     return (actor->obj.status == OBJ_ACTIVE) && (actor->info.targetOffset != 0.0f);
 }
 
-// Per-tick scan counters; populated by FindClosestEnemiesAhead, consumed by
+// Per-tick scan counters; populated by FindClosestEnemies, consumed by
 // the listener's trace logs. Strictly debug-only; if we drop the tracing
 // the struct can go too.
 struct EnemyCueScanStats {
     s32 active;  // gActors slots with status == OBJ_ACTIVE
     s32 cueable; // also passed IsCueableEnemy predicate
-    s32 ahead;   // also passed bodyDelta.z < 0 (in front of aim)
+    s32 kept;    // also passed the mode's direction/range filters
 };
 
 // One chosen enemy: what the cue voice needs (body-frame delta) plus what the sticky
@@ -228,14 +236,19 @@ static uint64_t AccessibilityCues_EnemyVoiceKey(const EnemyCueTarget* target) {
 
 // Walks gActors[], applies the lock-on predicate, rotates each candidate's
 // world delta into body frame via the matrix the caller has already set on
-// gCalcMatrix, drops anyone behind the aim line, and collects the `maxOut`
-// candidates with the smallest 3D distance into `out`, sorted closest-first.
-// Returns how many it found (0..maxOut). Populates outStats for trace logging.
-static s32 AccessibilityCues_FindClosestEnemiesAhead(Player* player, EnemyCueTarget* out, s32 maxOut,
-                                                     EnemyCueScanStats* outStats) {
+// gCalcMatrix, and collects the `maxOut` candidates with the smallest 3D
+// distance into `out`, sorted closest-first. The mode decides which candidates
+// are in scope: on-rails keeps only enemies ahead of the aim line (behind-aim
+// sources used to pan ambiguously, and everything relevant comes at you from
+// ahead anyway); all-range keeps the full sphere — threats come from behind
+// there and the HRTF renders the rear hemisphere — but drops anything past
+// kEnemyCueAllRangeMaxDist. Returns how many it found (0..maxOut). Populates
+// outStats for trace logging.
+static s32 AccessibilityCues_FindClosestEnemies(Player* player, bool allRange, EnemyCueTarget* out, s32 maxOut,
+                                                EnemyCueScanStats* outStats) {
     outStats->active = 0;
     outStats->cueable = 0;
-    outStats->ahead = 0;
+    outStats->kept = 0;
     s32 count = 0;
 
     for (s32 i = 0; i < ARRAY_COUNT(gActors); i++) {
@@ -253,12 +266,15 @@ static s32 AccessibilityCues_FindClosestEnemiesAhead(Player* player, EnemyCueTar
         worldDelta.z = actor->obj.pos.z - player->trueZpos;
         Vec3f bodyDelta;
         Matrix_MultVec3fNoTranslate(gCalcMatrix, &worldDelta, &bodyDelta);
-        // bodyDelta.z >= 0 means at or behind the aim line. Drop it.
-        if (bodyDelta.z >= 0.0f) {
+        // bodyDelta.z >= 0 means at or behind the aim line.
+        if (!allRange && bodyDelta.z >= 0.0f) {
             continue;
         }
-        outStats->ahead++;
         f32 distSq = (bodyDelta.x * bodyDelta.x) + (bodyDelta.y * bodyDelta.y) + (bodyDelta.z * bodyDelta.z);
+        if (allRange && distSq > kEnemyCueAllRangeMaxDist * kEnemyCueAllRangeMaxDist) {
+            continue;
+        }
+        outStats->kept++;
         // Insertion into the closest-first top-N array.
         s32 at;
         if (count == maxOut) {
@@ -284,17 +300,20 @@ static s32 AccessibilityCues_FindClosestEnemiesAhead(Player* player, EnemyCueTar
 static void AccessibilityCues_OnEnemyPostUpdate(IEvent* event) {
     (void) event;
 
-    // gLevelMode and gPlayer both default to "ready-looking" zero values at
-    // process start (LEVELMODE_ON_RAILS = 0, gPlayer = NULL pointer) before
-    // any level loads, so the mode check alone doesn't filter the pre-game
-    // title/menu ticks. Null-check gPlayer to keep the listener safe there.
+    // The cue runs on-rails and in solo all-range; Versus shares LEVELMODE_ALL_RANGE
+    // but is untested multiplayer territory, so gVersusMode gates it out. gLevelMode
+    // and gPlayer both default to "ready-looking" zero values at process start
+    // (LEVELMODE_ON_RAILS = 0, gPlayer = NULL pointer) before any level loads, so the
+    // mode check alone doesn't filter the pre-game title/menu ticks. Null-check
+    // gPlayer to keep the listener safe there.
     bool enabled = AccessibilityCues_IsEnabled();
-    bool onRails = (gLevelMode == LEVELMODE_ON_RAILS);
+    bool allRange = (gLevelMode == LEVELMODE_ALL_RANGE);
+    bool modeOk = (gLevelMode == LEVELMODE_ON_RAILS) || (allRange && !gVersusMode);
     bool hasPlayer = (gPlayer != NULL);
     bool paused = AccessibilityCues_IsPaused();
-    if (!enabled || !onRails || !hasPlayer || paused) {
-        ENEMY_CUE_TRACE("[enemy-cue] gated enabled={} onRails={} mode={} hasPlayer={} paused={}", enabled, onRails,
-                        (int) gLevelMode, hasPlayer, paused);
+    if (!enabled || !modeOk || !hasPlayer || paused) {
+        ENEMY_CUE_TRACE("[enemy-cue] gated enabled={} mode={} versus={} hasPlayer={} paused={}", enabled,
+                        (int) gLevelMode, gVersusMode, hasPlayer, paused);
         sEnemyCue->StopAllVoices();
         return;
     }
@@ -304,12 +323,12 @@ static void AccessibilityCues_OnEnemyPostUpdate(IEvent* event) {
 
     EnemyCueScanStats stats;
     EnemyCueTarget targets[kAccessibilityEnemyCueMaxVoices];
-    s32 count =
-        AccessibilityCues_FindClosestEnemiesAhead(player, targets, AccessibilityCues_EnemyCueVoiceCount(), &stats);
+    s32 count = AccessibilityCues_FindClosestEnemies(player, allRange, targets,
+                                                     AccessibilityCues_EnemyCueVoiceCount(), &stats);
 
     if (count == 0) {
-        ENEMY_CUE_TRACE("[enemy-cue] no target level={} active={} cueable={} ahead={}", (int) gCurrentLevel,
-                        stats.active, stats.cueable, stats.ahead);
+        ENEMY_CUE_TRACE("[enemy-cue] no target level={} active={} cueable={} kept={}", (int) gCurrentLevel,
+                        stats.active, stats.cueable, stats.kept);
         sEnemyCue->StopAllVoices();
         return;
     }
@@ -325,10 +344,10 @@ static void AccessibilityCues_OnEnemyPostUpdate(IEvent* event) {
 
         // src/freq are the voice's post-clamp target — what was actually pushed this tick.
         // Voices this listener stops driving are reaped by CueRegistry_Tick.
-        ENEMY_CUE_TRACE("[enemy-cue] voice {}/{} slot={} id={} level={} active={} cueable={} ahead={} "
+        ENEMY_CUE_TRACE("[enemy-cue] voice {}/{} slot={} id={} level={} active={} cueable={} kept={} "
                         "bodyDelta=({:.1f},{:.1f},{:.1f}) src=({:.1f},{:.1f},{:.1f}) freq={:.3f}",
                         i + 1, count, target->slot, (int) target->actor->obj.id, (int) gCurrentLevel, stats.active,
-                        stats.cueable, stats.ahead, target->bodyDelta.x, target->bodyDelta.y, target->bodyDelta.z,
+                        stats.cueable, stats.kept, target->bodyDelta.x, target->bodyDelta.y, target->bodyDelta.z,
                         src[0], src[1], src[2], freq);
     }
 }
@@ -351,7 +370,8 @@ void AccessibilityCues_Init() {
     sRingCue = CueRegistry_Register("Ring", "Ring guide", "Guides you toward the next training ring.",
                                     "assets/accessibility/ring.wav");
     sEnemyCue = CueRegistry_Register("Enemy", "Enemy locator",
-                                     "Tracks the closest lockable enemies ahead of your aim.",
+                                     "Tracks the closest lockable enemies: ahead of your aim on rails, "
+                                     "all around you in all-range mode.",
                                      "assets/accessibility/enemy.wav", kAccessibilityEnemyCueMaxVoices);
 
     REGISTER_LISTENER(GamePostUpdateEvent, AccessibilityCues_OnRingPostUpdate, EVENT_PRIORITY_NORMAL);

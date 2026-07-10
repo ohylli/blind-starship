@@ -7,7 +7,7 @@ path — it was removed, along with the `gAccessibilityCue3D` toggle. The pieces
 - **The `Cue` layer** (`src/port/accessibility/Cue.{h,cpp}`) — game-agnostic: each cue owns its sound file, its per-cue volume CVar, the three-factor gain, and a preview mode. A registry lets the settings UI enumerate cues.
 - **The consumer mod** (`src/port/mods/AccessibilityCues.{cpp,h}`) — the Star Fox side, housing two cues sharing the `gAccessibilityAudioCues` CVar:
   - **Ring cue** — tracks the next Training ring ahead of the Arwing (scoped to `LEVEL_TRAINING`).
-  - **Enemy cue** — tracks the closest cueable enemy ahead of the Arwing's aim line, on any on-rails level. Coordinate frame is body-frame (rotated by the player's yaw + pitch) rather than world-frame; see `docs/accessibility-enemy-cue.md` for the derivation.
+  - **Enemy cue** — tracks the closest cueable enemies relative to the Arwing's aim: ahead of the aim line on on-rails levels, the full sphere (including behind you) in solo all-range mode. Coordinate frame is body-frame (rotated by the player's yaw + pitch) rather than world-frame; see `docs/accessibility-enemy-cue.md` for the derivation.
 
 Direction is now the HRTF backend's job (true left/right and front/back). The mod still drives pitch from altitude via `AccessibilityCues_ComputeFreqModFromY`, layered on top of the HRTF (the generic HRTF's own elevation cue is weak — see `docs/accessibility-hrtf-cues.md`). Distance drives volume through the backend's inverse-distance model. Most knobs below apply to either cue; function names are prefixed `Ring` or `Enemy` to disambiguate.
 
@@ -51,7 +51,11 @@ Also in `AccessibilityCues_ComputeFreqModFromY`: `octaves = y / 1000.0f`. Negate
 ### "Drop the cue when behind the player"
 
 - Ring cue, `AccessibilityCues_FindNextTrainingRing`: `if (dz >= 0.0f) continue;` filters by world Z relative to `player->trueZpos`. As written, the moment a ring is at or behind the Arwing it stops contributing. Could be relaxed to `dz >= someThreshold` if you want a brief tail as you pass through — but in practice the distance falloff already fades the trailing ring, and the next ring becomes the target on the very next tick.
-- Enemy cue, `AccessibilityCues_FindClosestEnemiesAhead`: `if (bodyDelta.z >= 0.0f) continue;` filters by body-frame Z (i.e., behind the *aim line*, not behind world position). The HRTF backend can render behind-you sources, so relaxing this to also cue enemies behind the aim is now technically possible — the drop is a deliberate design choice (keep the cue to threats you can turn toward) rather than a backend limitation as it was on the old SF64 path.
+- Enemy cue, `AccessibilityCues_FindClosestEnemies`: the behind-the-aim drop (`bodyDelta.z >= 0`, body-frame Z — behind the *aim line*, not behind world position) is **on-rails only**. In all-range the full sphere cues, since threats come from behind there and the HRTF renders the rear hemisphere; the first pass relies on the HRTF alone for front/back (generic-HRTF front/back confusion is a known weakness, but turning shifts the cue immediately, which resolves it in practice — add a rear-hemisphere volume/filter dip here if by-ear testing disagrees).
+
+### All-range range limit
+
+`kEnemyCueAllRangeMaxDist` (default 10000, near the top of `AccessibilityCues.cpp`) — enemy-cue-only, all-range-only. On-rails needs no cutoff because the engine only keeps nearby objects loaded, but all-range loads the whole arena (radius 8000–20000+ units depending on level), and past the ±5000 clamp box every target sounds the same faint volume — so without a limit, far dogfighters drone constantly. Smaller = quieter arenas where silence means "nothing in range"; larger = hear (the direction of) distant fights sooner. Rebuild-to-tune; promote to a CVar + F1 slider if it needs live adjustment.
 
 ### Cue volume
 
@@ -60,7 +64,7 @@ Volume is a per-cue CVar, not a file static. The effective per-source gain is `g
 ### Which levels the cues fire in
 
 - Ring cue, `AccessibilityCues_OnRingPostUpdate`: `if (... gCurrentLevel != LEVEL_TRAINING) ...`. Hard-scoped to Training because that's where rings live; broadening would also mean re-picking what to target outside Training.
-- Enemy cue, `AccessibilityCues_OnEnemyPostUpdate`: `if (... gLevelMode != LEVELMODE_ON_RAILS) ...`. Fires on every on-rails level. All-range is deferred but the body-frame math already works there — the gate is the only blocker.
+- Enemy cue, `AccessibilityCues_OnEnemyPostUpdate`: fires on every on-rails level and in solo all-range (`gLevelMode == LEVELMODE_ALL_RANGE && !gVersusMode`) — including mid-level transitions (Corneria/Sector Y bosses, Andross, Training's battle phase), which just flip `gLevelMode`. Multiplayer Versus shares the all-range mode flag but is gated out as untested.
 
 ### What counts as a target
 
