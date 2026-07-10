@@ -51,7 +51,7 @@ Also in `AccessibilityCues_ComputeFreqModFromY`: `octaves = y / 1000.0f`. Negate
 ### "Drop the cue when behind the player"
 
 - Ring cue, `AccessibilityCues_FindNextTrainingRing`: `if (dz >= 0.0f) continue;` filters by world Z relative to `player->trueZpos`. As written, the moment a ring is at or behind the Arwing it stops contributing. Could be relaxed to `dz >= someThreshold` if you want a brief tail as you pass through — but in practice the distance falloff already fades the trailing ring, and the next ring becomes the target on the very next tick.
-- Enemy cue, `AccessibilityCues_FindClosestEnemyAhead`: `if (bodyDelta.z >= 0.0f) continue;` filters by body-frame Z (i.e., behind the *aim line*, not behind world position). The HRTF backend can render behind-you sources, so relaxing this to also cue enemies behind the aim is now technically possible — the drop is a deliberate design choice (keep the cue to threats you can turn toward) rather than a backend limitation as it was on the old SF64 path.
+- Enemy cue, `AccessibilityCues_FindClosestEnemiesAhead`: `if (bodyDelta.z >= 0.0f) continue;` filters by body-frame Z (i.e., behind the *aim line*, not behind world position). The HRTF backend can render behind-you sources, so relaxing this to also cue enemies behind the aim is now technically possible — the drop is a deliberate design choice (keep the cue to threats you can turn toward) rather than a backend limitation as it was on the old SF64 path.
 
 ### Cue volume
 
@@ -67,6 +67,14 @@ Volume is a per-cue CVar, not a file static. The effective per-source gain is `g
 - Ring cue, `AccessibilityCues_FindNextTrainingRing`: status `OBJ_ACTIVE`, id `OBJ_ITEM_TRAINING_RING`, `state == 0`. The state filter is the subtle one — state 1 means the ring is in its fly-to-player animation after collection, and excluding it prevents the cue from chasing the collection animation. If you ever want a faint background cue for *all* visible rings plus a louder cue for the nearest, this function is where that splits.
 - Enemy cue, `AccessibilityCues_IsCueableEnemy`: matches the engine's missile lock-on (`PlayerShot_FindLockTarget` in `fox_beam.c:1741`) — `status == OBJ_ACTIVE`, `info.targetOffset != 0.0f`. On-rails enemies all spawn as `OBJ_ACTOR_EVENT` and resolve into real targets only after `EVOP_INIT_ACTOR` rewrites `info.targetOffset` from the per-event table; filtering by id would reject them. To extend coverage (bosses, hazards, non-lockable damage-dealers like `OBJ_ACTOR_CO_RADAR`), add an explicit allow-list here. See `docs/accessibility-enemy-cue.md` § "Enemy detection criteria" for the catalogue of intentional misses.
 
+### How many enemies sound at once
+
+The enemy cue voices the N closest lockable enemies simultaneously, each on its own HRTF voice with sticky enemy→voice assignment (an enemy keeps its voice as long as it stays in the top N, so targets don't swap voices frame-to-frame). The knobs:
+
+- **`gAccessibilityEnemyCueVoices`** (default 2, clamped 1–`kAccessibilityEnemyCueMaxVoices` = 4) — how many targets to voice. Runtime-tunable: F1 → Blind Starship → "Enemy locator voices". Set to 1 for the original single-target behavior.
+- **Multi-voice headroom trim**, `Cue::PushGain` (`Cue.cpp`) — with N voices playing, each is trimmed by 1/√N so near-identical loops don't sum hot. If two voices feel too quiet next to one, soften or drop this.
+- **Per-voice identity pitch**, `kVoiceIdentityPitch` (`Cue.cpp`) — a per-voice-slot pitch multiplier for telling simultaneous copies of the same loop apart. All 1.0 (off) today, deliberately: pitch already carries the elevation signal, so a detune would read as a false above/below. If spatial separation alone proves insufficient by ear, prefer per-voice timbre (WAV variants) before touching this.
+
 ### CVar default
 
 `CVarRegisterInteger("gAccessibilityAudioCues", 1)` in `AccessibilityCues_Init`. Default-on for now; flip the second arg to `0` to make it opt-in. The CVar is toggleable at runtime from the console — the listener early-returns and kills any active cue when it's off, so no restart needed.
@@ -79,4 +87,4 @@ A few limits live in the HRTF backend or its integration rather than in dial set
 
 - **Elevation from the generic HRTF is weak.** `IPL_HRTFTYPE_DEFAULT` only renders a strong vertical cue when the source is near the aim line, which is why the Y→pitch layer above exists at all. Sharpening the HRTF's *own* elevation means a personalized SOFA HRTF (`IPL_HRTFTYPE_SOFA` + a user-supplied file); see `docs/accessibility-hrtf-cues.md`.
 - **No BGM ducking / cross-stream priority.** The cues play on a second OS audio device the game's audio path never reaches, so BGM ducking (`SFX_FLAG_19`) does not touch them, and there is no automatic ducking of the cues while TTS speaks (review CUE3D-16). The gain lever to build ducking on now exists (`Cue3D_SetGain` via `Cue::PushGain`) but nothing drives it for ducking yet.
-- **No mixing/limiter beyond the backend's output trim.** Steam Audio spatializes but does not mix; the backend sums sources by hand with a `kOutputTrim` (0.6) plus a hard safety clip (`Cue3DSteamAudio.cpp`). Many simultaneous loud cues still lean on that clip — the practical ceiling on how many cues can overlap before the mix is compressed.
+- **No mixing/limiter beyond the backend's output trim.** Steam Audio spatializes but does not mix; the backend sums sources by hand with a `kOutputTrim` (0.6) plus a hard safety clip (`Cue3DSteamAudio.cpp`). The Cue layer's per-cue 1/√N multi-voice trim (above) keeps one cue's own voices in check, but *different* cues still sum untrimmed onto that clip — the practical ceiling on how many cues can overlap before the mix is compressed.

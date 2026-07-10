@@ -12,6 +12,7 @@
 #include <Fast3D/interpreter.h>
 #include "port/Engine.h"
 #include "port/mods/accessibility_screens/ImGuiMenu.h"
+#include "port/mods/AccessibilityCues.h"
 #include "port/accessibility/Cue.h"
 #include "port/notification/notification.h"
 #include "utils/StringHelper.h"
@@ -396,8 +397,12 @@ void DrawSettingsMenu(){
                 .defaultValue = true
             });
             UIWidgets::CVarCheckbox("Audio cues", "gAccessibilityAudioCues", {
-                .tooltip = "Positional audio cues that guide you toward the next ring and the closest lockable enemy.",
+                .tooltip = "Positional audio cues that guide you toward the next ring and the closest lockable enemies.",
                 .defaultValue = true
+            });
+            UIWidgets::CVarSliderInt("Enemy locator voices", "gAccessibilityEnemyCueVoices", 1,
+                                     kAccessibilityEnemyCueMaxVoices, 2, {
+                .tooltip = "How many of the closest lockable enemies the enemy locator sounds at once."
             });
             if (UIWidgets::BeginMenu("Cue volumes")) {
                 // Slider changes are pushed to the live sources immediately so a running

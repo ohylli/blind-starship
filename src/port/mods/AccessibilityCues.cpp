@@ -24,6 +24,18 @@ static bool AccessibilityCues_IsEnabled() {
     return CVarGetInteger("gAccessibilityAudioCues", 1) == 1;
 }
 
+// How many of the closest enemies to voice at once. Runtime-tunable (F1 -> Blind
+// Starship) so the by-ear sweet spot can be found without rebuilding.
+static s32 AccessibilityCues_EnemyCueVoiceCount() {
+    s32 count = CVarGetInteger("gAccessibilityEnemyCueVoices", 2);
+    if (count < 1) {
+        count = 1;
+    } else if (count > kAccessibilityEnemyCueMaxVoices) {
+        count = kAccessibilityEnemyCueMaxVoices;
+    }
+    return count;
+}
+
 // True while the level is paused (START during play -> gPlayState == PLAY_PAUSE,
 // see fox_play.c). The 3D cue backend runs its own OS audio device that the
 // game's pause doesn't reach, so a looping Cue3D source keeps sounding through a
@@ -64,18 +76,30 @@ static f32 AccessibilityCues_ComputeFreqModFromY(f32 y) {
     return powf(2.0f, octaves);
 }
 
-// Point a cue at a listener-relative offset (game convention: +x right, +y up,
-// +z ahead) and start it if it isn't sounding yet. Object_ClampSfxSource keeps the
-// vector inside the SF64 engine's documented ±5000/±2000 box — kept on the HRTF path
-// so the by-ear-verified distance/pitch tuning is unchanged; whether the 3D backend
-// still wants the clamp is a tuning follow-up. On top of the HRTF we drive pitch from
-// the clamped Y: the generic HRTF only renders strong elevation when the target is
-// nearly on the aim line (the vertical angle is tiny for most of the approach), so the
-// raw-Y pitch supplies a distance-independent "above/below you" signal throughout.
+// Turn a raw listener-relative offset (game convention: +x right, +y up, +z ahead) into
+// what a cue voice is fed: the clamped source vector and the Y-derived pitch.
+// Object_ClampSfxSource keeps the vector inside the SF64 engine's documented ±5000/±2000
+// box — kept on the HRTF path so the by-ear-verified distance/pitch tuning is unchanged;
+// whether the 3D backend still wants the clamp is a tuning follow-up. On top of the HRTF
+// we drive pitch from the clamped Y: the generic HRTF only renders strong elevation when
+// the target is nearly on the aim line (the vertical angle is tiny for most of the
+// approach), so the raw-Y pitch supplies a distance-independent "above/below you" signal
+// throughout.
+static void AccessibilityCues_ComputeCueTarget(f32 dx, f32 dy, f32 dz, f32 outSrc[3], f32* outFreq) {
+    outSrc[0] = dx;
+    outSrc[1] = dy;
+    outSrc[2] = dz;
+    Object_ClampSfxSource(outSrc);
+    *outFreq = AccessibilityCues_ComputeFreqModFromY(outSrc[1]);
+}
+
+// Point a single-voice cue at a listener-relative offset and start it if it isn't
+// sounding yet.
 static void AccessibilityCues_DriveCue(Cue* cue, f32 dx, f32 dy, f32 dz) {
-    f32 src[3] = { dx, dy, dz };
-    Object_ClampSfxSource(src);
-    cue->SetTarget(src[0], src[1], src[2], AccessibilityCues_ComputeFreqModFromY(src[1]));
+    f32 src[3];
+    f32 freq;
+    AccessibilityCues_ComputeCueTarget(dx, dy, dz, src, &freq);
+    cue->SetTarget(src[0], src[1], src[2], freq);
     cue->Start();
 }
 
@@ -174,28 +198,45 @@ static bool AccessibilityCues_IsCueableEnemy(Actor* actor) {
     return (actor->obj.status == OBJ_ACTIVE) && (actor->info.targetOffset != 0.0f);
 }
 
-// Per-tick scan counters; populated by FindClosestEnemyAhead, consumed by
+// Per-tick scan counters; populated by FindClosestEnemiesAhead, consumed by
 // the listener's trace logs. Strictly debug-only; if we drop the tracing
 // the struct can go too.
 struct EnemyCueScanStats {
-    s32 active;    // gActors slots with status == OBJ_ACTIVE
-    s32 cueable;   // also passed IsCueableEnemy predicate
-    s32 ahead;     // also passed bodyDelta.z < 0 (in front of aim)
-    Actor* chosen; // closest one; NULL if none picked
+    s32 active;  // gActors slots with status == OBJ_ACTIVE
+    s32 cueable; // also passed IsCueableEnemy predicate
+    s32 ahead;   // also passed bodyDelta.z < 0 (in front of aim)
 };
+
+// One chosen enemy: what the cue voice needs (body-frame delta) plus what the sticky
+// voice key and the trace log need (slot + actor).
+struct EnemyCueTarget {
+    Vec3f bodyDelta;
+    f32 distSq;
+    s32 slot; // gActors index
+    Actor* actor;
+};
+
+// Sticky voice key for one enemy. gActors slots are reused when an enemy dies and a new
+// one spawns, so the slot alone would let a voice silently glide onto the newcomer; fold
+// in the two identity fields that distinguish enemy kinds (event-spawned actors all share
+// id OBJ_ACTOR_EVENT and differ by eventType) so a reused slot gets a fresh key — and
+// with it a stop/restart — unless the newcomer is the same kind of enemy.
+static uint64_t AccessibilityCues_EnemyVoiceKey(const EnemyCueTarget* target) {
+    return ((uint64_t) (uint32_t) target->slot << 32) | ((uint64_t) (uint16_t) target->actor->obj.id << 16) |
+           (uint64_t) (uint16_t) target->actor->eventType;
+}
 
 // Walks gActors[], applies the lock-on predicate, rotates each candidate's
 // world delta into body frame via the matrix the caller has already set on
-// gCalcMatrix, drops anyone behind the aim line, and returns the body-frame
-// delta of whoever has the smallest 3D distance. Returns false if no
-// candidate passes. Populates outStats for trace logging.
-static bool AccessibilityCues_FindClosestEnemyAhead(Player* player, Vec3f* outBodyDelta, EnemyCueScanStats* outStats) {
+// gCalcMatrix, drops anyone behind the aim line, and collects the `maxOut`
+// candidates with the smallest 3D distance into `out`, sorted closest-first.
+// Returns how many it found (0..maxOut). Populates outStats for trace logging.
+static s32 AccessibilityCues_FindClosestEnemiesAhead(Player* player, EnemyCueTarget* out, s32 maxOut,
+                                                     EnemyCueScanStats* outStats) {
     outStats->active = 0;
     outStats->cueable = 0;
     outStats->ahead = 0;
-    outStats->chosen = NULL;
-    bool found = false;
-    f32 bestDistSq = 1.0e18f;
+    s32 count = 0;
 
     for (s32 i = 0; i < ARRAY_COUNT(gActors); i++) {
         Actor* actor = &gActors[i];
@@ -218,14 +259,26 @@ static bool AccessibilityCues_FindClosestEnemyAhead(Player* player, Vec3f* outBo
         }
         outStats->ahead++;
         f32 distSq = (bodyDelta.x * bodyDelta.x) + (bodyDelta.y * bodyDelta.y) + (bodyDelta.z * bodyDelta.z);
-        if (distSq < bestDistSq) {
-            bestDistSq = distSq;
-            *outBodyDelta = bodyDelta;
-            outStats->chosen = actor;
-            found = true;
+        // Insertion into the closest-first top-N array.
+        s32 at;
+        if (count == maxOut) {
+            if (distSq >= out[maxOut - 1].distSq) {
+                continue; // farther than everything kept so far
+            }
+            at = maxOut - 1; // displace the current farthest
+        } else {
+            at = count++;
         }
+        while (at > 0 && out[at - 1].distSq > distSq) {
+            out[at] = out[at - 1];
+            at--;
+        }
+        out[at].bodyDelta = bodyDelta;
+        out[at].distSq = distSq;
+        out[at].slot = i;
+        out[at].actor = actor;
     }
-    return found;
+    return count;
 }
 
 static void AccessibilityCues_OnEnemyPostUpdate(IEvent* event) {
@@ -242,7 +295,7 @@ static void AccessibilityCues_OnEnemyPostUpdate(IEvent* event) {
     if (!enabled || !onRails || !hasPlayer || paused) {
         ENEMY_CUE_TRACE("[enemy-cue] gated enabled={} onRails={} mode={} hasPlayer={} paused={}", enabled, onRails,
                         (int) gLevelMode, hasPlayer, paused);
-        sEnemyCue->Stop();
+        sEnemyCue->StopAllVoices();
         return;
     }
 
@@ -250,50 +303,60 @@ static void AccessibilityCues_OnEnemyPostUpdate(IEvent* event) {
     AccessibilityCues_BuildWorldToBodyMatrix(player);
 
     EnemyCueScanStats stats;
-    Vec3f bodyDelta;
-    bool found = AccessibilityCues_FindClosestEnemyAhead(player, &bodyDelta, &stats);
+    EnemyCueTarget targets[kAccessibilityEnemyCueMaxVoices];
+    s32 count =
+        AccessibilityCues_FindClosestEnemiesAhead(player, targets, AccessibilityCues_EnemyCueVoiceCount(), &stats);
 
-    if (!found) {
+    if (count == 0) {
         ENEMY_CUE_TRACE("[enemy-cue] no target level={} active={} cueable={} ahead={}", (int) gCurrentLevel,
                         stats.active, stats.cueable, stats.ahead);
-        sEnemyCue->Stop();
+        sEnemyCue->StopAllVoices();
         return;
     }
 
-    // Body-frame delta: +X right of aim, +Y above aim, -Z ahead. DriveCue takes
-    // +z-ahead, so hand it the negated body Z (matching the ring cue's convention).
-    AccessibilityCues_DriveCue(sEnemyCue, bodyDelta.x, bodyDelta.y, -bodyDelta.z);
+    for (s32 i = 0; i < count; i++) {
+        EnemyCueTarget* target = &targets[i];
+        // Body-frame delta: +X right of aim, +Y above aim, -Z ahead. The cue takes
+        // +z-ahead, so hand it the negated body Z (matching the ring cue's convention).
+        f32 src[3];
+        f32 freq;
+        AccessibilityCues_ComputeCueTarget(target->bodyDelta.x, target->bodyDelta.y, -target->bodyDelta.z, src, &freq);
+        sEnemyCue->TargetVoice(AccessibilityCues_EnemyVoiceKey(target), src[0], src[1], src[2], freq);
 
-    // src/freq are the cue's post-clamp target — what DriveCue actually pushed this tick.
-    ENEMY_CUE_TRACE("[enemy-cue] target id={} level={} active={} cueable={} ahead={} bodyDelta=({:.1f},{:.1f},{:.1f}) "
-                    "src=({:.1f},{:.1f},{:.1f}) freq={:.3f}",
-                    (int) stats.chosen->obj.id, (int) gCurrentLevel, stats.active, stats.cueable, stats.ahead,
-                    bodyDelta.x, bodyDelta.y, bodyDelta.z, sEnemyCue->TargetX(), sEnemyCue->TargetY(),
-                    sEnemyCue->TargetZ(), sEnemyCue->TargetPitch());
+        // src/freq are the voice's post-clamp target — what was actually pushed this tick.
+        // Voices this listener stops driving are reaped by CueRegistry_Tick.
+        ENEMY_CUE_TRACE("[enemy-cue] voice {}/{} slot={} id={} level={} active={} cueable={} ahead={} "
+                        "bodyDelta=({:.1f},{:.1f},{:.1f}) src=({:.1f},{:.1f},{:.1f}) freq={:.3f}",
+                        i + 1, count, target->slot, (int) target->actor->obj.id, (int) gCurrentLevel, stats.active,
+                        stats.cueable, stats.ahead, target->bodyDelta.x, target->bodyDelta.y, target->bodyDelta.z,
+                        src[0], src[1], src[2], freq);
+    }
 }
 
 // ===== Entry points =====
 
-// Timed cue previews (the settings UI's "Preview" buttons) expire on the game tick,
-// which keeps them alive-and-bounded even if the menu closes mid-preview.
-static void AccessibilityCues_OnPreviewTick(IEvent* event) {
+// Per-game-tick cue housekeeping: expires timed previews (the settings UI's "Preview"
+// buttons stay alive-and-bounded even if the menu closes mid-preview) and reaps keyed
+// voices whose targets the driving listeners stopped refreshing.
+static void AccessibilityCues_OnCueTick(IEvent* event) {
     (void) event;
-    CueRegistry_TickPreviews();
+    CueRegistry_Tick();
 }
 
 void AccessibilityCues_Init() {
     CVarRegisterInteger("gAccessibilityAudioCues", 1);
+    CVarRegisterInteger("gAccessibilityEnemyCueVoices", 2);
     CVarRegisterInteger("gAccessibilityEnemyCueLog", 0);
 
     sRingCue = CueRegistry_Register("Ring", "Ring guide", "Guides you toward the next training ring.",
                                     "assets/accessibility/ring.wav");
     sEnemyCue = CueRegistry_Register("Enemy", "Enemy locator",
-                                     "Tracks the closest lockable enemy ahead of your aim.",
-                                     "assets/accessibility/enemy.wav");
+                                     "Tracks the closest lockable enemies ahead of your aim.",
+                                     "assets/accessibility/enemy.wav", kAccessibilityEnemyCueMaxVoices);
 
     REGISTER_LISTENER(GamePostUpdateEvent, AccessibilityCues_OnRingPostUpdate, EVENT_PRIORITY_NORMAL);
     REGISTER_LISTENER(GamePostUpdateEvent, AccessibilityCues_OnEnemyPostUpdate, EVENT_PRIORITY_NORMAL);
-    REGISTER_LISTENER(GamePostUpdateEvent, AccessibilityCues_OnPreviewTick, EVENT_PRIORITY_NORMAL);
+    REGISTER_LISTENER(GamePostUpdateEvent, AccessibilityCues_OnCueTick, EVENT_PRIORITY_NORMAL);
 }
 
 void AccessibilityCues_Exit() {
