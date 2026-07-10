@@ -24,6 +24,7 @@ void Accessibility_Init() {
     AccessibilityMainMenu_Register();
     AccessibilitySoundMenu_Register();
     AccessibilityPauseMenu_Register();
+    AccessibilityLevelSelector_Register();
     AccessibilityTrainingRings_Register();
     AccessibilityScore_Register();
     AccessibilityCameraView_Register();

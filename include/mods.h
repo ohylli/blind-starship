@@ -83,6 +83,7 @@
 /* ************************* */
 
 void Map_LevelSelect(void);
+void Map_LevelSelect_Reset(void);
 
 #if MODS_FPS_COUNTER == 1
 static void Play_RenderFps(void);

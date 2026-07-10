@@ -1,6 +1,7 @@
 #include "global.h"
 #include "fox_map.h"
 #include "mods.h"
+#include "port/hooks/Events.h"
 
 extern PlanetId sPlanetList[15];
 extern PlanetId sCurrentPlanetId;
@@ -8,6 +9,8 @@ extern u8 sLevelStartState;
 extern s32 D_menu_801CD968;
 extern s32 sMapState;
 extern s32 sMapSubState;
+
+static bool sLevelSelectorActive = false;
 
 void Map_LevelStart_AudioSpecSetup(LevelId level);
 void Map_CurrentLevel_Setup(void);
@@ -20,6 +23,26 @@ static PlanetId sPlanetArray[][3] = {
     { PLANET_TITANIA, PLANET_MACBETH, PLANET_SECTOR_Z },   { PLANET_BOLSE, PLANET_BOLSE, PLANET_AREA_6 },
     { PLANET_VENOM, PLANET_VENOM, SAVE_SLOT_VENOM_2 },
 };
+
+static const char* Map_LevelSelect_StartOptionName(PlanetId planetId, s32 startOption) {
+    if (!startOption) {
+        return NULL;
+    }
+    if ((planetId == PLANET_SECTOR_X) || (planetId == PLANET_METEO)) {
+        return "Warp Zone";
+    }
+    if (planetId == PLANET_VENOM) {
+        return "Andross";
+    }
+    if (planetId == PLANET_AREA_6) {
+        return "Beta SB";
+    }
+    return NULL;
+}
+
+void Map_LevelSelect_Reset(void) {
+    sLevelSelectorActive = false;
+}
 
 void Map_LevelSelect(void) {
     static s32 mission = 0;
@@ -38,6 +61,7 @@ void Map_LevelSelect(void) {
     OSContPad* contPress = &gControllerPress[gMainController];
 
     if ((sMapState != MAP_IDLE) && (sMapState != MAP_ZOOM_PLANET)) {
+        sLevelSelectorActive = false;
         return;
     }
 
@@ -71,14 +95,29 @@ void Map_LevelSelect(void) {
 
     nextPlanetId =
         (sPlanetArray[mission][difficulty] == SAVE_SLOT_VENOM_2) ? PLANET_VENOM : sPlanetArray[mission][difficulty];
-    if (sCurrentPlanetId != nextPlanetId) {
+    const bool selectionChanged = sCurrentPlanetId != nextPlanetId;
+    if (selectionChanged) {
         sCurrentPlanetId = nextPlanetId;
         startOption = 0;
         Map_CurrentLevel_Setup();
         Map_PositionCursor();
     }
+    const char* startOptionName = Map_LevelSelect_StartOptionName(sCurrentPlanetId, startOption);
+    if (!sLevelSelectorActive) {
+        sLevelSelectorActive = true;
+        CALL_EVENT(LevelSelectorReadyEvent, sLevelSelectPlanetNames[sPlanetArray[mission][difficulty]], startOptionName);
+    } else if (selectionChanged) {
+        CALL_EVENT(LevelSelectorSelectionChangedEvent, sLevelSelectPlanetNames[sPlanetArray[mission][difficulty]],
+                   startOptionName);
+    }
     if (contPress->button & L_TRIG) {
+        const char* previousStartOptionName = startOptionName;
         startOption ^= 1;
+        startOptionName = Map_LevelSelect_StartOptionName(sCurrentPlanetId, startOption);
+        if (previousStartOptionName != startOptionName) {
+            CALL_EVENT(LevelSelectorStartOptionChangedEvent, sLevelSelectPlanetNames[sPlanetArray[mission][difficulty]],
+                       startOptionName);
+        }
     }
 
     int y = 225;
@@ -91,7 +130,7 @@ void Map_LevelSelect(void) {
         Graphics_DisplaySmallText(20, y, 1.0f, 1.0f, "PLANET:");
         Graphics_DisplaySmallText(80, y, 1.0f, 1.0f, sLevelSelectPlanetNames[sPlanetArray[mission][difficulty]]);
 
-        if (startOption) {
+        if (startOptionName != NULL) {
             if ((sCurrentPlanetId == PLANET_SECTOR_X) || (sCurrentPlanetId == PLANET_METEO)) {
                 Graphics_DisplaySmallText(80 + 60 + 10, y, 1.0f, 1.0f, "WARP ZONE");
             } else if (sCurrentPlanetId == PLANET_VENOM) {

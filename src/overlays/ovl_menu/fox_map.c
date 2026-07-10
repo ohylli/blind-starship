@@ -1892,6 +1892,8 @@ void Map_Update(void) {
 
     if (CVarGetInteger("gLevelSelector", 0)) {
         Map_LevelSelect();
+    } else {
+        Map_LevelSelect_Reset();
     }
 }
 
