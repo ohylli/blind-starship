@@ -401,7 +401,7 @@ void DrawSettingsMenu(){
                 .defaultValue = true
             });
             UIWidgets::CVarSliderInt("Enemy locator voices", "gAccessibilityEnemyCueVoices", 1,
-                                     kAccessibilityEnemyCueMaxVoices, 2, {
+                                     kAccessibilityEnemyCueMaxVoices, kAccessibilityEnemyCueDefaultVoices, {
                 .tooltip = "How many of the closest lockable enemies the enemy locator sounds at once."
             });
             if (UIWidgets::BeginMenu("Cue volumes")) {

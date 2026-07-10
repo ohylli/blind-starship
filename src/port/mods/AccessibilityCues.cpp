@@ -27,7 +27,7 @@ static bool AccessibilityCues_IsEnabled() {
 // How many of the closest enemies to voice at once. Runtime-tunable (F1 -> Blind
 // Starship) so the by-ear sweet spot can be found without rebuilding.
 static s32 AccessibilityCues_EnemyCueVoiceCount() {
-    s32 count = CVarGetInteger("gAccessibilityEnemyCueVoices", 2);
+    s32 count = CVarGetInteger("gAccessibilityEnemyCueVoices", kAccessibilityEnemyCueDefaultVoices);
     if (count < 1) {
         count = 1;
     } else if (count > kAccessibilityEnemyCueMaxVoices) {
@@ -345,7 +345,7 @@ static void AccessibilityCues_OnCueTick(IEvent* event) {
 
 void AccessibilityCues_Init() {
     CVarRegisterInteger("gAccessibilityAudioCues", 1);
-    CVarRegisterInteger("gAccessibilityEnemyCueVoices", 2);
+    CVarRegisterInteger("gAccessibilityEnemyCueVoices", kAccessibilityEnemyCueDefaultVoices);
     CVarRegisterInteger("gAccessibilityEnemyCueLog", 0);
 
     sRingCue = CueRegistry_Register("Ring", "Ring guide", "Guides you toward the next training ring.",

@@ -71,7 +71,7 @@ Volume is a per-cue CVar, not a file static. The effective per-source gain is `g
 
 The enemy cue voices the N closest lockable enemies simultaneously, each on its own HRTF voice with sticky enemy→voice assignment (an enemy keeps its voice as long as it stays in the top N, so targets don't swap voices frame-to-frame). The knobs:
 
-- **`gAccessibilityEnemyCueVoices`** (default 2, clamped 1–`kAccessibilityEnemyCueMaxVoices` = 4) — how many targets to voice. Runtime-tunable: F1 → Blind Starship → "Enemy locator voices". Set to 1 for the original single-target behavior.
+- **`gAccessibilityEnemyCueVoices`** — how many targets to voice. Clamped to 1–`kAccessibilityEnemyCueMaxVoices`, and starts at `kAccessibilityEnemyCueDefaultVoices`; both live in `AccessibilityCues.h`. Runtime-tunable: F1 → Blind Starship → "Enemy locator voices". Set to 1 for the original single-target behavior.
 - **Multi-voice headroom trim**, `Cue::PushGain` (`Cue.cpp`) — with N voices playing, each is trimmed by 1/√N so near-identical loops don't sum hot. If two voices feel too quiet next to one, soften or drop this.
 - **Per-voice identity pitch**, `kVoiceIdentityPitch` (`Cue.cpp`) — a per-voice-slot pitch multiplier for telling simultaneous copies of the same loop apart. All 1.0 (off) today, deliberately: pitch already carries the elevation signal, so a detune would read as a false above/below. If spatial separation alone proves insufficient by ear, prefer per-voice timbre (WAV variants) before touching this.
 
