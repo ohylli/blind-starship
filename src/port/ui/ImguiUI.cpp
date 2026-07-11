@@ -1047,6 +1047,30 @@ void DrawDebugMenu() {
                 .tooltip = "Plays the enemy cue sound orbiting through the 3D audio backend as a smoke test. Takes effect after a restart.",
                 .defaultValue = false
             });
+            // Height->pitch tuning: how the cue bends pitch by target height to
+            // compensate for weak HRTF elevation (docs/accessibility-cues-tuning.md).
+            // Read live by the cue mapping each tick, so no push-to-backend is needed.
+            UIWidgets::CVarCheckbox("Height-to-pitch cue", kCuePitchForHeightCVar, {
+                .tooltip = "Bend cue pitch by target height (higher = higher pitch), compensating "
+                           "for weak HRTF elevation. Off = native pitch, height not conveyed.",
+                .defaultValue = true,
+            });
+            bool pitchOn = CVarGetInteger(kCuePitchForHeightCVar, 1) == 1;
+            UIWidgets::CVarSliderFloat("Pitch range", kCuePitchRangeOctavesCVar, 0.0f, 2.0f,
+                                       kCuePitchRangeOctavesDefault, {
+                .tooltip = "Maximum octaves the cue pitch bends up/down at the height extremes.",
+                .disabled = !pitchOn,
+                .format = "%.2f oct",
+                .step = 0.25f,
+            });
+            UIWidgets::CVarSliderFloat("Pitch height sensitivity", kCuePitchScaleCVar, 250.0f, 4000.0f,
+                                       kCuePitchScaleDefault, {
+                .tooltip = "World height per octave of pitch bend; lower = pitch reacts to smaller "
+                           "height changes (reaches full range sooner).",
+                .disabled = !pitchOn,
+                .format = "%.0f/oct",
+                .step = 250.0f,
+            });
             // Rear-effect tuning: how strongly the cue backend exaggerates "behind you"
             // (docs/accessibility-cues-tuning.md). Changes are pushed to the audio thread
             // immediately, so the knobs can be A/B'd by ear against the spatial test's

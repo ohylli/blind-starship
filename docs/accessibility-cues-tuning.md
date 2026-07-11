@@ -36,17 +36,21 @@ The wrinkle: Steam Audio measures distance in **meters**, but SF64 world units a
 
 Elevation caveat: this is a *pure* inverse-distance model — it uses the full 3D distance including the vertical component, so a ring high above reads as genuinely farther (quieter). If a high ring sounds too faint, dividing the y component before the distance calc is the equivalent knob to add (the older SF64 path de-emphasised vertical separation at `y/2.5`).
 
-### Y→pitch sensitivity
+### Y→pitch on/off, range, and sensitivity
 
-The `1000.0f` divisor in `AccessibilityCues_ComputeFreqModFromY` (shared by both cues). This is "how many world units of altitude difference equals one octave." Smaller = more aggressive pitch swing for small altitude changes.
+The whole altitude→pitch layer is now a runtime toggle plus two sliders under **F1 → Developer → Blind Starship** (`AccessibilityCues_ComputeFreqModFromY` reads them live each tick, so no rebuild):
 
-The `±1.0f` clamp on the following lines bounds how extreme the pitch ever gets. Raising the bounds (e.g. ±2) gives a wider expressive range at the cost of stretching the sample badly at the extremes.
+- **Height-to-pitch cue** — `gAccessibilityCuePitchForHeight` (default on). Off = the cue keeps its native pitch and altitude is conveyed only by the (weak) HRTF elevation.
+- **Pitch height sensitivity** — `gAccessibilityCuePitchScale` (default 1000, the old divisor). "How many world units of altitude difference equals one octave." Smaller = more aggressive pitch swing for small altitude changes.
+- **Pitch range** — `gAccessibilityCuePitchRangeOctaves` (default 1.0, the old ±1 octave clamp). Bounds how extreme the pitch ever gets. Larger (e.g. 2) gives a wider expressive range at the cost of stretching the sample badly at the extremes.
+
+Both defaults reproduce the original hard-coded mapping exactly. The CVar names and defaults live in `AccessibilityCues.h`.
 
 For the enemy cue, "altitude" is altitude relative to the Arwing's aim, not world-up — body-frame Y, computed in `AccessibilityCues_BuildWorldToBodyMatrix` + `Matrix_MultVec3fNoTranslate`. So the ring cue and enemy cue interpret "above" differently when the Arwing is pitched.
 
 ### Y→pitch direction
 
-Also in `AccessibilityCues_ComputeFreqModFromY`: `octaves = y / 1000.0f`. Negate this to flip the mapping (lower pitch = higher altitude). Currently higher pitch = above. The change applies to both cues simultaneously.
+Also in `AccessibilityCues_ComputeFreqModFromY`: `octaves = y / scale`. Negate this to flip the mapping (lower pitch = higher altitude). Currently higher pitch = above. The change applies to both cues simultaneously. (This one is still a code change, not a slider.)
 
 ### "Drop the cue when behind the player"
 

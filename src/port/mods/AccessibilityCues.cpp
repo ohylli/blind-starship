@@ -70,16 +70,27 @@ static bool AccessibilityCues_IsEnemyCueLogEnabled() {
         }                                                 \
     } while (0)
 
-// Shared Y->pitch mapping for both cues: higher source = higher pitch,
-// ±1 octave clamped at ±1000 world units. The 1000.0f divisor and the ±1
-// octave clamp are the two tuning knobs (see
-// docs/accessibility-cues-tuning.md).
+// Shared Y->pitch mapping for both cues: higher source = higher pitch. Two knobs,
+// both live via CVars under Developer -> Blind Starship (see
+// docs/accessibility-cues-tuning.md): the sensitivity divisor (world height per
+// octave) and the max pitch deviation (octaves clamped at the height extremes). The
+// whole effect is gated by the gAccessibilityCuePitchForHeight toggle; when off the
+// cue keeps native pitch and height is conveyed only by the HRTF elevation. Defaults
+// (1000 units/oct, ±1 octave) reproduce the original hard-coded mapping.
 static f32 AccessibilityCues_ComputeFreqModFromY(f32 y) {
-    f32 octaves = y / 1000.0f;
-    if (octaves > 1.0f) {
-        octaves = 1.0f;
-    } else if (octaves < -1.0f) {
-        octaves = -1.0f;
+    if (CVarGetInteger(kCuePitchForHeightCVar, 1) != 1) {
+        return 1.0f; // effect off: native pitch, height not conveyed
+    }
+    f32 scale = CVarGetFloat(kCuePitchScaleCVar, kCuePitchScaleDefault);
+    if (scale < 1.0f) {
+        scale = kCuePitchScaleDefault; // guard against divide-by-tiny; slider min keeps this unreachable
+    }
+    f32 range = CVarGetFloat(kCuePitchRangeOctavesCVar, kCuePitchRangeOctavesDefault);
+    f32 octaves = y / scale;
+    if (octaves > range) {
+        octaves = range;
+    } else if (octaves < -range) {
+        octaves = -range;
     }
     return powf(2.0f, octaves);
 }
@@ -366,6 +377,9 @@ void AccessibilityCues_Init() {
     CVarRegisterInteger("gAccessibilityAudioCues", 1);
     CVarRegisterInteger("gAccessibilityEnemyCueVoices", kAccessibilityEnemyCueDefaultVoices);
     CVarRegisterInteger("gAccessibilityEnemyCueLog", 0);
+    CVarRegisterInteger(kCuePitchForHeightCVar, 1);
+    CVarRegisterFloat(kCuePitchScaleCVar, kCuePitchScaleDefault);
+    CVarRegisterFloat(kCuePitchRangeOctavesCVar, kCuePitchRangeOctavesDefault);
     Cue_PushRearEffectFromCVars(); // apply persisted rear-effect tuning to the backend
 
     sRingCue = CueRegistry_Register("Ring", "Ring guide", "Guides you toward the next training ring.",
