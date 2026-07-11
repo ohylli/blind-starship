@@ -1044,7 +1044,7 @@ void DrawDebugMenu() {
                 .defaultValue = false
             });
             UIWidgets::CVarCheckbox("Spatial audio test", "gAccessibilitySpatialTest", {
-                .tooltip = "Plays an orbiting tone through the 3D audio backend as a smoke test. Takes effect after a restart.",
+                .tooltip = "Plays the enemy cue sound orbiting through the 3D audio backend as a smoke test. Takes effect after a restart.",
                 .defaultValue = false
             });
             // Rear-effect tuning: how strongly the cue backend exaggerates "behind you"

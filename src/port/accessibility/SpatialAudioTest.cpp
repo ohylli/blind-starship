@@ -11,10 +11,9 @@
 #include "port/hooks/Events.h"
 
 #include <cmath>
-#include <exception>
-#include <vector>
+#include <string>
 
-// Smoke test for the Cue3D seam. A single tone orbits the listener in the
+// Smoke test for the Cue3D seam. The enemy cue sound orbits the listener in the
 // horizontal plane; on headphones it should sweep front -> right -> behind ->
 // left once every 4 s. This validates the whole chain (device, per-source
 // binaural effect, mixing, block-size matching) AND that the game's +z-ahead
@@ -23,9 +22,13 @@
 
 namespace {
 
+// Reuse the enemy cue's asset so the smoke test orbits the real sound callers
+// hear in-game. Intentionally duplicated from the enemy-cue registration in
+// AccessibilityCues.cpp (there is no shared path constant today); this file is
+// throwaway, so a literal is acceptable.
+constexpr const char* kEnemyCueWav = "assets/accessibility/enemy.wav";
+
 constexpr float kTwoPi = 6.2831853f;
-constexpr float kToneHz = 440.0f;  // 440 whole cycles in 1 s -> click-free loop
-constexpr float kToneGain = 0.2f;
 constexpr float kOrbitHz = 0.25f;  // one circle every 4 s
 constexpr float kGameFps = 30.0f;  // SF64 game logic ticks at 30 fps
 
@@ -50,26 +53,11 @@ void OnPostUpdate(IEvent* event) {
 extern "C" void SpatialAudioTest_Start(void) {
     Cue3D_Init();
 
-    // Ask the backend for its rate instead of hardcoding one, so the tone's cycle
-    // count stays integral (click-free loop) even if the backend rate changes.
-    const int sampleRate = Cue3D_GetSampleRate();
-    if (sampleRate <= 0) {
-        return; // no backend compiled in / available
-    }
-
-    // Exactly one second of a 440 Hz sine: an integer cycle count over the backend's
-    // sample rate, so the loop seam is continuous in both value and slope.
-    std::vector<float> tone;
-    try {
-        tone.resize((size_t) sampleRate);
-    } catch (const std::exception&) {
-        return; // OOM — don't let it unwind through extern "C"
-    }
-    for (int i = 0; i < sampleRate; i++) {
-        tone[i] = kToneGain * sinf(kTwoPi * kToneHz * (float) i / (float) sampleRate);
-    }
-
-    sSource = Cue3D_LoadPcm(tone.data(), (int) tone.size(), true);
+    // Load the enemy cue WAV through the seam (looped), resolving the app-relative
+    // path the same way Cue::EnsureVoiceLoaded does. Cue3D_Load decodes/downmixes/
+    // resamples to the backend rate, so no manual sample-rate handling is needed.
+    const std::string path = Ship::Context::GetPathRelativeToAppDirectory(kEnemyCueWav);
+    sSource = Cue3D_Load(path.c_str(), true);
     if (sSource == nullptr) {
         return; // backend disabled or load failed; nothing to orbit
     }
