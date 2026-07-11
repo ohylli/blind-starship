@@ -136,6 +136,17 @@ current cues, but each is a real gap.
   failure points log today; the spoken notice remains a cheap, narrowly scoped
   follow-up, not yet implemented.
 
+- **Front/back is also weak under the generic HRTF, so the backend exaggerates it.**
+  By-ear testing of the all-range enemy cue confirmed the classic front/back confusion:
+  the HRTF alone did not make "behind you" readable. `ProduceBlock` now muffles
+  (one-pole low-pass), mildly dips, and amplitude-pulses (tremolo) rear-hemisphere
+  sources, blended smoothly by the rear angle — front hemisphere untouched. All four
+  knobs are live CVar sliders (F1 → Developer → Blind Starship) so the three effects
+  can be compared and re-balanced by ear without a rebuild; see
+  `docs/accessibility-cues-tuning.md` § "Rear effects". As with elevation below, a
+  personalized SOFA HRTF is the path to improving the *underlying* cue, at which point
+  the exaggeration could be dialled back.
+
 - **Elevation is weak under the generic HRTF, so Y→pitch was kept on top.** HRTF
   gives a *real* elevation cue from source Y, but with the default
   `IPL_HRTFTYPE_DEFAULT` it only becomes strong when the source is nearly on the

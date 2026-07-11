@@ -1047,6 +1047,44 @@ void DrawDebugMenu() {
                 .tooltip = "Plays an orbiting tone through the 3D audio backend as a smoke test. Takes effect after a restart.",
                 .defaultValue = false
             });
+            // Rear-effect tuning: how strongly the cue backend exaggerates "behind you"
+            // (docs/accessibility-cues-tuning.md). Changes are pushed to the audio thread
+            // immediately, so the knobs can be A/B'd by ear against the spatial test's
+            // orbiting tone or a live in-level cue.
+            if (UIWidgets::CVarSliderFloat("Rear muffle cutoff", kCueRearCutoffCVar, 250.0f, 8000.0f,
+                                           CUE3D_REAR_CUTOFF_HZ_DEFAULT, {
+                .tooltip = "Low-pass cutoff for cue sounds behind you; lower = more muffled dead behind.",
+                .format = "%.0f Hz",
+                .step = 250.0f,
+            })) {
+                Cue_PushRearEffectFromCVars();
+            }
+            if (UIWidgets::CVarSliderFloat("Rear volume dip", kCueRearGainDipCVar, 0.0f, 1.0f,
+                                           CUE3D_REAR_GAIN_DIP_DEFAULT, {
+                .tooltip = "How much quieter a cue dead behind you is. Keep mild: volume also encodes distance.",
+                .format = "%.0f%%",
+                .step = 0.05f,
+                .isPercentage = true,
+            })) {
+                Cue_PushRearEffectFromCVars();
+            }
+            if (UIWidgets::CVarSliderFloat("Rear tremolo depth", kCueRearTremoloDepthCVar, 0.0f, 1.0f,
+                                           CUE3D_REAR_TREMOLO_DEPTH_DEFAULT, {
+                .tooltip = "Pulsing strength for cue sounds behind you; 0 disables the tremolo.",
+                .format = "%.0f%%",
+                .step = 0.05f,
+                .isPercentage = true,
+            })) {
+                Cue_PushRearEffectFromCVars();
+            }
+            if (UIWidgets::CVarSliderFloat("Rear tremolo rate", kCueRearTremoloRateCVar, 2.0f, 16.0f,
+                                           CUE3D_REAR_TREMOLO_HZ_DEFAULT, {
+                .tooltip = "How fast the rear tremolo pulses.",
+                .format = "%.1f Hz",
+                .step = 0.5f,
+            })) {
+                Cue_PushRearEffectFromCVars();
+            }
             ImGui::EndMenu();
         }
 

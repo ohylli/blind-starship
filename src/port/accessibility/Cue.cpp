@@ -292,6 +292,18 @@ void CueRegistry_Tick() {
     }
 }
 
+void Cue_PushRearEffectFromCVars() {
+    // Registrations are idempotent; the Get defaults only matter before the first call.
+    CVarRegisterFloat(kCueRearCutoffCVar, CUE3D_REAR_CUTOFF_HZ_DEFAULT);
+    CVarRegisterFloat(kCueRearGainDipCVar, CUE3D_REAR_GAIN_DIP_DEFAULT);
+    CVarRegisterFloat(kCueRearTremoloDepthCVar, CUE3D_REAR_TREMOLO_DEPTH_DEFAULT);
+    CVarRegisterFloat(kCueRearTremoloRateCVar, CUE3D_REAR_TREMOLO_HZ_DEFAULT);
+    Cue3D_SetRearEffect(CVarGetFloat(kCueRearCutoffCVar, CUE3D_REAR_CUTOFF_HZ_DEFAULT),
+                        CVarGetFloat(kCueRearGainDipCVar, CUE3D_REAR_GAIN_DIP_DEFAULT),
+                        CVarGetFloat(kCueRearTremoloDepthCVar, CUE3D_REAR_TREMOLO_DEPTH_DEFAULT),
+                        CVarGetFloat(kCueRearTremoloRateCVar, CUE3D_REAR_TREMOLO_HZ_DEFAULT));
+}
+
 void CueRegistry_UnloadAll() {
     for (Cue* cue : AllCues()) {
         cue->StopPreview();

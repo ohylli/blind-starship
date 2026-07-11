@@ -27,11 +27,16 @@
 // feeds the source's distance to Steam Audio's inverse-distance model and folds the
 // resulting gain into playback, so a far source renders quieter than a near one. The
 // caller pushes raw positions and never models falloff itself.
+//
+// Front/back exaggeration is likewise backend policy: ProduceBlock muffles (low-pass)
+// and slightly dips rear-hemisphere sources (the kRear* knobs) because the generic
+// HRTF's own front/back rendering is too weak to read in play.
 
 namespace {
 
 constexpr int kSampleRate = 48000; // requested device rate (a hint); the real rate is read back at Init
 constexpr int kFrameSize = 1024;   // Steam Audio fixed processing block
+constexpr float kPi = 3.14159265f;
 
 // Output trim on the summed mix. Steam Audio spatializes but does not mix, so
 // ProduceBlock sums up to kMaxSources stereo streams by hand; without headroom the
@@ -53,6 +58,27 @@ constexpr float kOutputTrim = 0.6f;
 constexpr float kWorldUnitsPerMeter = 1000.0f;
 constexpr float kMinDistanceMeters = 1.0f;
 
+// Rear effect: exaggerated front/back discrimination. The generic HRTF's own
+// front/back cue is weak (docs/accessibility-hrtf-cues.md), so a source in the rear
+// hemisphere is additionally muffled (one-pole low-pass), slightly dipped in gain,
+// and amplitude-pulsed (tremolo) — the first two an exaggeration of the natural head
+// shadow, the tremolo a purely conventional but maximally salient "behind you" marker.
+// All blend in smoothly with the rear angle and leave the entire front hemisphere
+// untouched. Four knobs, live-tunable so they can be compared by ear without a
+// rebuild: game thread writes via Cue3D_SetRearEffect (driven by the CVar sliders
+// under F1 -> Developer -> Blind Starship — see docs/accessibility-cues-tuning.md),
+// the callback reads once per block. Defaults are the seam's CUE3D_REAR_*_DEFAULT.
+//   cutoffHz     — low-pass cutoff when the source is dead behind. Lower = duller.
+//   gainDip      — fraction of gain removed when dead behind. Kept mild on purpose:
+//     volume already encodes distance, so a deep dip would read as "far away", not
+//     "behind". 0 = filter-only.
+//   tremoloDepth — pulse strength when dead behind. 0 = no tremolo.
+//   tremoloHz    — pulse rate.
+std::atomic<float> g_rearCutoffHz{ CUE3D_REAR_CUTOFF_HZ_DEFAULT };
+std::atomic<float> g_rearGainDip{ CUE3D_REAR_GAIN_DIP_DEFAULT };
+std::atomic<float> g_rearTremoloDepth{ CUE3D_REAR_TREMOLO_DEPTH_DEFAULT };
+std::atomic<float> g_rearTremoloHz{ CUE3D_REAR_TREMOLO_HZ_DEFAULT };
+
 // Fixed pool of sources. Cues are few (today: a ring cue + an enemy cue); 16 gives
 // generous headroom for future cue types while keeping the per-block scan trivial.
 // A fixed array means slot addresses never move, so a Cue3DSource* handed to a
@@ -73,7 +99,9 @@ struct Cue3DSource {
     IPLBinauralEffect effect = nullptr; // one per source — holds interpolation state
     std::vector<float> pcm;             // decoded mono at the device rate (g.sampleRate), owned
     int frameCount = 0;
-    double cursor = 0.0; // fractional playback position, frames (audio-thread-only)
+    double cursor = 0.0;     // fractional playback position, frames (audio-thread-only)
+    float lpState = 0.0f;    // rear-muffle one-pole low-pass state (audio-thread-only, like cursor)
+    float tremPhase = 0.0f;  // rear-tremolo LFO phase, radians (audio-thread-only, like cursor)
     bool loop = false;
 
     // Cross-thread: game thread writes, audio callback reads. Read once per block.
@@ -165,6 +193,8 @@ Cue3DSource* CreateSource(const float* monoPcm, int frames, bool loop) {
     }
     s.frameCount = frames;
     s.cursor = 0.0;
+    s.lpState = 0.0f;
+    s.tremPhase = 0.0f;
     s.loop = loop;
     s.x.store(0.0f, std::memory_order_relaxed);
     s.y.store(0.0f, std::memory_order_relaxed);
@@ -203,6 +233,28 @@ void ProduceBlock() {
         const float py = s.y.load(std::memory_order_relaxed);
         const float pz = s.z.load(std::memory_order_relaxed);
 
+        // Normalized direction in the GAME frame (+z ahead), needed twice: the rear
+        // muffle keys off the forward component here, and the binaural effect below
+        // wants the same vector remapped to Steam Audio's frame.
+        float dx = px;
+        float dy = py;
+        float dz = pz;
+        float len = std::sqrt(dx * dx + dy * dy + dz * dz);
+        if (len < 1e-6f) {
+            dx = 0.0f;
+            dy = 0.0f;
+            dz = 1.0f; // degenerate position -> straight ahead
+        } else {
+            float inv = 1.0f / len;
+            dx *= inv;
+            dy *= inv;
+            dz *= inv;
+        }
+        // Rear amount: 0 across the entire front hemisphere (dz >= 0), ramping to 1
+        // dead behind. Continuous through the side positions, so an enemy crossing
+        // the shoulder has no audible seam.
+        const float rearAmount = dz < 0.0f ? -dz : 0.0f;
+
         // Distance attenuation: fold Steam Audio's inverse-distance gain into the
         // source's flat gain. The coordinate frame is irrelevant here (only the
         // distance magnitude matters), so we feed the raw position with no Z
@@ -217,7 +269,9 @@ void ProduceBlock() {
         IPLVector3 srcPos{ px * invScale, py * invScale, pz * invScale };
         IPLVector3 listener{ 0.0f, 0.0f, 0.0f };
         const float distGain = iplDistanceAttenuationCalculate(g.ctx, srcPos, listener, &distModel);
-        const float effGain = gain * distGain;
+        // The rear gain dip rides on top: a source dead behind is that fraction quieter.
+        const float rearGainDip = g_rearGainDip.load(std::memory_order_relaxed);
+        const float effGain = gain * distGain * (1.0f - rearGainDip * rearAmount);
 
         // Fill the mono input from this source's PCM, applying gain and advancing
         // the cursor by `rate` (the pitch multiplier) with linear interpolation
@@ -257,24 +311,35 @@ void ProduceBlock() {
             s.playing.store(false, std::memory_order_release);
         }
 
-        // Game (+z ahead) -> Steam Audio (-Z forward). THE negation lives here.
-        float dx = px;
-        float dy = py;
-        float dz = -pz;
-        float len = std::sqrt(dx * dx + dy * dy + dz * dz);
-        if (len < 1e-6f) {
-            dx = 0.0f;
-            dy = 0.0f;
-            dz = -1.0f; // degenerate position -> straight ahead
-        } else {
-            float inv = 1.0f / len;
-            dx *= inv;
-            dy *= inv;
-            dz *= inv;
+        // Rear muffle + tremolo (knobs live via Cue3D_SetRearEffect; read once per block
+        // like the position): a one-pole low-pass, dry/wet-mixed by rearAmount, takes the
+        // highs off a source behind the listener; an amplitude pulse scaled by the same
+        // rearAmount then chops it. Filter state and LFO phase advance every block — even
+        // fully in front, where both effects are identity — so a front->rear transition
+        // has no step and the pulse stays continuous. lp is updated from the dry sample
+        // before that sample is mixed.
+        const float rearCutoffHz = g_rearCutoffHz.load(std::memory_order_relaxed);
+        const float tremDepth = g_rearTremoloDepth.load(std::memory_order_relaxed) * rearAmount;
+        const float tremStep = 2.0f * kPi * g_rearTremoloHz.load(std::memory_order_relaxed) / (float) g.sampleRate;
+        const float lpAlpha = 1.0f - std::exp(-2.0f * kPi * rearCutoffHz / (float) g.sampleRate);
+        float lp = s.lpState;
+        float phase = s.tremPhase;
+        for (int n = 0; n < kFrameSize; n++) {
+            lp += (mono[n] - lp) * lpAlpha;
+            mono[n] += (lp - mono[n]) * rearAmount;
+            mono[n] *= 1.0f - tremDepth * (0.5f + 0.5f * std::sin(phase));
+            phase += tremStep;
+            if (phase > 2.0f * kPi) {
+                phase -= 2.0f * kPi;
+            }
         }
+        s.lpState = lp;
+        s.tremPhase = phase;
 
         IPLBinauralEffectParams params{};
-        params.direction = IPLVector3{ dx, dy, dz };
+        // Game (+z ahead) -> Steam Audio (-Z forward). THE negation lives here; the
+        // vector was normalized in the game frame above.
+        params.direction = IPLVector3{ dx, dy, -dz };
         params.interpolation = IPL_HRTFINTERPOLATION_BILINEAR;
         params.spatialBlend = 1.0f;
         params.hrtf = g.hrtf;
@@ -517,6 +582,13 @@ extern "C" void Cue3D_SetPosition(Cue3DSource* source, float x, float y, float z
     source->z.store(z, std::memory_order_relaxed);
 }
 
+extern "C" void Cue3D_SetRearEffect(float cutoffHz, float gainDip, float tremoloDepth, float tremoloHz) {
+    g_rearCutoffHz.store(cutoffHz, std::memory_order_relaxed);
+    g_rearGainDip.store(gainDip, std::memory_order_relaxed);
+    g_rearTremoloDepth.store(tremoloDepth, std::memory_order_relaxed);
+    g_rearTremoloHz.store(tremoloHz, std::memory_order_relaxed);
+}
+
 #else // HAVE_STEAM_AUDIO not defined — no-op stubs
 
 extern "C" void Cue3D_Init(void) {}
@@ -557,6 +629,12 @@ extern "C" void Cue3D_SetPitch(Cue3DSource* source, float rate) {
 }
 extern "C" void Cue3D_Stop(Cue3DSource* source) {
     (void) source;
+}
+extern "C" void Cue3D_SetRearEffect(float cutoffHz, float gainDip, float tremoloDepth, float tremoloHz) {
+    (void) cutoffHz;
+    (void) gainDip;
+    (void) tremoloDepth;
+    (void) tremoloHz;
 }
 
 #endif // HAVE_STEAM_AUDIO

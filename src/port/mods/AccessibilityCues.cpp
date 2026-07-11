@@ -366,6 +366,7 @@ void AccessibilityCues_Init() {
     CVarRegisterInteger("gAccessibilityAudioCues", 1);
     CVarRegisterInteger("gAccessibilityEnemyCueVoices", kAccessibilityEnemyCueDefaultVoices);
     CVarRegisterInteger("gAccessibilityEnemyCueLog", 0);
+    Cue_PushRearEffectFromCVars(); // apply persisted rear-effect tuning to the backend
 
     sRingCue = CueRegistry_Register("Ring", "Ring guide", "Guides you toward the next training ring.",
                                     "assets/accessibility/ring.wav");

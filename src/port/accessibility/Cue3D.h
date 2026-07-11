@@ -7,7 +7,10 @@
 // Audio's binaural HRTF spatializer, in Cue3DSteamAudio.cpp) turns that into stereo.
 // The backend owns the full spatialization: both DIRECTION (HRTF) and DISTANCE
 // attenuation are derived from the position the caller pushes, so the caller just
-// reports where the source is and lets the backend decide how it sounds. Keeping
+// reports where the source is and lets the backend decide how it sounds. That includes
+// deliberately exaggerating cues a raw HRTF renders too weakly — e.g. the rear-hemisphere
+// muffle + gain dip for front/back — so an alternate backend should reproduce those,
+// not treat them as a spatializer artifact. Keeping
 // this interface free of any spatializer detail means an alternate backend (e.g.
 // OpenAL Soft) can drop in behind the same header without touching callers.
 //
@@ -25,6 +28,14 @@
 // and safe to call every game frame; the audio callback reads the published values.
 
 typedef struct Cue3DSource Cue3DSource;
+
+// Defaults for Cue3D_SetRearEffect — also the values in effect if it is never called.
+// Defined at the seam so the backend's initial state and the settings layer's CVar
+// registration share one source of truth. Tuning guidance: docs/accessibility-cues-tuning.md.
+#define CUE3D_REAR_CUTOFF_HZ_DEFAULT 1000.0f
+#define CUE3D_REAR_GAIN_DIP_DEFAULT 0.25f
+#define CUE3D_REAR_TREMOLO_DEPTH_DEFAULT 0.5f
+#define CUE3D_REAR_TREMOLO_HZ_DEFAULT 10.0f
 
 #ifdef __cplusplus
 extern "C" {
@@ -88,6 +99,15 @@ void Cue3D_SetPitch(Cue3DSource* source, float rate);
 
 // Silence the source. It stays loaded and can be played again.
 void Cue3D_Stop(Cue3DSource* source);
+
+// Configure the rear-hemisphere front/back exaggeration the backend applies to EVERY
+// source (see the header comment above): at full rear a source is low-passed down to
+// `cutoffHz`, dipped by `gainDip` (0..1 fraction of gain removed), and amplitude-pulsed
+// ("tremolo") with `tremoloDepth` (0..1, 0 = off) at `tremoloHz`. All three blend in
+// smoothly across the rear hemisphere and leave the front hemisphere untouched. Cheap,
+// lock-free, safe to call any time — the settings sliders drive it live. Until the first
+// call the CUE3D_REAR_*_DEFAULT values above are in effect.
+void Cue3D_SetRearEffect(float cutoffHz, float gainDip, float tremoloDepth, float tremoloHz);
 
 #ifdef __cplusplus
 }
