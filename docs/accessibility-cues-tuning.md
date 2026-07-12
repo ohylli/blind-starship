@@ -67,7 +67,7 @@ The backend exaggerates "behind you" on **every** source, keyed off the normaliz
 - **Volume dip** — `gAccessibilityCueRearGainDip` (default 0.25): fraction of gain removed when dead behind. Deliberately mild: volume already encodes distance, so a deep dip would read as "far away", not "behind". 0 disables.
 - **Tremolo** — `gAccessibilityCueRearTremoloDepth` (default 0.5) and `gAccessibilityCueRearTremoloHz` (default 10): amplitude pulsing for rear sources. Not naturalistic, but maximally salient and unambiguous — nothing else in the cue system pulses, so it cannot be confused with distance, elevation, or a quiet sound. Depth 0 disables; with several enemy voices behind you at once, high depths may get noisy.
 
-Ring cue and the F1 previews are unaffected in practice — both only ever render sources ahead. The best A/B environment is the **Spatial audio test** checkbox in the same Developer menu (takes effect after a restart): its tone orbits the head once every 4 s, sweeping front → side → rear, and the sliders retune it live mid-orbit.
+Ring cue and the F1 previews are unaffected in practice — both only ever render sources ahead. The best A/B environment is the **Cue3D test bench** in the same Developer menu (no restart needed — it replaced the old restart-required Spatial audio test): enable its Orbit control and the sound circles the head once every 4 s, sweeping front → side → rear, while the sliders retune it live mid-orbit.
 
 ### All-range range limit
 
@@ -75,7 +75,7 @@ Ring cue and the F1 previews are unaffected in practice — both only ever rende
 
 ### Cue volume
 
-Volume is a per-cue CVar, not a file static. The effective per-source gain is `gGameMasterVolume` × `gAccessibilityCueMasterVolume` × `gAccessibilityCueVolume.<Id>` (e.g. `.Ring` / `.Enemy`), computed by `Cue::PushGain` and pushed to `Cue3D_SetGain` every tick the cue is driven. All three are exposed as sliders under F1 → Blind Starship → Cue volumes ("All cues" master + one per cue), each with a Preview button. If a cue feels drowned out, raise its per-cue slider (or the WAV's own level); the per-cue CVar defaults to 1. Reverb is no longer a knob — the HRTF backend has no reverb stage, so if a cue sounds too dry, bake the "space" into the WAV.
+Volume is a per-cue CVar, not a file static. The effective per-source gain is `gGameMasterVolume` × `gAccessibilityCueMasterVolume` × `gAccessibilityCueVolume.<Id>` (e.g. `.Ring` / `.Enemy`), computed by `Cue::PushGain` and pushed to `Cue3D_SetGain` every tick the cue is driven. All three are exposed as sliders under F1 → Blind Starship → Cue volumes ("All cues" master + one slider per registered cue, generated from the registry so future cues appear automatically), each with a Preview button that plays the cue for ~3 s straight ahead at the distance the backend renders at unity gain — so the preview's loudness *is* the volume setting. Previews suspend gameplay control of that cue and auto-expire. If a cue feels drowned out, raise its per-cue slider (or the WAV's own level); the per-cue CVar defaults to 1. Reverb is no longer a knob — the HRTF backend has no reverb stage, so if a cue sounds too dry, bake the "space" into the WAV.
 
 ### Which levels the cues fire in
 

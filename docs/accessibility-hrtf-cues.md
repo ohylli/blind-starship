@@ -100,6 +100,17 @@ rear effect (`Cue3D_SetLowPass`); and synthesized-tone cues that need no WAV
 contracts — units, defaults, threading — live in the doc comments in `Cue3D.h`
 and `Cue.h`; read those rather than a prose copy here.
 
+**Multi-voice cues** are also in place (an earlier revision of this doc listed
+them as a limitation): a `Cue` is a *definition* (identity, sound, the **one**
+volume CVar and glossary entry) plus a small voice pool sized at registration,
+driven through a keyed refresh-or-stop API with sticky target→voice assignment —
+this is how the enemy cue voices the N closest enemies at once while the player
+still tunes a single "Enemy locator" slider. Per-voice knobs (the 1/√N headroom
+trim, the all-unity identity-pitch offsets) are in
+`docs/accessibility-cues-tuning.md` § "How many enemies sound at once". The one
+piece deliberately *not* built is a shared-PCM load in the seam — each voice
+keeps its own decoded copy, fine at current pool sizes.
+
 A live **Cue3D test bench** (F1 → Developer → Blind Starship → "Cue3D test
 bench"; `accessibility/CueBench.cpp`) exercises all of the above by ear, with
 every control taking effect immediately — no rebuild, no restart. It replaces
@@ -113,52 +124,21 @@ current cues, but each is a real gap.
 
 - **Volume is now wired; BGM/TTS ducking is not.** The cues run on a second OS
   audio device that the game's audio path never reaches, so the game master volume
-  used to skip them. That is fixed: the effective per-source gain is now
-  **`gGameMasterVolume` × `gAccessibilityCueMasterVolume` ×
-  `gAccessibilityCueVolume.<Id>`** (the game's existing master, deliberately made
-  to reach the second device; a new cue-only master, default 1; and a per-cue
-  trim, default 1 — e.g. `gAccessibilityCueVolume.Ring` / `.Enemy`). `Cue::PushGain`
-  computes this and pushes it via `Cue3D_SetGain` every tick a cue is driven. What
-  is **still not wired**: BGM ducking (`SFX_FLAG_19`) does not reach the second
-  device, and there is no ducking of the cues while TTS speaks (review CUE3D-16).
-  The gain lever those would need now exists, so ducking is a future subtraction
-  on top of it rather than new plumbing.
-  - *Volume UI.* The F1 → Blind Starship → **Cue volumes** submenu exposes an "All
-    cues" master slider, one slider per registered cue (generated from the
-    registry, so future cues appear automatically), and a per-cue **Preview**
-    button that plays the cue for ~3 s straight ahead at the distance the backend
-    renders at unity gain — so the preview's loudness *is* the volume setting.
-    Previews suspend gameplay control of that cue and auto-expire via a game-tick
-    listener. This is the seed of a planned "cue glossary" (browse cues, hear
-    samples).
+  used to skip them. That is fixed: each source gets a three-factor gain (game
+  master × cue master × per-cue trim), computed by `Cue::PushGain` and pushed via
+  `Cue3D_SetGain` every tick a cue is driven. The exact CVar chain and the F1
+  sliders/preview buttons live in `docs/accessibility-cues-tuning.md` § "Cue
+  volume"; the preview UI is the seed of a planned "cue glossary" (browse cues,
+  hear samples). What is **still not wired**: BGM ducking (`SFX_FLAG_19`) does not
+  reach the second device, and there is no ducking of the cues while TTS speaks
+  (review CUE3D-16). The gain lever those would need now exists, so ducking is a
+  future subtraction on top of it rather than new plumbing.
   - *Pause silence is already solved* — don't re-investigate it. The draw loop
     (and thus `GamePostUpdateEvent`) keeps firing while `gPlayState ==
     PLAY_PAUSE`, so a looping cue kept sounding through an in-level pause;
     `AccessibilityCues_IsPaused()` now gates both listeners so pause stops the
     cue like any other failed precondition. Because the frozen game state means
     the next unpaused tick re-acquires the same target, the cue restarts cleanly.
-
-- **One `Cue` is one voice — simultaneous instances of the same cue (e.g. cueing
-  the closest N enemies, not just the closest one) need a small, contained
-  extension.** Today a `Cue` owns exactly one backend source, one target, and one
-  Idle/Playing/Previewing state, so the same cue cannot sound at two positions at
-  once. The backend already supports it (16 independent source slots; each
-  `Cue3D_Load` of the same WAV is an independent source), and no call sites or
-  seam changes are needed — the extension lives entirely inside `Cue`: split "cue
-  definition" (identity, WAV, description, the **one** volume CVar and glossary
-  entry — players tune "Enemy locator" once, not per slot) from "voice" (a
-  `{source, state, target}` tuple), give the definition a small voice pool with
-  an acquire/per-voice-SetTarget API, and keep the current single-voice methods
-  as the convenience path so existing cues don't change. Preview stays
-  per-definition. Do **not** fake it by registering the same WAV as a second cue —
-  that grows a second volume slider and glossary entry, the wrong player-facing
-  shape. Non-plumbing work that comes with it: sticky enemy→voice assignment so
-  targets don't swap voices frame-to-frame (the click risk this raised, review
-  CUE3D-15, is resolved — see "Capabilities" above), per-voice pitch/timbre
-  offsets so identical loops stay distinguishable, clip-guard headroom with
-  more concurrent voices, and
-  (only if it ever matters) a shared-PCM load in the seam, since each voice
-  currently keeps its own decoded copy.
 
 - **Spoken failure notice (Class-2) not yet built.** The CUE3D-1 decision deferred
   a one-time spoken PRISM notice for the case where Steam Audio init or asset load

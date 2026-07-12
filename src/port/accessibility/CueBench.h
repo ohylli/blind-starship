@@ -5,8 +5,8 @@
 // pair of continuous sources (render mode, pitch, interval, low-pass, orbit, start/stop
 // ramps), and a hidden one-shot Cue (Cue.h) drives the PlayOnce / generator path. Every
 // control is a CVar so the whole bench is live-editable. Supersedes the throwaway
-// SpatialAudioTest smoke test (which docs/steam-audio-handoff.md "Step 2" refers to): the
-// orbit is now one bench control and the restart-required wart is gone.
+// SpatialAudioTest smoke test: the orbit is now one bench control and the
+// restart-required wart is gone.
 //
 // Wiring: CueBench_Init() from Accessibility_Init registers a GamePostUpdateEvent listener
 // unconditionally (the listener early-returns cheaply while the bench is off, the pattern

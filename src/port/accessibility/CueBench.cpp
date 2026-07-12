@@ -15,9 +15,9 @@
 #include <string>
 #include <vector>
 
-// Live Cue3D test bench. Supersedes the throwaway SpatialAudioTest smoke test (which
-// docs/steam-audio-handoff.md "Step 2" refers to): the orbiting tone is now one bench
-// control among many, and the restart-required wart is gone. The bench drives the RAW seam
+// Live Cue3D test bench. Supersedes the throwaway SpatialAudioTest smoke test: the
+// orbiting tone is now one bench control among many, and the restart-required wart is
+// gone. The bench drives the RAW seam
 // for its continuous source (that is the layer under test) and a HIDDEN one-shot Cue for the
 // PlayOnce / generator path, so both layers of the new capabilities get exercised by ear.
 //

@@ -2,6 +2,8 @@
 
 This document covers the existing Star Fox 64 audio system as it lives in this fork, with a focus on what is useful for accessibility cues — positional cues that tell a blind player where the closest enemy or hazard is, what direction it is in, and whether it is above or below.
 
+> **Status note (2026-07):** the accessibility cues no longer play through this engine at all — they render via a real HRTF backend on a second OS audio device (see [accessibility-hrtf-cues.md](accessibility-hrtf-cues.md)); game SFX are reserved for possible future one-shot flourishes only. This doc remains the reference for the SF64 engine itself (all non-cue game audio), and §6's coordinate-frame analysis (player-relative vs camera-relative) still underpins what the cue mod feeds the HRTF backend. The cue recipes in §8 and the reading guide in §10 describe the abandoned SF64-engine cue path — kept as engine documentation, not as guidance for new cues.
+
 It is meant for two readers:
 
 1. **A software engineer who is new to game audio.** It explains the moving parts at a level that does not assume prior synth/DSP/middleware knowledge.
@@ -475,8 +477,10 @@ through a real HRTF backend (Steam Audio) on a second OS audio device — see
 alternatives that led there (SDL_mixer for asset / iteration pain, OpenAL Soft +
 dr_libs for HRTF) is in
 [audio-backend-alternatives.md](audio-backend-alternatives.md) (now superseded).
-This section still describes the SF64 engine itself, which remains the fallback
-cue path and the only path for all non-cue game audio.
+The SF64-engine cue path was later removed entirely (it is no longer even a
+fallback — a build without the HRTF backend has no cues). This section still
+describes the SF64 engine itself, which is the only path for all non-cue game
+audio.
 
 ---
 
