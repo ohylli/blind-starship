@@ -393,11 +393,12 @@ void AccessibilityCues_Init() {
     CVarRegisterFloat(kCuePitchRangeOctavesCVar, kCuePitchRangeOctavesDefault);
 
     sRingCue = CueRegistry_Register("Ring", "Ring guide", "Guides you toward the next training ring.",
-                                    "assets/accessibility/ring.wav");
+                                    { .wavPath = "assets/accessibility/ring.wav" });
     sEnemyCue = CueRegistry_Register("Enemy", "Enemy locator",
                                      "Tracks the closest lockable enemies: ahead of your aim on rails, "
                                      "all around you in all-range mode.",
-                                     "assets/accessibility/enemy.wav", kAccessibilityEnemyCueMaxVoices);
+                                     { .wavPath = "assets/accessibility/enemy.wav",
+                                       .maxVoices = kAccessibilityEnemyCueMaxVoices });
 
     REGISTER_LISTENER(GamePostUpdateEvent, AccessibilityCues_OnRingPostUpdate, EVENT_PRIORITY_NORMAL);
     REGISTER_LISTENER(GamePostUpdateEvent, AccessibilityCues_OnEnemyPostUpdate, EVENT_PRIORITY_NORMAL);

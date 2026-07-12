@@ -7,6 +7,7 @@
 #include <spdlog/spdlog.h>
 #include <atomic>
 #include <cmath>
+#include <cstdint>
 #include <cstring>
 #include <exception>
 #include <vector>
@@ -100,6 +101,24 @@ constexpr float kRearTremoloMaxHz = 50.0f;
 constexpr float kMinPitchRate = 0.03125f; // -5 octaves
 constexpr float kMaxPitchRate = 32.0f;    // +5 octaves
 
+// Interval (pulse cadence) bounds, seconds. 0 is "off" (seamless loop); the ceiling
+// keeps intervalCounter's per-block frame math well inside a double's exact range.
+constexpr float kMaxIntervalSec = 30.0f;
+
+// Per-source low-pass bounds, Hz. 0 is the documented DISABLE value (see Cue3D_SetLowPass);
+// a positive cutoff is clamped to audible range like the rear muffle's cutoff.
+constexpr float kLowPassMinHz = 20.0f;
+constexpr float kLowPassMaxHz = 20000.0f;
+
+// Start/stop click guard: a per-source gain ramp toward 1 (rendering) or 0 (stopped/ended),
+// one-pole with a ~5 ms time constant, multiplied into the mono fill. A source keeps
+// rendering while its ramp is above kRampSilenceGate so Stop and one-shot EOF fade out
+// instead of clicking; below the gate a non-rendering source is skipped entirely.
+constexpr float kRampTimeConstantSec = 0.005f;
+constexpr float kRampSilenceGate = 1.0e-4f;
+
+constexpr float kInvSqrt2 = 0.70710678f; // equal-power center gain for CUE3D_MODE_DIRECT
+
 // Non-finite input falls back to the caller's default rather than a bound: NaN has no
 // nearest edge, and a value that silently reverts to its documented default is easier to
 // recognize by ear than one that jumps to an extreme.
@@ -132,7 +151,12 @@ struct Cue3DSource {
     int frameCount = 0;
     double cursor = 0.0;     // fractional playback position, frames (audio-thread-only)
     float lpState = 0.0f;    // rear-muffle one-pole low-pass state (audio-thread-only, like cursor)
+    float lpState2 = 0.0f;   // per-source low-pass one-pole state (audio-thread-only, like lpState)
     float tremPhase = 0.0f;  // rear-tremolo LFO phase, radians (audio-thread-only, like cursor)
+    float rampGain = 0.0f;   // start/stop click-guard ramp, 0..1 (audio-thread-only, like cursor)
+    double intervalCounter = 0.0; // wall-clock frames since the last (re)start, for interval cadence (audio-thread-only)
+    uint32_t lastGen = 0;    // last startGen the callback adopted (audio-thread-only, like cursor)
+    bool ended = false;      // one-shot reached EOF; render gate, cleared on gen bump (audio-thread-only, like cursor)
     bool loop = false;
 
     // Cross-thread: game thread writes, audio callback reads. Read once per block.
@@ -140,8 +164,30 @@ struct Cue3DSource {
     std::atomic<float> y{ 0.0f }; //                  +y up
     std::atomic<float> z{ 1.0f }; //                  +z ahead
     std::atomic<float> gain{ 1.0f };
-    std::atomic<float> rate{ 1.0f }; // playback-rate multiplier (pitch); 1.0 = native
-    std::atomic<bool> playing{ false }; // game sets on Play/Stop; callback clears at non-loop EOF
+    std::atomic<float> rate{ 1.0f };        // playback-rate multiplier (pitch); 1.0 = native
+    std::atomic<float> intervalSec{ 0.0f }; // restart cadence, seconds; 0 = seamless loop (looping sources only)
+    std::atomic<int> mode{ CUE3D_MODE_HRTF }; // Cue3DMode render selector (HRTF / PAN / DIRECT)
+    std::atomic<float> lowPassHz{ 0.0f };   // per-source low-pass cutoff; 0 = off
+
+    // The stop lever, GAME-THREAD-WRITE-ONLY: Cue3D_Play sets it, Cue3D_Stop clears it,
+    // and NOTHING else writes it. The callback only reads it. Split out from the old
+    // dual-writer design (CUE3D-13) so a Play landing as a one-shot ends can never be
+    // clobbered by the audio thread — one-shot EOF now sets the audio-thread-only
+    // `ended` instead of touching this. Restart-from-zero is driven by startGen below.
+    std::atomic<bool> playing{ false };
+
+    // Bumped by Cue3D_Play (game thread). The callback restarts the source from sample 0
+    // whenever this differs from the audio-thread-only `lastGen`, then adopts it. This is
+    // how every Play — including one re-triggering a finished one-shot — rewinds without a
+    // flag the two threads both write.
+    std::atomic<uint32_t> startGen{ 0 };
+
+    // Audio -> game advisory status, read by Cue3D_IsPlaying. Written by the callback each
+    // block (`playing && !ended`) AND eagerly by Cue3D_Play (so a same-tick IsPlaying is
+    // not stale-false) — TWO writers on purpose. Acceptable ONLY because it is advisory:
+    // a lost update costs ~one audio block (~21 ms) of staleness in voice bookkeeping and
+    // never gates playback. No render decision may read this.
+    std::atomic<bool> audible{ false };
 
     // Publish gate: set LAST (release) in CreateSource, read FIRST (acquire) in the
     // callback, so a half-built source is never observed.
@@ -225,14 +271,26 @@ Cue3DSource* CreateSource(const float* monoPcm, int frames, bool loop) {
     s.frameCount = frames;
     s.cursor = 0.0;
     s.lpState = 0.0f;
+    s.lpState2 = 0.0f;
     s.tremPhase = 0.0f;
+    s.rampGain = 0.0f;
+    s.intervalCounter = 0.0;
+    s.lastGen = 0;
+    s.ended = false;
     s.loop = loop;
     s.x.store(0.0f, std::memory_order_relaxed);
     s.y.store(0.0f, std::memory_order_relaxed);
     s.z.store(1.0f, std::memory_order_relaxed); // default "ahead"
     s.gain.store(1.0f, std::memory_order_relaxed);
     s.rate.store(1.0f, std::memory_order_relaxed); // native pitch until SetPitch
-    s.playing.store(false, std::memory_order_relaxed); // silent until Cue3D_Play
+    s.intervalSec.store(0.0f, std::memory_order_relaxed); // seamless loop until SetInterval
+    s.mode.store(CUE3D_MODE_HRTF, std::memory_order_relaxed);
+    s.lowPassHz.store(0.0f, std::memory_order_relaxed); // no per-source muffle until SetLowPass
+    s.playing.store(false, std::memory_order_relaxed);  // silent until Cue3D_Play
+    // lastGen (0 above) matches this fresh startGen, so the first block does not spuriously
+    // "restart" — the first real restart comes from Cue3D_Play bumping startGen to 1.
+    s.startGen.store(0, std::memory_order_relaxed);
+    s.audible.store(false, std::memory_order_relaxed);
 
     // Publish. Everything above must be visible before inUse flips true.
     s.inUse.store(true, std::memory_order_release);
@@ -252,7 +310,30 @@ void ProduceBlock() {
         if (!s.inUse.load(std::memory_order_acquire)) {
             continue;
         }
-        if (!s.playing.load(std::memory_order_acquire)) {
+        // The stop lever (game-thread-write-only) and the restart generation (bumped by
+        // Cue3D_Play). Read once per block, both with acquire so a freshly published slot
+        // and a fresh Play are seen coherently.
+        const bool playing = s.playing.load(std::memory_order_acquire);
+        const uint32_t gen = s.startGen.load(std::memory_order_acquire);
+
+        // Adopt a new Play: rewind to sample 0, clear the one-shot EOF latch, reset the
+        // interval cadence, and ramp in from silence. This is the ONLY writer of these
+        // audio-thread-only fields on a restart, so a Play that lands as a one-shot ends
+        // can never be lost (CUE3D-13): the callback simply sees the new gen next block.
+        if (gen != s.lastGen) {
+            s.lastGen = gen;
+            s.cursor = 0.0;
+            s.ended = false;
+            s.intervalCounter = 0.0;
+            s.rampGain = 0.0f;
+        }
+
+        // Render while the source wants to sound; keep rendering a stopped or finished
+        // source until its ramp has faded to silence (below), so Stop / one-shot EOF do
+        // not click. `audible` is the advisory status handed back to Cue3D_IsPlaying.
+        const bool shouldRender = playing && !s.ended;
+        s.audible.store(shouldRender, std::memory_order_relaxed);
+        if (!shouldRender && s.rampGain <= kRampSilenceGate) {
             continue;
         }
 
@@ -263,6 +344,16 @@ void ProduceBlock() {
         const float px = s.x.load(std::memory_order_relaxed);
         const float py = s.y.load(std::memory_order_relaxed);
         const float pz = s.z.load(std::memory_order_relaxed);
+        int mode = s.mode.load(std::memory_order_relaxed);
+        // Coerce an out-of-range mode to the HRTF default. Reachable: the bench pushes
+        // mode = (Cue3DMode) CVarGetInteger(...), so a console-set CVar past the 0..2 combo
+        // lands here. Without this the fill-gain switch (defaults to HRTF) and the render
+        // switch below (defaults to DIRECT) would disagree on which branch a stray value takes.
+        if (mode < CUE3D_MODE_HRTF || mode > CUE3D_MODE_DIRECT) {
+            mode = CUE3D_MODE_HRTF;
+        }
+        const float intervalSec = s.intervalSec.load(std::memory_order_relaxed);
+        const float lowPassHz = s.lowPassHz.load(std::memory_order_relaxed);
 
         // Normalized direction in the GAME frame (+z ahead), needed twice: the rear
         // muffle keys off the forward component here, and the binaural effect below
@@ -300,18 +391,65 @@ void ProduceBlock() {
         IPLVector3 srcPos{ px * invScale, py * invScale, pz * invScale };
         IPLVector3 listener{ 0.0f, 0.0f, 0.0f };
         const float distGain = iplDistanceAttenuationCalculate(g.ctx, srcPos, listener, &distModel);
-        // The rear gain dip rides on top: a source dead behind is that fraction quieter.
+        // Fill gain by render mode. The rear gain dip and distance attenuation are folded
+        // in HERE, at the PCM fill, separately from the rear muffle/tremolo loop below — so
+        // "skip the rear effect" in PAN/DIRECT means dropping the dip term from this gain,
+        // not only skipping that loop. DIRECT additionally drops distance attenuation.
         const float rearGainDip = g_rearGainDip.load(std::memory_order_relaxed);
-        const float effGain = gain * distGain * (1.0f - rearGainDip * rearAmount);
+        float effGain;
+        if (mode == CUE3D_MODE_DIRECT) {
+            effGain = gain; // dead center: no distance falloff, no rear dip
+        } else if (mode == CUE3D_MODE_PAN) {
+            effGain = gain * distGain; // distance stays; rear dip does not
+        } else {
+            effGain = gain * distGain * (1.0f - rearGainDip * rearAmount); // HRTF: today's path
+        }
 
-        // Fill the mono input from this source's PCM, applying gain and advancing
-        // the cursor by `rate` (the pitch multiplier) with linear interpolation
-        // between bracketing samples — nearest-sample at a fractional rate would
-        // add audible zipper/aliasing noise. Loop-wrap (preserving the fractional
-        // phase), or zero-pad + stop at the end of a one-shot.
+        // Interval cadence: a LOOPING source with intervalSec > 0 restarts start-to-start
+        // every intervalSec wall-clock seconds instead of wrapping seamlessly. Counted in
+        // output frames (not scaled by pitch), so the cadence is pitch-independent.
+        const bool intervalActive = s.loop && intervalSec > 0.0f;
+        // Floor the threshold at one frame. A pathological sub-sample interval (reachable
+        // only via a hand-set CVar/console, never the slider) would otherwise make the
+        // single per-sample subtract below net-accumulate — counter += 1, then -= thresh
+        // with thresh < 1 leaves it climbing every sample. At >= 1 the counter stays bounded
+        // (it restarts every sample, garbage but harmless) instead of drifting for hours.
+        double intervalThresh = (double) intervalSec * (double) g.sampleRate;
+        if (intervalThresh < 1.0) {
+            intervalThresh = 1.0;
+        }
+
+        // Start/stop ramp: smooth `rampGain` toward 1 while rendering, 0 while stopping,
+        // ~5 ms time constant (per output sample, wall-clock — pitch does not change it).
+        // A restart (gen bump above, or interval expiry below) drops it to 0 to ramp in.
+        const float rampTarget = shouldRender ? 1.0f : 0.0f;
+        float rampAlpha = 1.0f - std::exp(-1.0f / (kRampTimeConstantSec * (float) g.sampleRate));
+        rampAlpha = rampAlpha < 0.0f ? 0.0f : (rampAlpha > 1.0f ? 1.0f : rampAlpha);
+
+        // Fill the mono input from this source's PCM, applying the fill gain and the ramp
+        // and advancing the cursor by `rate` (pitch) with linear interpolation between
+        // bracketing samples — nearest-sample at a fractional rate would add audible
+        // zipper/aliasing noise. Loop-wrap (seamless, preserving the fractional phase)
+        // when no interval is set; otherwise play once and pad the gap with silence until
+        // the interval restarts it; or zero-pad + latch `ended` at a one-shot's end.
         double cursor = s.cursor;
-        bool ended = false;
+        double intervalCounter = s.intervalCounter;
+        float rampGain = s.rampGain;
+        bool ended = s.ended;
         for (int n = 0; n < kFrameSize; n++) {
+            // Interval restart, before sampling so the restarted cursor is used this frame.
+            // Rewound preserving the overshoot so the cadence does not drift.
+            if (intervalActive) {
+                intervalCounter += 1.0;
+                if (intervalCounter >= intervalThresh) {
+                    intervalCounter -= intervalThresh;
+                    cursor = 0.0;
+                    rampGain = 0.0f; // ramp each pulse in from silence
+                }
+            }
+
+            rampGain += (rampTarget - rampGain) * rampAlpha;
+
             // "Not a usable index" rather than "past the end": that covers the normal
             // end-of-buffer case AND the two ways a corrupt rate can wreck the cursor —
             // negative (walks off the front) and NaN. NaN is the reason for the negated
@@ -322,14 +460,26 @@ void ProduceBlock() {
             // it is nonetheless the bounds check standing in front of the indexing, and a
             // bounds check does not get to assume its input was validated elsewhere.
             if (!(cursor >= 0.0 && cursor < s.frameCount)) {
-                if (s.loop) {
+                if (!intervalActive && s.loop) {
                     cursor -= s.frameCount;
                     if (!(cursor >= 0.0 && cursor < s.frameCount)) {
                         cursor = 0.0; // tiny pcm / huge rate overshoot, or a non-finite cursor
                     }
                 } else {
+                    // One-shot past its end, or an interval source waiting out the gap
+                    // between pulses: emit silence. NOTE the ramp does NOT round off this
+                    // edge — the output here is a hard 0 (there is no signal left to fade),
+                    // so a one-shot / pulse whose PCM does not end near zero steps straight to
+                    // silence and can click. Author such sounds enveloped to zero (the bench's
+                    // blip is); the ramp only smooths a Stop taken while the cursor is still
+                    // inside the buffer, plus every (re)start. A one-shot latches `ended`; an
+                    // interval source keeps rendering and waits for the counter above to
+                    // restart it. The cursor is left past the end — the gen bump or interval
+                    // restart rewinds it.
                     mono[n] = 0.0f;
-                    ended = true;
+                    if (!s.loop) {
+                        ended = true;
+                    }
                     continue;
                 }
             }
@@ -337,65 +487,104 @@ void ProduceBlock() {
             float frac = (float) (cursor - i0);
             float a = s.pcm[i0];
             int i1 = i0 + 1;
-            // Next sample: wrap to the start for a loop (seamless), hold for a one-shot.
-            float b = (i1 < s.frameCount) ? s.pcm[i1] : (s.loop ? s.pcm[0] : a);
-            mono[n] = (a + (b - a) * frac) * effGain;
+            // Next sample: wrap to the start for a seamless loop, hold otherwise (one-shot,
+            // or an interval source whose single playthrough must not wrap).
+            float b = (i1 < s.frameCount) ? s.pcm[i1] : ((s.loop && !intervalActive) ? s.pcm[0] : a);
+            mono[n] = (a + (b - a) * frac) * effGain * rampGain;
             cursor += rate;
         }
-        s.cursor = ended ? 0.0 : cursor;
-        if (ended) {
-            // End of a non-looping source: stop it from the audio thread (the cursor
-            // was already rewound to 0 above, so a later Cue3D_Play restarts from the
-            // beginning; this write is race-free as the cursor is the callback's own).
-            // The slot stays inUse.
-            s.playing.store(false, std::memory_order_release);
-        }
+        s.cursor = cursor;
+        s.intervalCounter = intervalCounter;
+        s.rampGain = rampGain;
+        // One-shot EOF latches `ended` (audio-thread-only) — it never touches `playing`,
+        // so a concurrent Cue3D_Play cannot be lost. The next gen bump clears it and
+        // rewinds the cursor.
+        s.ended = ended;
 
-        // Rear muffle + tremolo (knobs live via Cue3D_SetRearEffect; read once per block
-        // like the position): a one-pole low-pass, dry/wet-mixed by rearAmount, takes the
-        // highs off a source behind the listener; an amplitude pulse scaled by the same
-        // rearAmount then chops it. Filter state and LFO phase advance every block — even
-        // fully in front, where both effects are identity — so a front->rear transition
-        // has no step and the pulse stays continuous. lp is updated from the dry sample
-        // before that sample is mixed.
-        const float rearCutoffHz = g_rearCutoffHz.load(std::memory_order_relaxed);
-        const float tremDepth = g_rearTremoloDepth.load(std::memory_order_relaxed) * rearAmount;
-        const float tremStep = 2.0f * kPi * g_rearTremoloHz.load(std::memory_order_relaxed) / (float) g.sampleRate;
-        // Clamped independently of the seam's sanitizing: the filter is only stable for
-        // alpha in [0, 1], and that invariant is cheap enough to assert right where it is
-        // relied upon rather than trust across a thread boundary.
-        float lpAlpha = 1.0f - std::exp(-2.0f * kPi * rearCutoffHz / (float) g.sampleRate);
-        lpAlpha = lpAlpha < 0.0f ? 0.0f : (lpAlpha > 1.0f ? 1.0f : lpAlpha);
-        float lp = s.lpState;
-        float phase = s.tremPhase;
-        for (int n = 0; n < kFrameSize; n++) {
-            lp += (mono[n] - lp) * lpAlpha;
-            mono[n] += (lp - mono[n]) * rearAmount;
-            mono[n] *= 1.0f - tremDepth * (0.5f + 0.5f * std::sin(phase));
-            phase += tremStep;
-            if (phase > 2.0f * kPi) {
-                phase -= 2.0f * kPi;
+        // Per-source low-pass "muffle" (Cue3D_SetLowPass), in series BEFORE the rear muffle
+        // and active in EVERY render mode — so it must run even when the rear block below
+        // (HRTF only) is skipped. Own one-pole state (lpState2); same alpha-clamp
+        // discipline as the rear filter. cutoff 0 = off: skipped, state left untouched.
+        if (lowPassHz > 0.0f) {
+            float lpAlpha2 = 1.0f - std::exp(-2.0f * kPi * lowPassHz / (float) g.sampleRate);
+            lpAlpha2 = lpAlpha2 < 0.0f ? 0.0f : (lpAlpha2 > 1.0f ? 1.0f : lpAlpha2);
+            float lp2 = s.lpState2;
+            for (int n = 0; n < kFrameSize; n++) {
+                lp2 += (mono[n] - lp2) * lpAlpha2;
+                mono[n] = lp2;
             }
+            s.lpState2 = lp2;
         }
-        s.lpState = lp;
-        s.tremPhase = phase;
 
-        IPLBinauralEffectParams params{};
-        // Game (+z ahead) -> Steam Audio (-Z forward). THE negation lives here; the
-        // vector was normalized in the game frame above.
-        params.direction = IPLVector3{ dx, dy, -dz };
-        params.interpolation = IPL_HRTFINTERPOLATION_BILINEAR;
-        params.spatialBlend = 1.0f;
-        params.hrtf = g.hrtf;
-        params.peakDelays = nullptr;
-        iplBinauralEffectApply(s.effect, &params, &g.inBuf, &g.tmpOut);
+        if (mode == CUE3D_MODE_HRTF) {
+            // Rear muffle + tremolo (knobs live via Cue3D_SetRearEffect; read once per block
+            // like the position): a one-pole low-pass, dry/wet-mixed by rearAmount, takes the
+            // highs off a source behind the listener; an amplitude pulse scaled by the same
+            // rearAmount then chops it. Filter state and LFO phase advance every block — even
+            // fully in front, where both effects are identity — so a front->rear transition
+            // has no step and the pulse stays continuous. lp is updated from the dry sample
+            // before that sample is mixed.
+            const float rearCutoffHz = g_rearCutoffHz.load(std::memory_order_relaxed);
+            const float tremDepth = g_rearTremoloDepth.load(std::memory_order_relaxed) * rearAmount;
+            const float tremStep = 2.0f * kPi * g_rearTremoloHz.load(std::memory_order_relaxed) / (float) g.sampleRate;
+            // Clamped independently of the seam's sanitizing: the filter is only stable for
+            // alpha in [0, 1], and that invariant is cheap enough to assert right where it is
+            // relied upon rather than trust across a thread boundary.
+            float lpAlpha = 1.0f - std::exp(-2.0f * kPi * rearCutoffHz / (float) g.sampleRate);
+            lpAlpha = lpAlpha < 0.0f ? 0.0f : (lpAlpha > 1.0f ? 1.0f : lpAlpha);
+            float lp = s.lpState;
+            float phase = s.tremPhase;
+            for (int n = 0; n < kFrameSize; n++) {
+                lp += (mono[n] - lp) * lpAlpha;
+                mono[n] += (lp - mono[n]) * rearAmount;
+                mono[n] *= 1.0f - tremDepth * (0.5f + 0.5f * std::sin(phase));
+                phase += tremStep;
+                if (phase > 2.0f * kPi) {
+                    phase -= 2.0f * kPi;
+                }
+            }
+            s.lpState = lp;
+            s.tremPhase = phase;
 
-        // Sum into the accumulator (Steam Audio spatializes but does not mix).
-        const float* L = g.tmpOut.data[0];
-        const float* R = g.tmpOut.data[1];
-        for (int n = 0; n < kFrameSize; n++) {
-            g.accL[n] += L[n];
-            g.accR[n] += R[n];
+            IPLBinauralEffectParams params{};
+            // Game (+z ahead) -> Steam Audio (-Z forward). THE negation lives here; the
+            // vector was normalized in the game frame above.
+            params.direction = IPLVector3{ dx, dy, -dz };
+            params.interpolation = IPL_HRTFINTERPOLATION_BILINEAR;
+            params.spatialBlend = 1.0f;
+            params.hrtf = g.hrtf;
+            params.peakDelays = nullptr;
+            iplBinauralEffectApply(s.effect, &params, &g.inBuf, &g.tmpOut);
+
+            // Sum into the accumulator (Steam Audio spatializes but does not mix).
+            const float* L = g.tmpOut.data[0];
+            const float* R = g.tmpOut.data[1];
+            for (int n = 0; n < kFrameSize; n++) {
+                g.accL[n] += L[n];
+                g.accR[n] += R[n];
+            }
+        } else if (mode == CUE3D_MODE_PAN) {
+            // Constant-power stereo pan from the horizontal direction only — front/back
+            // and elevation collapse (inherent to a stereo pan). No HRTF, no rear effect;
+            // distance attenuation is already folded into effGain. p is the sine of the
+            // azimuth (0 when the horizontal direction is degenerate, e.g. straight above).
+            const float horiz = std::sqrt(dx * dx + dz * dz);
+            const float p = horiz > 1e-6f ? dx / horiz : 0.0f;
+            const float angle = (p + 1.0f) * (kPi * 0.25f);
+            const float lg = std::cos(angle);
+            const float rg = std::sin(angle);
+            for (int n = 0; n < kFrameSize; n++) {
+                g.accL[n] += mono[n] * lg;
+                g.accR[n] += mono[n] * rg;
+            }
+        } else { // CUE3D_MODE_DIRECT
+            // Dead center, equal power into both channels. No HRTF, no rear effect, and
+            // distance attenuation was already dropped from effGain above.
+            for (int n = 0; n < kFrameSize; n++) {
+                const float v = mono[n] * kInvSqrt2;
+                g.accL[n] += v;
+                g.accR[n] += v;
+            }
         }
     }
 
@@ -600,7 +789,14 @@ extern "C" Cue3DSource* Cue3D_LoadPcm(const float* monoPcm, int frames, bool loo
 
 extern "C" void Cue3D_Play(Cue3DSource* source) {
     if (source != nullptr) {
+        // Eager advisory status so a same-tick Cue3D_IsPlaying does not read a stale false
+        // before the callback runs (the callback will keep it current thereafter).
+        source->audible.store(true, std::memory_order_relaxed);
+        // Set the stop lever, then bump the restart generation. The callback sees the new
+        // generation and restarts from sample 0 (see ProduceBlock); this is the only path
+        // that rewinds, so a re-trigger of a finished one-shot is never swallowed.
         source->playing.store(true, std::memory_order_release);
+        source->startGen.fetch_add(1, std::memory_order_release);
     }
 }
 
@@ -608,6 +804,43 @@ extern "C" void Cue3D_Stop(Cue3DSource* source) {
     if (source != nullptr) {
         source->playing.store(false, std::memory_order_release);
     }
+}
+
+extern "C" bool Cue3D_IsPlaying(Cue3DSource* source) {
+    // Advisory: reads the flag the callback publishes each block (and Cue3D_Play sets
+    // eagerly). May lag reality by ~one audio block; never use it as a fence.
+    return source != nullptr && source->audible.load(std::memory_order_relaxed);
+}
+
+extern "C" void Cue3D_SetInterval(Cue3DSource* source, float seconds) {
+    if (source != nullptr) {
+        // Sanitize like Cue3D_SetPitch: non-finite -> 0 (off), else clamp to [0, 30] s.
+        // 0 is a valid value (seamless loop), so it needs no special-casing here.
+        source->intervalSec.store(SanitizeParam(seconds, 0.0f, kMaxIntervalSec, 0.0f), std::memory_order_relaxed);
+    }
+}
+
+extern "C" void Cue3D_SetMode(Cue3DSource* source, Cue3DMode mode) {
+    if (source != nullptr) {
+        source->mode.store((int) mode, std::memory_order_relaxed);
+    }
+}
+
+extern "C" void Cue3D_SetLowPass(Cue3DSource* source, float cutoffHz) {
+    if (source == nullptr) {
+        return;
+    }
+    // Order matters and is NOT SanitizeParam: 0 is the documented DISABLE value, so a
+    // non-finite or non-positive cutoff must store 0 (off) — never clamp UP to the 20 Hz
+    // floor, which would turn "off" into near-total muffle. Only a positive finite cutoff
+    // is clamped to the audible band.
+    float value;
+    if (!std::isfinite(cutoffHz) || cutoffHz <= 0.0f) {
+        value = 0.0f; // off
+    } else {
+        value = cutoffHz < kLowPassMinHz ? kLowPassMinHz : (cutoffHz > kLowPassMaxHz ? kLowPassMaxHz : cutoffHz);
+    }
+    source->lowPassHz.store(value, std::memory_order_relaxed);
 }
 
 extern "C" void Cue3D_SetGain(Cue3DSource* source, float gain) {
@@ -693,6 +926,22 @@ extern "C" void Cue3D_SetPitch(Cue3DSource* source, float rate) {
 }
 extern "C" void Cue3D_Stop(Cue3DSource* source) {
     (void) source;
+}
+extern "C" bool Cue3D_IsPlaying(Cue3DSource* source) {
+    (void) source;
+    return false;
+}
+extern "C" void Cue3D_SetInterval(Cue3DSource* source, float seconds) {
+    (void) source;
+    (void) seconds;
+}
+extern "C" void Cue3D_SetMode(Cue3DSource* source, Cue3DMode mode) {
+    (void) source;
+    (void) mode;
+}
+extern "C" void Cue3D_SetLowPass(Cue3DSource* source, float cutoffHz) {
+    (void) source;
+    (void) cutoffHz;
 }
 extern "C" void Cue3D_SetRearEffect(float cutoffHz, float gainDip, float tremoloDepth, float tremoloHz) {
     (void) cutoffHz;

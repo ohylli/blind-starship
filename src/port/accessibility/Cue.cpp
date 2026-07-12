@@ -11,6 +11,11 @@ namespace {
 // enough to judge timbre and level, short enough to browse a list of cues by ear.
 constexpr double kPreviewDurationTicks = 90.0;
 
+// One-shot preview re-trigger cadence, in game ticks (~1 s at 30 fps): a one-shot's sound
+// is a single blip, so the preview re-fires it this often within the window so the player
+// hears a few reps instead of one blip then silence. Looping cues sustain on their own.
+constexpr int kOneShotPreviewRetriggerTicks = 30;
+
 // Hard bound on one cue's voice pool. The backend has 16 source slots shared by ALL cues;
 // half for a single cue is already generous.
 constexpr int kMaxVoicesPerCue = 8;
@@ -35,10 +40,28 @@ std::vector<Cue*>& AllCues() {
 
 } // namespace
 
-Cue::Cue(const char* id, const char* name, const char* description, const char* wavPath, int maxVoices)
-    : mId(id), mName(name), mDescription(description), mWavPath(wavPath),
-      mVolumeCVar(std::string("gAccessibilityCueVolume.") + id) {
+Cue::Cue(const char* id, const char* name, const char* description, const CueSpec& spec)
+    : mId(id), mName(name), mDescription(description),
+      mVolumeCVar(std::string("gAccessibilityCueVolume.") + id), mSpec(spec) {
     CVarRegisterFloat(mVolumeCVar.c_str(), 1.0f);
+    // Own the WAV path: the registrant's const char* may not outlive this call. After the
+    // copy, null the raw pointer in the stored spec so nothing ever reads the (possibly
+    // dangling) original again — mWavPath is the sole source of truth for the file path.
+    if (mSpec.wavPath != nullptr) {
+        mWavPath = mSpec.wavPath;
+    }
+    mSpec.wavPath = nullptr;
+    // Exactly one sound source: a WAV path or a generator, never both, never neither.
+    // A misconfigured cue is latched load-failed so EnsureVoiceLoaded no-ops and it stays
+    // silent, rather than half-loading or invoking an empty std::function.
+    bool hasWav = !mWavPath.empty();
+    bool hasGen = (bool) mSpec.generator;
+    if (hasWav == hasGen) {
+        mLoadFailed = true;
+        SPDLOG_WARN("Cue '{}' misconfigured: exactly one of wavPath/generator must be set (wav={}, generator={})", mId,
+                    hasWav, hasGen);
+    }
+    int maxVoices = spec.maxVoices;
     if (maxVoices < 1) {
         maxVoices = 1;
     } else if (maxVoices > kMaxVoicesPerCue) {
@@ -55,23 +78,64 @@ bool Cue::EnsureVoiceLoaded(Voice& voice) {
         return false;
     }
     // The callers sit on an event chain that starts in plain C (CALL_EVENT in fox_game.c),
-    // so a C++ exception (the path std::string can throw bad_alloc) must not unwind past
-    // here — same boundary rule the Cue3D backend applies at its extern "C" surface.
+    // so a C++ exception (the path std::string can throw bad_alloc, or a throwing generator)
+    // must not unwind past here — same boundary rule the Cue3D backend applies at its
+    // extern "C" surface. A throw latches the load as failed, like a null source.
     try {
         Cue3D_Init(); // idempotent; opens the device + HRTF on first use only
-        std::string path = Ship::Context::GetPathRelativeToAppDirectory(mWavPath.c_str());
-        // Each voice is its own backend source (own decode of the same file); the pools
-        // are small enough that sharing PCM across voices hasn't been worth a seam change.
-        voice.source = Cue3D_Load(path.c_str(), true); // loop: continuous while the voice has a target
-        if (voice.source == nullptr) {
+        // Each voice is its own backend source (own decode of the same file, or own run of
+        // the generator); the pools are small enough that sharing PCM across voices hasn't
+        // been worth a seam change. `loop` follows the spec: false = one-shot source.
+        if (!mWavPath.empty()) {
+            std::string path = Ship::Context::GetPathRelativeToAppDirectory(mWavPath.c_str());
+            voice.source = Cue3D_Load(path.c_str(), mSpec.loop);
+            if (voice.source == nullptr) {
+                mLoadFailed = true;
+                SPDLOG_WARN("Cue '{}' unavailable (failed to load '{}')", mId, path);
+            }
+        } else if (mSpec.generator) {
+            // Synthesize the sound once, at the backend's negotiated output rate, and hand
+            // the PCM to the seam (which copies it).
+            std::vector<float> pcm = mSpec.generator(Cue3D_GetSampleRate());
+            voice.source = Cue3D_LoadPcm(pcm.data(), (int) pcm.size(), mSpec.loop);
+            if (voice.source == nullptr) {
+                mLoadFailed = true;
+                SPDLOG_WARN("Cue '{}' unavailable (generator produced no source)", mId);
+            }
+        } else {
+            // Neither set: a misconfigured cue whose latch was cleared (UnloadAll). Re-latch
+            // without invoking an empty std::function.
             mLoadFailed = true;
-            SPDLOG_WARN("Cue '{}' unavailable (failed to load '{}')", mId, path);
+            SPDLOG_WARN("Cue '{}' has neither a WAV path nor a generator", mId);
+        }
+        if (voice.source != nullptr) {
+            // Render mode is a per-source setting; push the spec's choice now that the source
+            // exists (HRTF is the backend default, so this only matters for PAN/DIRECT).
+            Cue3D_SetMode(voice.source, mSpec.mode);
         }
     } catch (const std::exception& e) {
         mLoadFailed = true;
         SPDLOG_ERROR("Cue '{}' load threw: {}", mId, e.what());
     }
     return voice.source != nullptr;
+}
+
+void Cue::PushVoiceParams(Voice& voice) {
+    const CueTarget& t = voice.target;
+    int index = (int) (&voice - mVoices.data());
+    Cue3D_SetPosition(voice.source, t.x, t.y, t.z);
+    Cue3D_SetPitch(voice.source, t.pitch * kVoiceIdentityPitch[index]);
+    Cue3D_SetInterval(voice.source, t.intervalSec); // meaningless on one-shots, harmless to push
+    Cue3D_SetLowPass(voice.source, t.lowPassHz);
+}
+
+void Cue::WarnWrongApi(const char* method) {
+    if (mWarnedWrongApi) {
+        return;
+    }
+    mWarnedWrongApi = true;
+    SPDLOG_WARN("Cue '{}': {}() ignored — it targets a {} cue (looping and one-shot APIs don't mix)", mId, method,
+                mSpec.loop ? "looping" : "one-shot");
 }
 
 void Cue::PushGain() {
@@ -113,21 +177,29 @@ void Cue::StopVoice(Voice& voice) {
     voice.refreshed = false;
 }
 
-void Cue::SetTarget(float x, float y, float z, float pitch) {
+void Cue::SetTarget(const CueTarget& t) {
+    if (!mSpec.loop) {
+        WarnWrongApi("SetTarget");
+        return;
+    }
     Voice& voice = mVoices[0];
-    voice.x = x;
-    voice.y = y;
-    voice.z = z;
-    voice.pitch = pitch;
+    voice.target = t;
     if (!voice.playing) {
         return; // remembered for the next Start(); a preview keeps its fixed position
     }
-    Cue3D_SetPosition(voice.source, x, y, z);
-    Cue3D_SetPitch(voice.source, pitch * kVoiceIdentityPitch[0]);
+    PushVoiceParams(voice);
     PushGain(); // volume CVars are runtime-editable; one relaxed store per tick is cheap
 }
 
+void Cue::SetTarget(float x, float y, float z, float pitch) {
+    SetTarget(CueTarget{ .x = x, .y = y, .z = z, .pitch = pitch });
+}
+
 void Cue::Start() {
+    if (!mSpec.loop) {
+        WarnWrongApi("Start");
+        return;
+    }
     Voice& voice = mVoices[0];
     if (mPreviewing || voice.playing) {
         return; // already sounding, or a preview owns the cue right now
@@ -136,8 +208,7 @@ void Cue::Start() {
         return;
     }
     // Position before Play so the first audible block is already where the target is.
-    Cue3D_SetPosition(voice.source, voice.x, voice.y, voice.z);
-    Cue3D_SetPitch(voice.source, voice.pitch * kVoiceIdentityPitch[0]);
+    PushVoiceParams(voice);
     voice.playing = true; // before PushGain so the headroom trim counts this voice
     PushGain();
     Cue3D_Play(voice.source);
@@ -151,7 +222,11 @@ void Cue::Stop() {
     StopVoice(voice);
 }
 
-void Cue::TargetVoice(uint64_t key, float x, float y, float z, float pitch) {
+void Cue::TargetVoice(uint64_t key, const CueTarget& t) {
+    if (!mSpec.loop) {
+        WarnWrongApi("TargetVoice");
+        return;
+    }
     if (mPreviewing) {
         return; // the UI owns the cue; the driver re-acquires on the tick after expiry
     }
@@ -168,19 +243,64 @@ void Cue::TargetVoice(uint64_t key, float x, float y, float z, float pitch) {
     if (voice == nullptr || !EnsureVoiceLoaded(*voice)) {
         return;
     }
-    voice->x = x;
-    voice->y = y;
-    voice->z = z;
-    voice->pitch = pitch;
+    voice->target = t;
     voice->refreshed = true;
-    Cue3D_SetPosition(voice->source, x, y, z);
-    Cue3D_SetPitch(voice->source, pitch * kVoiceIdentityPitch[voice - mVoices.data()]);
+    PushVoiceParams(*voice);
     bool starting = !voice->playing;
     voice->playing = true; // before PushGain so the headroom trim counts this voice
     PushGain();
     if (starting) {
         Cue3D_Play(voice->source);
     }
+}
+
+void Cue::TargetVoice(uint64_t key, float x, float y, float z, float pitch) {
+    TargetVoice(key, CueTarget{ .x = x, .y = y, .z = z, .pitch = pitch });
+}
+
+void Cue::PlayOnce(const CueTarget& t) {
+    if (mSpec.loop) {
+        WarnWrongApi("PlayOnce");
+        return;
+    }
+    if (mPreviewing) {
+        return; // the UI owns the cue; PlayOnce resumes on the tick after the preview ends
+    }
+    // First reclaim any voice whose one-shot has already finished, so its slot is free (and
+    // PushGain's headroom count is right). Tick does this too; doing it here keeps the reap
+    // prompt even between ticks under rapid PlayOnce.
+    for (Voice& voice : mVoices) {
+        if (voice.playing && voice.source != nullptr && !Cue3D_IsPlaying(voice.source)) {
+            voice.playing = false;
+        }
+    }
+    Voice* chosen = nullptr;
+    for (Voice& voice : mVoices) {
+        if (!voice.playing) {
+            chosen = &voice;
+            break;
+        }
+    }
+    if (chosen == nullptr) {
+        // Pool exhausted: steal the OLDEST in-flight one-shot (fire-and-forget; a re-trigger
+        // beats a drop). Ordered by the per-cue PlayOnce stamp, not wall-clock time.
+        for (Voice& voice : mVoices) {
+            if (chosen == nullptr || voice.startStamp < chosen->startStamp) {
+                chosen = &voice;
+            }
+        }
+    }
+    if (chosen == nullptr || !EnsureVoiceLoaded(*chosen)) {
+        return;
+    }
+    chosen->target = t;
+    chosen->hasKey = false;       // un-keyed: the refresh-or-stop reap never touches one-shots
+    chosen->refreshed = false;
+    chosen->startStamp = mNextStartStamp++;
+    PushVoiceParams(*chosen);
+    chosen->playing = true; // before PushGain so the headroom trim counts this voice
+    PushGain();
+    Cue3D_Play(chosen->source); // restarts from sample 0 even if it was mid-sound (the steal)
 }
 
 Cue::Voice* Cue::AcquireVoice(uint64_t key) {
@@ -234,6 +354,8 @@ void Cue::StartPreview() {
     // EnsureVoiceLoaded succeeded, since that implies a live backend.)
     Cue3D_SetPosition(voice.source, 0.0f, 0.0f, Cue3D_GetUnityGainDistance());
     Cue3D_SetPitch(voice.source, 1.0f);
+    Cue3D_SetInterval(voice.source, 0.0f); // preview is a straight play, no pulsing
+    Cue3D_SetLowPass(voice.source, 0.0f);
     mPreviewing = true; // before PushGain so it takes the untrimmed preview path
     PushGain();
     Cue3D_Play(voice.source);
@@ -246,6 +368,9 @@ void Cue::StopPreview() {
     }
     Cue3D_Stop(mVoices[0].source);
     mPreviewing = false;
+    // Voice 0's `playing` was cleared by StartPreview's StopAllVoices and never re-set (the
+    // preview drives the source directly, not through a voice), so a one-shot cue is left
+    // idle-and-silent here, ready for the next PlayOnce.
 }
 
 void Cue::Tick() {
@@ -255,8 +380,32 @@ void Cue::Tick() {
         // master) live.
         PushGain();
         mPreviewTicksLeft -= 1.0;
+        // One-shot preview: re-fire the blip ~once per second within the window so the
+        // player hears a few reps. Looping cues sustain, so they need no re-trigger.
+        if (!mSpec.loop) {
+            int ticksLeft = (int) mPreviewTicksLeft;
+            if (ticksLeft > 0 && ticksLeft % kOneShotPreviewRetriggerTicks == 0) {
+                Cue3D_Play(mVoices[0].source);
+            }
+        }
         if (mPreviewTicksLeft <= 0.0) {
             StopPreview();
+        }
+        return;
+    }
+    // One-shot cues have no keyed reap; instead refresh each voice's playing state from the
+    // backend so PushGain's 1/sqrt(N) headroom count converges after sounds finish. Looping
+    // cues keep their Start/Stop-driven bookkeeping — do NOT route them through IsPlaying.
+    if (!mSpec.loop) {
+        bool finished = false;
+        for (Voice& voice : mVoices) {
+            if (voice.playing && voice.source != nullptr && !Cue3D_IsPlaying(voice.source)) {
+                voice.playing = false;
+                finished = true;
+            }
+        }
+        if (finished) {
+            PushGain(); // the survivors get back the headroom the finished voices were using
         }
         return;
     }
@@ -273,14 +422,13 @@ void Cue::Tick() {
     }
 }
 
-Cue* CueRegistry_Register(const char* id, const char* name, const char* description, const char* wavPath,
-                          int maxVoices) {
+Cue* CueRegistry_Register(const char* id, const char* name, const char* description, const CueSpec& spec) {
     CVarRegisterFloat(kCueMasterVolumeCVar, 1.0f); // idempotent; first Register wins
     CVarRegisterFloat(kCueRearCutoffCVar, CUE3D_REAR_CUTOFF_HZ_DEFAULT);
     CVarRegisterFloat(kCueRearGainDipCVar, CUE3D_REAR_GAIN_DIP_DEFAULT);
     CVarRegisterFloat(kCueRearTremoloDepthCVar, CUE3D_REAR_TREMOLO_DEPTH_DEFAULT);
     CVarRegisterFloat(kCueRearTremoloHzCVar, CUE3D_REAR_TREMOLO_HZ_DEFAULT);
-    OwnedCues().emplace_back(new Cue(id, name, description, wavPath, maxVoices));
+    OwnedCues().emplace_back(new Cue(id, name, description, spec));
     Cue* cue = OwnedCues().back().get();
     AllCues().push_back(cue);
     return cue;

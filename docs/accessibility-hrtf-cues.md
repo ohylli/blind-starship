@@ -77,6 +77,35 @@ not primary cues. One consequence: a build without `HAVE_STEAM_AUDIO` (e.g. Swit
 has no cues at all. The seam still keeps OpenAL Soft a one-file swap away if Steam
 Audio ever disappoints.
 
+## Capabilities
+
+Two review findings that had been blocking further cue work are now resolved.
+The one-shot re-trigger race (review CUE3D-13 — a lost update between the game
+thread's `Play` and the audio thread clearing `playing` at end-of-sound) is
+fixed by splitting ownership: the game thread owns `playing` and a `startGen`
+counter, the audio thread owns the playback cursor and an advisory `audible`
+flag it publishes back each block, and `Cue3D_IsPlaying` reads that flag rather
+than `playing` directly. And the start/stop click question (review CUE3D-15) is
+fixed with a short (~5 ms) gain ramp the backend applies on every start, stop,
+and restart.
+
+On top of that, the seam picked up: reliable one-shot playback (`PlayOnce` on a
+`Cue` registered with `CueSpec::loop = false`); a per-source repeat interval for
+looping cues (`Cue3D_SetInterval` / `CueTarget::intervalSec` — a geiger-style
+restart cadence, independent of pitch); a choice of render mode per source
+(`Cue3D_SetMode` / `Cue3DMode`: today's HRTF path, a dry constant-power stereo
+pan, or dead-center direct); a per-source low-pass "muffle" independent of the
+rear effect (`Cue3D_SetLowPass`); and synthesized-tone cues that need no WAV
+(`CueSpec::generator`, run once per voice at `Cue3D_GetSampleRate()`). The exact
+contracts — units, defaults, threading — live in the doc comments in `Cue3D.h`
+and `Cue.h`; read those rather than a prose copy here.
+
+A live **Cue3D test bench** (F1 → Developer → Blind Starship → "Cue3D test
+bench"; `accessibility/CueBench.cpp`) exercises all of the above by ear, with
+every control taking effect immediately — no rebuild, no restart. It replaces
+the old `SpatialAudioTest` smoke test, which required a restart to change
+anything and only ever exercised the orbit.
+
 ## Known limitations / open questions
 
 These are the live unknowns to pick up if we return to this — none block the
@@ -124,9 +153,10 @@ current cues, but each is a real gap.
   per-definition. Do **not** fake it by registering the same WAV as a second cue —
   that grows a second volume slider and glossary entry, the wrong player-facing
   shape. Non-plumbing work that comes with it: sticky enemy→voice assignment so
-  targets don't swap voices frame-to-frame (compounds the target-jitter/click
-  question, review CUE3D-15), per-voice pitch/timbre offsets so identical loops
-  stay distinguishable, clip-guard headroom with more concurrent voices, and
+  targets don't swap voices frame-to-frame (the click risk this raised, review
+  CUE3D-15, is resolved — see "Capabilities" above), per-voice pitch/timbre
+  offsets so identical loops stay distinguishable, clip-guard headroom with
+  more concurrent voices, and
   (only if it ever matters) a shared-PCM load in the seam, since each voice
   currently keeps its own decoded copy.
 

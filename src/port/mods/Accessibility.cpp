@@ -3,7 +3,7 @@
 #include "port/CGameCompat.h"
 #include "port/accessibility/Tts.h"
 #include "port/accessibility/Cue3D.h"
-#include "port/accessibility/SpatialAudioTest.h"
+#include "port/accessibility/CueBench.h"
 #include "accessibility_screens/AccessibilityScreens.h"
 #include "AccessibilityCues.h"
 #include "AccessibilityTrainingMinimal.h"
@@ -12,13 +12,10 @@
 void Accessibility_Init() {
     CVarRegisterInteger("gAccessibilityScreenReader", 1);
 
-    // Opt-in Cue3D smoke test (orbiting tone over the Steam Audio backend). Off by
-    // default so the second OS audio device only opens when explicitly requested.
-    // Toggling requires a restart for now.
-    CVarRegisterInteger("gAccessibilitySpatialTest", 0);
-    if (CVarGetInteger("gAccessibilitySpatialTest", 0)) {
-        SpatialAudioTest_Start();
-    }
+    // Live Cue3D test bench (F1 -> Developer -> Blind Starship). Registers its listener and
+    // hidden cue up front but stays silent until the bench is toggled on — no restart, and
+    // the second OS audio device only opens the first time the bench is activated.
+    CueBench_Init();
 
     AccessibilityTitleScreen_Register();
     AccessibilityMainMenu_Register();
@@ -37,7 +34,7 @@ void Accessibility_Init() {
 
 void Accessibility_Exit() {
     AccessibilityCues_Exit();
-    SpatialAudioTest_Stop();
+    CueBench_Shutdown();
     Cue3D_Shutdown();
 }
 

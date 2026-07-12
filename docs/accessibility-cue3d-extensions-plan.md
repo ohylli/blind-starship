@@ -1,7 +1,7 @@
 # Cue3D extensions — implementation plan
 
-Status: **planned, not implemented** (2026-07-12). This document is the contract for a
-future implementation session (expected to coordinate subagents). It records the agreed
+Status: **implemented** (2026-07-12). This document was the contract for the
+implementation session (which coordinated subagents). It records the agreed
 scope, the API design, the per-package work breakdown, and the verification story.
 Written against the code as of commit `47d7b2d9`.
 

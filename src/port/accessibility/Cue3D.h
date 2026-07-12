@@ -22,7 +22,10 @@
 // end-state for this seam is FEWER floats, not more — a single perceptual "rear emphasis"
 // strength with the DSP constants baked into each backend. Treat the four-float shape as a
 // tuning-phase interface, not a fixture. Everything else here is genuinely backend-neutral,
-// so a swap stays a one-file change that no caller sees.
+// so a swap stays a one-file change that no caller sees. The PAN and DIRECT render modes
+// (Cue3D_SetMode) are part of that owed outcome too: they are deliberately DRY renderings —
+// no HRTF, no rear effect — and an alternate backend must honor them as such (trivially:
+// they are backend-neutral math), so the one-file-swap property is intact.
 //
 // The backend opens its own OS audio device alongside libultraship's; the OS mixer
 // combines the two streams (same coexistence model as PRISM/Tolk for TTS).
@@ -34,8 +37,10 @@
 // game code never learns the spatializer's axis convention.
 //
 // Threading: Cue3D_Load / Cue3D_LoadPcm allocate and decode on the calling (main)
-// thread. Cue3D_Play / SetPosition / SetGain / SetPitch / Stop are cheap, lock-free,
-// and safe to call every game frame; the audio callback reads the published values.
+// thread. Cue3D_Play / SetPosition / SetGain / SetPitch / SetInterval / SetMode /
+// SetLowPass / Stop are cheap, lock-free, and safe to call every game frame; the audio
+// callback reads the published values. Cue3D_IsPlaying reads a value the callback
+// publishes back and may lag it by one audio block — advisory, not a fence.
 
 typedef struct Cue3DSource Cue3DSource;
 
@@ -82,8 +87,11 @@ Cue3DSource* Cue3D_Load(const char* path, bool loop);
 // NULL on failure / no free slot.
 Cue3DSource* Cue3D_LoadPcm(const float* monoPcm, int frames, bool loop);
 
-// Begin (or resume) playback of a loaded source. A one-shot source that has already
-// finished restarts from the beginning.
+// Start playback of a loaded source from the BEGINNING of its sound. EVERY call
+// restarts at sample 0: a looping source that was Stopped does not resume mid-loop,
+// and a Play issued while already playing rewinds rather than no-ops. That rewind is
+// deliberate — it is exactly what reliable one-shot re-trigger needs, and for short
+// cue loops a restart is inaudible-to-preferable.
 void Cue3D_Play(Cue3DSource* source);
 
 // Set the source's listener-relative position (game convention: +x right, +y up,
@@ -109,6 +117,35 @@ void Cue3D_SetPitch(Cue3DSource* source, float rate);
 
 // Silence the source. It stays loaded and can be played again.
 void Cue3D_Stop(Cue3DSource* source);
+
+// Advisory playback status: true while the source is audibly rendering. For looping
+// sources this mirrors Play/Stop; for one-shots it goes false when the sound finishes.
+// May lag reality by one audio block (~21 ms) — treat as advisory, not a fence.
+bool Cue3D_IsPlaying(Cue3DSource* source);
+
+// Restart cadence for a LOOPING source, in wall-clock seconds (independent of pitch).
+// 0 (default) = seamless loop, exactly the pre-interval behavior. > 0 = the sound
+// restarts from its beginning every `seconds`, measured start-to-start: silence pads
+// the gap when the interval exceeds the sound's length; a shorter interval truncates
+// and restarts. Sample-accurate (the audio callback owns the timing). Cheap; push it
+// every tick like position — a live rate change takes effect immediately. Ignored on
+// one-shot sources.
+void Cue3D_SetInterval(Cue3DSource* source, float seconds);
+
+// How the source is rendered into stereo. Position (Cue3D_SetPosition) stays the input
+// in every mode; the mode selects the renderer:
+//   CUE3D_MODE_HRTF   — binaural HRTF + distance attenuation + rear effect (default).
+//   CUE3D_MODE_PAN    — constant-power stereo pan from the horizontal direction;
+//                       distance attenuation applies; rear effect and HRTF do not.
+//                       Front/back and elevation collapse (inherent to stereo pan).
+//   CUE3D_MODE_DIRECT — dead center, no spatialization, no distance attenuation, no
+//                       rear effect; gain/pitch/interval/low-pass still apply.
+typedef enum Cue3DMode { CUE3D_MODE_HRTF = 0, CUE3D_MODE_PAN, CUE3D_MODE_DIRECT } Cue3DMode;
+void Cue3D_SetMode(Cue3DSource* source, Cue3DMode mode);
+
+// Per-source low-pass "muffle", independent of (in series with) the rear muffle.
+// cutoffHz <= 0 disables it (the default). Applies in every render mode.
+void Cue3D_SetLowPass(Cue3DSource* source, float cutoffHz);
 
 // Configure the rear-hemisphere front/back exaggeration the backend applies to EVERY
 // source (see the header comment above): at full rear a source is low-passed down to

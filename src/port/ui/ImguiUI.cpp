@@ -14,6 +14,7 @@
 #include "port/mods/accessibility_screens/ImGuiMenu.h"
 #include "port/mods/AccessibilityCues.h"
 #include "port/accessibility/Cue.h"
+#include "port/accessibility/CueBench.h"
 #include "port/notification/notification.h"
 #include "utils/StringHelper.h"
 
@@ -430,6 +431,9 @@ void DrawSettingsMenu(){
                     return out;
                 };
                 for (Cue* cue : CueRegistry_All()) {
+                    if (cue->HiddenFromSettings()) {
+                        continue; // bench/internal cues own their own controls, not this list
+                    }
                     std::string sliderLabel = escapePercents(cue->Name()) + "##CueVolume" + cue->Id();
                     if (UIWidgets::CVarSliderFloat(sliderLabel.c_str(), cue->VolumeCVar(), 0.0f, 1.0f, 1.0f, {
                         .tooltip = cue->Description(),
@@ -904,6 +908,12 @@ static const char* logLevels[] = {
     "trace", "debug", "info", "warn", "error", "critical", "off",
 };
 
+// Cue3D render modes for the test bench combo — index maps 1:1 to Cue3DMode
+// (HRTF = 0, PAN = 1, DIRECT = 2).
+static const char* cueBenchModes[] = {
+    "HRTF", "Pan", "Direct",
+};
+
 void DrawDebugMenu() {
     if (UIWidgets::BeginMenu("Developer")) {
         if (UIWidgets::CVarCombobox("Log Level", "gDeveloperTools.LogLevel", logLevels, {
@@ -1043,10 +1053,58 @@ void DrawDebugMenu() {
                 .tooltip = "Verbose per-frame trace of enemy-cue targeting and backend state.",
                 .defaultValue = false
             });
-            UIWidgets::CVarCheckbox("Spatial audio test", "gAccessibilitySpatialTest", {
-                .tooltip = "Plays the enemy cue sound orbiting through the 3D audio backend as a smoke test. Takes effect after a restart.",
-                .defaultValue = false
-            });
+            if (UIWidgets::BeginMenu("Cue3D test bench")) {
+                // Live bench for the 3D-cue capabilities (CueBench.{h,cpp}). Every control is
+                // a CVar the bench listener re-reads each tick, so all of it takes effect with
+                // no restart. Order follows the plan's D4 control table.
+                UIWidgets::CVarCheckbox("Test bench active", kCueBenchActiveCVar, {
+                    .tooltip = "Master gate. On plays a source through the 3D audio backend; off silences everything the bench owns immediately.",
+                    .defaultValue = false,
+                });
+                UIWidgets::CVarCheckbox("Synthesized tone", kCueBenchSynthToneCVar, {
+                    .tooltip = "Switch the continuous source between the enemy WAV and a generated sine blip (exercises Cue3D_LoadPcm).",
+                    .defaultValue = false,
+                });
+                UIWidgets::CVarCheckbox("Orbit", kCueBenchOrbitCVar, {
+                    .tooltip = "On: the source sweeps a 4 s horizontal circle (front -> right -> behind -> left). Off: fixed straight ahead.",
+                    .defaultValue = true,
+                });
+                UIWidgets::CVarCombobox("Render mode", kCueBenchModeCVar, cueBenchModes, {
+                    .tooltip = "HRTF (binaural + rear effect), Pan (constant-power stereo, front/back collapses), or Direct (centered, no spatialization).",
+                    .defaultIndex = 0,
+                });
+                UIWidgets::CVarSliderFloat("Pitch", kCueBenchPitchCVar, 0.5f, 2.0f, 1.0f, {
+                    .tooltip = "Playback-rate multiplier (1.0 = native, 2.0 = one octave up).",
+                    .flags = ImGuiSliderFlags_AlwaysClamp,
+                    .format = "%.2fx",
+                    .step = 0.05f,
+                });
+                UIWidgets::CVarSliderFloat("Interval", kCueBenchIntervalCVar, 0.0f, 2.0f, 0.0f, {
+                    .tooltip = "Restart cadence for the looping source. 0 = seamless loop. Sounds longer than the "
+                               "interval are cut at the restart and may click - author blips shorter than the fastest interval.",
+                    .flags = ImGuiSliderFlags_AlwaysClamp,
+                    .format = "%.2f s",
+                    .step = 0.05f,
+                });
+                UIWidgets::CVarSliderFloat("Low-pass", kCueBenchLowPassCVar, 0.0f, 8000.0f, 0.0f, {
+                    .tooltip = "Per-source muffle cutoff, applied in every render mode. 0 = off.",
+                    .flags = ImGuiSliderFlags_AlwaysClamp,
+                    .format = "%.0f Hz",
+                    .step = 250.0f,
+                });
+                if (UIWidgets::Button("Play one-shot", { .tooltip = "Fire the hidden one-shot cue once at the bench's current position (exercises PlayOnce + the gen-counter re-trigger fix)." })) {
+                    CueBench_RequestOneShot();
+                }
+                UIWidgets::CVarCheckbox("Rapid re-trigger", kCueBenchRapidRetriggerCVar, {
+                    .tooltip = "Fire the one-shot every few ticks. Stress for the re-trigger race fix and the start ramps: listen for swallowed plays or clicks.",
+                    .defaultValue = false,
+                });
+                UIWidgets::CVarCheckbox("Start/stop stress", kCueBenchStartStopStressCVar, {
+                    .tooltip = "Toggle the continuous source Play/Stop every few ticks. Stress for the ramps: listen for clicks.",
+                    .defaultValue = false,
+                });
+                ImGui::EndMenu();
+            }
             // Height->pitch tuning: how the cue bends pitch by target height to
             // compensate for weak HRTF elevation (docs/accessibility-cues-tuning.md).
             // Read live by the cue mapping each tick, so no push-to-backend is needed.
