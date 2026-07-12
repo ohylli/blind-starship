@@ -81,16 +81,27 @@ static f32 AccessibilityCues_ComputeFreqModFromY(f32 y) {
     if (CVarGetInteger(kCuePitchForHeightCVar, 1) != 1) {
         return 1.0f; // effect off: native pitch, height not conveyed
     }
+    // The guards below are written as !(x >= lo) rather than (x < lo) on purpose: every
+    // comparison against NaN is false, so the natural spelling would wave a NaN straight
+    // through. These CVars are reachable from the console and a hand-edited config, and a
+    // NaN here would ride out as a NaN playback rate, which used to be an out-of-bounds
+    // read on the audio thread. Cue3D_SetPitch validates too — this just keeps the bad
+    // value from ever being built.
     f32 scale = CVarGetFloat(kCuePitchScaleCVar, kCuePitchScaleDefault);
-    if (scale < 1.0f) {
-        scale = kCuePitchScaleDefault; // guard against divide-by-tiny; slider min keeps this unreachable
+    if (!(scale >= 1.0f)) {
+        scale = kCuePitchScaleDefault; // divide-by-tiny, negative, or NaN
     }
     f32 range = CVarGetFloat(kCuePitchRangeOctavesCVar, kCuePitchRangeOctavesDefault);
+    if (!(range >= 0.0f)) {
+        range = kCuePitchRangeOctavesDefault; // negative or NaN
+    }
     f32 octaves = y / scale;
     if (octaves > range) {
         octaves = range;
     } else if (octaves < -range) {
         octaves = -range;
+    } else if (!(octaves == octaves)) {
+        octaves = 0.0f; // NaN y: neither clamp fires, so pin to native pitch
     }
     return powf(2.0f, octaves);
 }
@@ -380,7 +391,6 @@ void AccessibilityCues_Init() {
     CVarRegisterInteger(kCuePitchForHeightCVar, 1);
     CVarRegisterFloat(kCuePitchScaleCVar, kCuePitchScaleDefault);
     CVarRegisterFloat(kCuePitchRangeOctavesCVar, kCuePitchRangeOctavesDefault);
-    Cue_PushRearEffectFromCVars(); // apply persisted rear-effect tuning to the backend
 
     sRingCue = CueRegistry_Register("Ring", "Ring guide", "Guides you toward the next training ring.",
                                     "assets/accessibility/ring.wav");

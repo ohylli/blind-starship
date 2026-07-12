@@ -47,17 +47,14 @@
 inline constexpr const char* kCueMasterVolumeCVar = "gAccessibilityCueMasterVolume";
 
 // The rear-effect knobs (float CVars; see Cue3D_SetRearEffect for what each does), named
-// here so the settings UI and Cue_PushRearEffectFromCVars share one spelling. Defaults are
-// the seam's CUE3D_REAR_*_DEFAULT values.
+// here so the settings UI and CueRegistry share one spelling. Registered by CueRegistry on
+// first use, with the seam's CUE3D_REAR_*_DEFAULT values; CueRegistry_Tick re-reads them
+// every tick and pushes them to the backend, so a change from a slider OR the console is
+// live without a restart. The seam clamps whatever it is handed, so no caller has to.
 inline constexpr const char* kCueRearCutoffCVar = "gAccessibilityCueRearCutoffHz";
 inline constexpr const char* kCueRearGainDipCVar = "gAccessibilityCueRearGainDip";
 inline constexpr const char* kCueRearTremoloDepthCVar = "gAccessibilityCueRearTremoloDepth";
-inline constexpr const char* kCueRearTremoloRateCVar = "gAccessibilityCueRearTremoloHz";
-
-// Read the four rear-effect CVars (registering their defaults on first call) and push them
-// to Cue3D_SetRearEffect. Called once at consumer-mod init so persisted config values take
-// effect, and by the settings UI on slider change so rear-effect tuning is live.
-void Cue_PushRearEffectFromCVars();
+inline constexpr const char* kCueRearTremoloHzCVar = "gAccessibilityCueRearTremoloHz";
 
 class Cue {
   public:

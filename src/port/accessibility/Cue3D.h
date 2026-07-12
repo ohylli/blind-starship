@@ -9,10 +9,20 @@
 // attenuation are derived from the position the caller pushes, so the caller just
 // reports where the source is and lets the backend decide how it sounds. That includes
 // deliberately exaggerating cues a raw HRTF renders too weakly — e.g. the rear-hemisphere
-// muffle + gain dip for front/back — so an alternate backend should reproduce those,
-// not treat them as a spatializer artifact. Keeping
-// this interface free of any spatializer detail means an alternate backend (e.g.
-// OpenAL Soft) can drop in behind the same header without touching callers.
+// muffle + gain dip + tremolo for front/back — so an alternate backend should reproduce
+// those, not treat them as a spatializer artifact.
+//
+// What the seam therefore carries is PERCEPTUAL POLICY, not "no spatializer detail":
+// Cue3D_SetRearEffect prescribes an audible outcome that every backend owes the player,
+// and its parameters happen to be spelled in the DSP units the tuning phase needs (a
+// cutoff and an LFO rate in Hz). An alternate backend (e.g. OpenAL Soft, whose direct-path
+// filter is a high-frequency gain RATIO and which has no per-source tremolo) has to map
+// those onto its own primitives rather than pass them through. That is a real cost, and it
+// is deliberate while the values are still being settled by ear: once they are, the honest
+// end-state for this seam is FEWER floats, not more — a single perceptual "rear emphasis"
+// strength with the DSP constants baked into each backend. Treat the four-float shape as a
+// tuning-phase interface, not a fixture. Everything else here is genuinely backend-neutral,
+// so a swap stays a one-file change that no caller sees.
 //
 // The backend opens its own OS audio device alongside libultraship's; the OS mixer
 // combines the two streams (same coexistence model as PRISM/Tolk for TTS).

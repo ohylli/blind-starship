@@ -276,6 +276,10 @@ void Cue::Tick() {
 Cue* CueRegistry_Register(const char* id, const char* name, const char* description, const char* wavPath,
                           int maxVoices) {
     CVarRegisterFloat(kCueMasterVolumeCVar, 1.0f); // idempotent; first Register wins
+    CVarRegisterFloat(kCueRearCutoffCVar, CUE3D_REAR_CUTOFF_HZ_DEFAULT);
+    CVarRegisterFloat(kCueRearGainDipCVar, CUE3D_REAR_GAIN_DIP_DEFAULT);
+    CVarRegisterFloat(kCueRearTremoloDepthCVar, CUE3D_REAR_TREMOLO_DEPTH_DEFAULT);
+    CVarRegisterFloat(kCueRearTremoloHzCVar, CUE3D_REAR_TREMOLO_HZ_DEFAULT);
     OwnedCues().emplace_back(new Cue(id, name, description, wavPath, maxVoices));
     Cue* cue = OwnedCues().back().get();
     AllCues().push_back(cue);
@@ -287,21 +291,17 @@ const std::vector<Cue*>& CueRegistry_All() {
 }
 
 void CueRegistry_Tick() {
-    for (Cue* cue : AllCues()) {
-        cue->Tick();
-    }
-}
-
-void Cue_PushRearEffectFromCVars() {
-    // Registrations are idempotent; the Get defaults only matter before the first call.
-    CVarRegisterFloat(kCueRearCutoffCVar, CUE3D_REAR_CUTOFF_HZ_DEFAULT);
-    CVarRegisterFloat(kCueRearGainDipCVar, CUE3D_REAR_GAIN_DIP_DEFAULT);
-    CVarRegisterFloat(kCueRearTremoloDepthCVar, CUE3D_REAR_TREMOLO_DEPTH_DEFAULT);
-    CVarRegisterFloat(kCueRearTremoloRateCVar, CUE3D_REAR_TREMOLO_HZ_DEFAULT);
+    // Re-read the rear-effect knobs and push them to the backend, for the same reason
+    // PushGain re-reads the volume CVars: they are runtime-editable from the settings
+    // sliders AND from the console, and a pull-per-tick is the only wiring that honours
+    // both. Four gets and four relaxed stores per 30 fps tick, so cheaper than PushGain.
     Cue3D_SetRearEffect(CVarGetFloat(kCueRearCutoffCVar, CUE3D_REAR_CUTOFF_HZ_DEFAULT),
                         CVarGetFloat(kCueRearGainDipCVar, CUE3D_REAR_GAIN_DIP_DEFAULT),
                         CVarGetFloat(kCueRearTremoloDepthCVar, CUE3D_REAR_TREMOLO_DEPTH_DEFAULT),
-                        CVarGetFloat(kCueRearTremoloRateCVar, CUE3D_REAR_TREMOLO_HZ_DEFAULT));
+                        CVarGetFloat(kCueRearTremoloHzCVar, CUE3D_REAR_TREMOLO_HZ_DEFAULT));
+    for (Cue* cue : AllCues()) {
+        cue->Tick();
+    }
 }
 
 void CueRegistry_UnloadAll() {

@@ -28,9 +28,10 @@
 // resulting gain into playback, so a far source renders quieter than a near one. The
 // caller pushes raw positions and never models falloff itself.
 //
-// Front/back exaggeration is likewise backend policy: ProduceBlock muffles (low-pass)
-// and slightly dips rear-hemisphere sources (the kRear* knobs) because the generic
-// HRTF's own front/back rendering is too weak to read in play.
+// Front/back exaggeration is likewise backend policy: ProduceBlock muffles (low-pass),
+// slightly dips, and amplitude-pulses rear-hemisphere sources (the g_rear* knobs, set
+// through Cue3D_SetRearEffect) because the generic HRTF's own front/back rendering is
+// too weak to read in play.
 
 namespace {
 
@@ -78,6 +79,36 @@ std::atomic<float> g_rearCutoffHz{ CUE3D_REAR_CUTOFF_HZ_DEFAULT };
 std::atomic<float> g_rearGainDip{ CUE3D_REAR_GAIN_DIP_DEFAULT };
 std::atomic<float> g_rearTremoloDepth{ CUE3D_REAR_TREMOLO_DEPTH_DEFAULT };
 std::atomic<float> g_rearTremoloHz{ CUE3D_REAR_TREMOLO_HZ_DEFAULT };
+
+// Hard bounds for the values the game thread pushes at the audio thread. The CVars behind
+// them are reachable from the console and a hand-edited config, not just the sliders, so
+// the seam — not the UI — is where the DSP's preconditions get enforced.
+//
+// Rear knobs: a cutoff <= 0 would put the one-pole low-pass outside the unit circle (see
+// lpAlpha in ProduceBlock) and diverge to NaN within a single block; a dip or depth above
+// 1 inverts and amplifies gain instead of reducing it; a tremolo rate near the sample rate
+// breaks the single-subtract phase wrap. tremoloHz's ceiling sits well above the slider's
+// 16 Hz so by-ear tuning stays free.
+//
+// Pitch rate: the playback cursor advances by it every sample, so a non-finite or negative
+// rate walks the cursor off pcm[] (an out-of-bounds READ, not just bad audio). The bounds
+// are five octaves either way — far wider than the Y->pitch mapping can produce — so they
+// only ever catch a corrupt value, never a tuned one.
+constexpr float kRearCutoffMinHz = 20.0f;
+constexpr float kRearCutoffMaxHz = 20000.0f;
+constexpr float kRearTremoloMaxHz = 50.0f;
+constexpr float kMinPitchRate = 0.03125f; // -5 octaves
+constexpr float kMaxPitchRate = 32.0f;    // +5 octaves
+
+// Non-finite input falls back to the caller's default rather than a bound: NaN has no
+// nearest edge, and a value that silently reverts to its documented default is easier to
+// recognize by ear than one that jumps to an extreme.
+float SanitizeParam(float value, float lo, float hi, float fallback) {
+    if (!std::isfinite(value)) {
+        return fallback;
+    }
+    return value < lo ? lo : (value > hi ? hi : value);
+}
 
 // Fixed pool of sources. Cues are few (today: a ring cue + an enemy cue); 16 gives
 // generous headroom for future cue types while keeping the per-block scan trivial.
@@ -281,11 +312,20 @@ void ProduceBlock() {
         double cursor = s.cursor;
         bool ended = false;
         for (int n = 0; n < kFrameSize; n++) {
-            if (cursor >= s.frameCount) {
+            // "Not a usable index" rather than "past the end": that covers the normal
+            // end-of-buffer case AND the two ways a corrupt rate can wreck the cursor —
+            // negative (walks off the front) and NaN. NaN is the reason for the negated
+            // spelling: every comparison against NaN is false, so `cursor >= frameCount`
+            // would MISS it, and (int) NaN is undefined behavior that yields INT_MIN on
+            // x86 — an out-of-bounds read of pcm[] gigabytes below the buffer.
+            // Cue3D_SetPitch now rejects such rates, so this is unreachable in practice;
+            // it is nonetheless the bounds check standing in front of the indexing, and a
+            // bounds check does not get to assume its input was validated elsewhere.
+            if (!(cursor >= 0.0 && cursor < s.frameCount)) {
                 if (s.loop) {
                     cursor -= s.frameCount;
-                    if (cursor >= s.frameCount) {
-                        cursor = 0.0; // guard a tiny pcm / huge rate overshoot
+                    if (!(cursor >= 0.0 && cursor < s.frameCount)) {
+                        cursor = 0.0; // tiny pcm / huge rate overshoot, or a non-finite cursor
                     }
                 } else {
                     mono[n] = 0.0f;
@@ -321,7 +361,11 @@ void ProduceBlock() {
         const float rearCutoffHz = g_rearCutoffHz.load(std::memory_order_relaxed);
         const float tremDepth = g_rearTremoloDepth.load(std::memory_order_relaxed) * rearAmount;
         const float tremStep = 2.0f * kPi * g_rearTremoloHz.load(std::memory_order_relaxed) / (float) g.sampleRate;
-        const float lpAlpha = 1.0f - std::exp(-2.0f * kPi * rearCutoffHz / (float) g.sampleRate);
+        // Clamped independently of the seam's sanitizing: the filter is only stable for
+        // alpha in [0, 1], and that invariant is cheap enough to assert right where it is
+        // relied upon rather than trust across a thread boundary.
+        float lpAlpha = 1.0f - std::exp(-2.0f * kPi * rearCutoffHz / (float) g.sampleRate);
+        lpAlpha = lpAlpha < 0.0f ? 0.0f : (lpAlpha > 1.0f ? 1.0f : lpAlpha);
         float lp = s.lpState;
         float phase = s.tremPhase;
         for (int n = 0; n < kFrameSize; n++) {
@@ -359,8 +403,15 @@ void ProduceBlock() {
         // Trim for headroom, then hard-clamp to [-1, 1] so a rare stack of loud,
         // in-phase sources can never hand the device an out-of-range sample. Both
         // are branch-cheap and allocation-free (this is the audio callback thread).
+        // Non-finite samples render as silence: a comparison against NaN is always
+        // false, so a bare min/max clamp would pass NaN straight through to the
+        // device (silence or a full-scale blast, driver's choice). This is the last
+        // line of defence in front of the user's headphones — it does not get to
+        // have a hole in it, however sanitized the DSP inputs upstream are.
         float l = g.accL[n] * kOutputTrim;
         float r = g.accR[n] * kOutputTrim;
+        l = std::isfinite(l) ? l : 0.0f;
+        r = std::isfinite(r) ? r : 0.0f;
         g.block[2 * n] = l < -1.0f ? -1.0f : (l > 1.0f ? 1.0f : l);
         g.block[2 * n + 1] = r < -1.0f ? -1.0f : (r > 1.0f ? 1.0f : r);
     }
@@ -567,7 +618,13 @@ extern "C" void Cue3D_SetGain(Cue3DSource* source, float gain) {
 
 extern "C" void Cue3D_SetPitch(Cue3DSource* source, float rate) {
     if (source != nullptr) {
-        source->rate.store(rate, std::memory_order_relaxed);
+        // Same contract as Cue3D_SetRearEffect: the seam sanitizes so the audio callback
+        // can trust the value. The cursor advances by `rate` each sample, so a NaN rate
+        // makes the cursor NaN and a negative one walks it off the front of the buffer —
+        // both out-of-bounds reads of pcm[] on the audio thread. Non-finite falls back to
+        // native pitch; the bounds are far wider than the Y->pitch mapping can produce
+        // (a couple of octaves either way), so real tuning is untouched.
+        source->rate.store(SanitizeParam(rate, kMinPitchRate, kMaxPitchRate, 1.0f), std::memory_order_relaxed);
     }
 }
 
@@ -583,10 +640,17 @@ extern "C" void Cue3D_SetPosition(Cue3DSource* source, float x, float y, float z
 }
 
 extern "C" void Cue3D_SetRearEffect(float cutoffHz, float gainDip, float tremoloDepth, float tremoloHz) {
-    g_rearCutoffHz.store(cutoffHz, std::memory_order_relaxed);
-    g_rearGainDip.store(gainDip, std::memory_order_relaxed);
-    g_rearTremoloDepth.store(tremoloDepth, std::memory_order_relaxed);
-    g_rearTremoloHz.store(tremoloHz, std::memory_order_relaxed);
+    // Sanitize here, on the game thread, so the audio callback can trust these values:
+    // it runs the filter per sample and has no cheap way to recover once its state is NaN.
+    g_rearCutoffHz.store(
+        SanitizeParam(cutoffHz, kRearCutoffMinHz, kRearCutoffMaxHz, CUE3D_REAR_CUTOFF_HZ_DEFAULT),
+        std::memory_order_relaxed);
+    g_rearGainDip.store(SanitizeParam(gainDip, 0.0f, 1.0f, CUE3D_REAR_GAIN_DIP_DEFAULT),
+                        std::memory_order_relaxed);
+    g_rearTremoloDepth.store(SanitizeParam(tremoloDepth, 0.0f, 1.0f, CUE3D_REAR_TREMOLO_DEPTH_DEFAULT),
+                             std::memory_order_relaxed);
+    g_rearTremoloHz.store(SanitizeParam(tremoloHz, 0.0f, kRearTremoloMaxHz, CUE3D_REAR_TREMOLO_HZ_DEFAULT),
+                          std::memory_order_relaxed);
 }
 
 #else // HAVE_STEAM_AUDIO not defined — no-op stubs

@@ -1072,43 +1072,43 @@ void DrawDebugMenu() {
                 .step = 250.0f,
             });
             // Rear-effect tuning: how strongly the cue backend exaggerates "behind you"
-            // (docs/accessibility-cues-tuning.md). Changes are pushed to the audio thread
-            // immediately, so the knobs can be A/B'd by ear against the spatial test's
-            // orbiting tone or a live in-level cue.
-            if (UIWidgets::CVarSliderFloat("Rear muffle cutoff", kCueRearCutoffCVar, 250.0f, 8000.0f,
-                                           CUE3D_REAR_CUTOFF_HZ_DEFAULT, {
+            // (docs/accessibility-cues-tuning.md). Re-read and pushed to the audio thread
+            // every tick by CueRegistry_Tick, so the knobs can be A/B'd by ear against the
+            // spatial test's orbiting tone or a live in-level cue.
+            // AlwaysClamp on all four: the enter-to-type path (which the screen-reader
+            // session advertises) otherwise accepts values outside the slider range, and a
+            // cutoff <= 0 would destabilize the backend's one-pole filter. The seam clamps
+            // too — this just keeps the UI from ever offering a bad value.
+            UIWidgets::CVarSliderFloat("Rear muffle cutoff", kCueRearCutoffCVar, 250.0f, 8000.0f,
+                                       CUE3D_REAR_CUTOFF_HZ_DEFAULT, {
                 .tooltip = "Low-pass cutoff for cue sounds behind you; lower = more muffled dead behind.",
+                .flags = ImGuiSliderFlags_AlwaysClamp,
                 .format = "%.0f Hz",
                 .step = 250.0f,
-            })) {
-                Cue_PushRearEffectFromCVars();
-            }
-            if (UIWidgets::CVarSliderFloat("Rear volume dip", kCueRearGainDipCVar, 0.0f, 1.0f,
-                                           CUE3D_REAR_GAIN_DIP_DEFAULT, {
+            });
+            UIWidgets::CVarSliderFloat("Rear volume dip", kCueRearGainDipCVar, 0.0f, 1.0f,
+                                       CUE3D_REAR_GAIN_DIP_DEFAULT, {
                 .tooltip = "How much quieter a cue dead behind you is. Keep mild: volume also encodes distance.",
+                .flags = ImGuiSliderFlags_AlwaysClamp,
                 .format = "%.0f%%",
                 .step = 0.05f,
                 .isPercentage = true,
-            })) {
-                Cue_PushRearEffectFromCVars();
-            }
-            if (UIWidgets::CVarSliderFloat("Rear tremolo depth", kCueRearTremoloDepthCVar, 0.0f, 1.0f,
-                                           CUE3D_REAR_TREMOLO_DEPTH_DEFAULT, {
+            });
+            UIWidgets::CVarSliderFloat("Rear tremolo depth", kCueRearTremoloDepthCVar, 0.0f, 1.0f,
+                                       CUE3D_REAR_TREMOLO_DEPTH_DEFAULT, {
                 .tooltip = "Pulsing strength for cue sounds behind you; 0 disables the tremolo.",
+                .flags = ImGuiSliderFlags_AlwaysClamp,
                 .format = "%.0f%%",
                 .step = 0.05f,
                 .isPercentage = true,
-            })) {
-                Cue_PushRearEffectFromCVars();
-            }
-            if (UIWidgets::CVarSliderFloat("Rear tremolo rate", kCueRearTremoloRateCVar, 2.0f, 16.0f,
-                                           CUE3D_REAR_TREMOLO_HZ_DEFAULT, {
+            });
+            UIWidgets::CVarSliderFloat("Rear tremolo rate", kCueRearTremoloHzCVar, 2.0f, 16.0f,
+                                       CUE3D_REAR_TREMOLO_HZ_DEFAULT, {
                 .tooltip = "How fast the rear tremolo pulses.",
+                .flags = ImGuiSliderFlags_AlwaysClamp,
                 .format = "%.1f Hz",
                 .step = 0.5f,
-            })) {
-                Cue_PushRearEffectFromCVars();
-            }
+            });
             ImGui::EndMenu();
         }
 
