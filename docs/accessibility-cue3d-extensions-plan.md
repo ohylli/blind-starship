@@ -107,12 +107,24 @@ Header-comment updates: the "backend owes the player" paragraph should mention t
 PAN/DIRECT are deliberately *dry* renderings an alternate backend must also honor
 (trivially — they're backend-neutral math), so the one-file-swap property is intact.
 
+`Cue3D_Play`'s doc comment also changes: with the gen counter (D2), **every Play
+restarts the sound from its beginning** — including a looping source that was
+Stopped (previously resumed mid-loop) and a Play issued while already playing
+(previously a no-op). This is a deliberate, accepted behavior change: for short cue
+loops a rewind is inaudible-to-preferable, and it is exactly what one-shot re-trigger
+needs. The current "Begin (or resume) playback" wording must be replaced, not left
+to drift from the implementation. (Cue-layer impact: an enemy-cue voice reacquired
+after a reap now restarts at sample 0 instead of resuming; a re-pressed preview
+restarts its loop. Both are fine — but they are *known* deltas, so the verification
+pass's "sounds unchanged" bar means "no new artifacts", not bit-identical phase.)
+
 ### D2. Backend changes (`Cue3DSteamAudio.cpp`)
 
 **One-shot re-trigger race (CUE3D-13).** Root cause: `playing` is written by both
 threads (game on Play/Stop, callback clearing at one-shot EOF), so a Play landing as
 the callback finishes the previous playthrough can be overwritten. Fix by splitting
-ownership so no flag has two writers:
+ownership so no flag *that playback correctness depends on* has two writers (the
+advisory `audible` below deliberately keeps two writers — see its bullet):
 
 - Game → audio: `playing` (the stop lever, game-thread writes only) and a new
   `std::atomic<uint32_t> startGen`, incremented by `Cue3D_Play`.
@@ -122,10 +134,13 @@ ownership so no flag has two writers:
   `playing`. Render condition: `playing && !ended` (plus the ramp tail, below).
 - Audio → game: `std::atomic<bool> audible`, written by the callback each block
   (`playing && !ended`), read by `Cue3D_IsPlaying`. `Cue3D_Play` also eagerly stores
-  `audible = true` so a same-tick IsPlaying doesn't see a stale false. The remaining
-  one-block staleness window is why the API calls it advisory: worst case a finished
-  voice looks busy (or a busy voice reusable) for ~21 ms, which for voice bookkeeping
-  is benign. Correctness of playback control never depends on `audible`.
+  `audible = true` so a same-tick IsPlaying doesn't see a stale false. Note this flag
+  therefore *does* have two writers — that is acceptable here and only here, because
+  it is advisory: a lost update costs one block (~21 ms) of staleness, worst case a
+  finished voice looks busy (or a busy voice reusable), which for voice bookkeeping
+  is benign. Correctness of playback control never depends on `audible`. (Reviewer in
+  package D: don't flag this as an ownership violation; the rule protects flags the
+  render decision reads, and `audible` is not one.)
 
 **Start/stop ramps (CUE3D-15 clicks).** A per-source, audio-thread-only ramp gain
 smoothed toward `shouldRender ? 1 : 0` with a ~5 ms time constant, multiplied into the
@@ -154,11 +169,20 @@ computes the normalized game-frame direction before the DSP; branch after the PC
 - DIRECT: skip rear effect, binaural, *and* distance attenuation; mix mono to both
   channels at equal power (`1/√2` each).
 
+Footgun: "skip rear effect" is **two** code sites, not one. The rear *gain dip* is
+folded into `effGain` at the PCM fill (`1.0f - rearGainDip * rearAmount`, currently
+~line 305), separate from the muffle/tremolo loop; `distGain` lives in the same
+expression. So PAN must drop the dip term from the fill's gain (else it keeps a
+phantom rear volume dip), and DIRECT must drop both the dip term and `distGain` —
+skipping only the filter/tremolo block is not enough.
+
 **Per-source low-pass.** `std::atomic<float> lowPassHz` + its own one-pole state
 (`lpState2`), run in series with (before or after — implementer's pick, keep it
 consistent) the rear muffle, active in all modes when cutoff > 0. Same alpha-clamp
-discipline as the existing filter. Sanitize in the setter: non-finite → 0, else clamp
-to [20, 20000]; treat <= 0 as off.
+discipline as the existing filter. Sanitize in the setter, **in this order** (the
+order matters: 0 is the documented *disable* value, so it must never be clamped up
+to 20 Hz — that would turn "off" into near-total muffle): non-finite **or** <= 0 →
+store 0 (off); otherwise (positive finite) clamp to [20, 20000].
 
 `CreateSource` resets every new field; `Cue3D_Shutdown` needs no change beyond that.
 
@@ -210,10 +234,17 @@ pushes them alongside position/pitch.
 (`voice.playing && !Cue3D_IsPlaying(voice.source)` → mark idle), acquire a free voice
 (un-keyed — `hasKey` stays false so the refresh-or-stop reap never touches it), set
 params, `Cue3D_Play`. If the pool is exhausted mid-flight, steal the oldest playing
-one-shot (they're fire-and-forget; a re-trigger beats a drop). `Cue::Tick` also
-refreshes one-shot `voice.playing` from `Cue3D_IsPlaying` so `PushGain`'s 1/√N
+one-shot (they're fire-and-forget; a re-trigger beats a drop). "Oldest" needs an
+ordering stamp — no per-voice start order exists today; add a per-Cue monotonic
+counter stamped onto the voice at each PlayOnce (not wall-clock time). `Cue::Tick`
+also refreshes one-shot `voice.playing` from `Cue3D_IsPlaying` so `PushGain`'s 1/√N
 headroom count converges after sounds end. Looping cues keep today's bookkeeping
 untouched — do not route their state through `IsPlaying`.
+
+Guards, matching every other gameplay entry point: `PlayOnce` no-ops while
+`mPreviewing` (the UI owns the cue; same rule as SetTarget/TargetVoice). Mixed use
+is a caller bug, not UB: `Start`/`TargetVoice` on a `loop = false` cue and
+`PlayOnce` on a looping cue both no-op with a one-time warn log.
 
 **Preview of a one-shot cue.** The preview window stays ~3 s; a one-shot sound is
 re-triggered about once per second within it so the player hears a few reps instead of
@@ -234,14 +265,26 @@ self-voiced by the existing narrator). Everything takes effect live.
 
 The bench drives the **raw seam** for the continuous source (that's the layer under
 test) and a **hidden one-shot `Cue`** (via `CueSpec::hiddenFromSettings`) for the
-`PlayOnce` path, so the Cue layer's new code gets bench coverage too.
+`PlayOnce` path, so the Cue layer's new code gets bench coverage too. Register the
+hidden cue with `CueSpec::generator` (the bench's sine blip), not a WAV — that gives
+the generator path Cue-layer coverage, which the "Synthesized tone" checkbox (raw
+seam only) does not.
+
+Source lifetime constraint: the seam has **no per-source free** — a slot is only
+reclaimed by `Cue3D_Shutdown`, and adding a `Cue3D_Free` would mean synchronizing
+against a callback mid-block in the PCM, which this plan deliberately avoids. So the
+bench must NOT recreate sources on toggles. It lazily creates **both** continuous
+sources once (one from the WAV via `Cue3D_Load`, one from the generated tone via
+`Cue3D_LoadPcm`) and the "Synthesized tone" checkbox switches which of the two is
+playing. Fixed cost: 2 slots for the bench's continuous pair + 1 for the hidden cue,
+alongside gameplay's up-to-9 — comfortably inside the pool of 16.
 
 Controls, each mapping to a capability and an ear-verifiable pass condition:
 
 | Control | Exercises | Pass by ear |
 |---|---|---|
 | "Test bench active" checkbox | seam lifecycle, no-restart | sound appears/disappears immediately |
-| "Synthesized tone" checkbox | `Cue3D_LoadPcm` + generator path | source swaps WAV ↔ generated tone (recreate the source on toggle) |
+| "Synthesized tone" checkbox | `Cue3D_LoadPcm` + generator path | sound swaps WAV ↔ generated tone (two pre-created sources; the toggle switches which plays — see the lifetime note above) |
 | "Orbit" checkbox (else fixed ahead) | old smoke test, kept | 4 s front→right→behind→left sweep |
 | Render mode combo (HRTF/Pan/Direct) | `Cue3D_SetMode` | orbit collapses to pure L–R sweep in Pan; centered and constant in Direct |
 | Pitch slider (0.5–2.0) | existing `SetPitch` | pitch tracks slider |
@@ -298,7 +341,10 @@ covered by the CMake glob (SpatialAudioTest was picked up without a CMake edit).
 
 1. **Regressions first** — ring cue and enemy cue in Training sound unchanged
    (direction, distance falloff, Y→pitch, rear muffle/dip/tremolo sliders still live,
-   volume sliders + previews still work, pause still silences).
+   volume sliders + previews still work, pause still silences). Two known, accepted
+   deltas (see the `Cue3D_Play` note in D1): a restarting voice begins at the sound's
+   start instead of resuming mid-loop, and every start/stop now has a ~5 ms ramp.
+   "Unchanged" means no *new* artifacts — no clicks, no missing cues, no level shifts.
 2. **Bench walk-through** — each control per the D4 table, in HRTF mode first, then
    the mode combo, then the stress toggles last (rapid re-trigger, start/stop stress:
    listen for swallowed plays and clicks).
