@@ -112,7 +112,9 @@ void Cue3D_SetGain(Cue3DSource* source, float gain);
 // Set a playback-rate multiplier on the source (1.0 = native rate / no shift,
 // 2.0 = one octave up, 0.5 = one octave down). Cheap; safe to call every frame.
 // Used as an explicit elevation cue (higher source -> higher pitch) layered on
-// top of the spatializer's own positional rendering.
+// top of the spatializer's own positional rendering. Applied with a short
+// (~20 ms) slew, so per-game-frame updates glide instead of stepping; a
+// re-Play snaps straight to the latest rate.
 void Cue3D_SetPitch(Cue3DSource* source, float rate);
 
 // Silence the source. It stays loaded and can be played again.

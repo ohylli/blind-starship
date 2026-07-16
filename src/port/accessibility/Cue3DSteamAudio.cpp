@@ -117,6 +117,13 @@ constexpr float kLowPassMaxHz = 20000.0f;
 constexpr float kRampTimeConstantSec = 0.005f;
 constexpr float kRampSilenceGate = 1.0e-4f;
 
+// Pitch-step smoothing: the game thread pushes a new rate at most once per game frame
+// (~30 Hz), so a vertically moving target would step pitch in audible jumps. The fill
+// loop slews the applied rate toward the target per sample with this time constant —
+// long enough to turn ~33 ms steps into a glide, short enough that the elevation
+// signal barely lags the target.
+constexpr float kRateSmoothTimeConstantSec = 0.020f;
+
 constexpr float kInvSqrt2 = 0.70710678f; // equal-power center gain for CUE3D_MODE_DIRECT
 
 // Non-finite input falls back to the caller's default rather than a bound: NaN has no
@@ -154,6 +161,7 @@ struct Cue3DSource {
     float lpState2 = 0.0f;   // per-source low-pass one-pole state (audio-thread-only, like lpState)
     float tremPhase = 0.0f;  // rear-tremolo LFO phase, radians (audio-thread-only, like cursor)
     float rampGain = 0.0f;   // start/stop click-guard ramp, 0..1 (audio-thread-only, like cursor)
+    float smoothRate = 1.0f; // slewed pitch rate the cursor actually advances by (audio-thread-only, like cursor)
     double intervalCounter = 0.0; // wall-clock frames since the last (re)start, for interval cadence (audio-thread-only)
     uint32_t lastGen = 0;    // last startGen the callback adopted (audio-thread-only, like cursor)
     bool ended = false;      // one-shot reached EOF; render gate, cleared on gen bump (audio-thread-only, like cursor)
@@ -274,6 +282,7 @@ Cue3DSource* CreateSource(const float* monoPcm, int frames, bool loop) {
     s.lpState2 = 0.0f;
     s.tremPhase = 0.0f;
     s.rampGain = 0.0f;
+    s.smoothRate = 1.0f;
     s.intervalCounter = 0.0;
     s.lastGen = 0;
     s.ended = false;
@@ -326,6 +335,11 @@ void ProduceBlock() {
             s.ended = false;
             s.intervalCounter = 0.0;
             s.rampGain = 0.0f;
+            // Snap the rate slew to the freshly set target: a restart ramps in from
+            // silence anyway, and gliding out of the previous pitch would smear the
+            // first pulse of a retargeted voice. The atomic only ever holds sanitized
+            // values (SetPitch validates on store), so the snap needs no re-check.
+            s.smoothRate = s.rate.load(std::memory_order_relaxed);
         }
 
         // Render while the source wants to sound; keep rendering a stopped or finished
@@ -426,15 +440,24 @@ void ProduceBlock() {
         float rampAlpha = 1.0f - std::exp(-1.0f / (kRampTimeConstantSec * (float) g.sampleRate));
         rampAlpha = rampAlpha < 0.0f ? 0.0f : (rampAlpha > 1.0f ? 1.0f : rampAlpha);
 
+        // Rate slew (see kRateSmoothTimeConstantSec): the cursor advances by smoothRate,
+        // eased toward the block's target rate per sample. The slewed value is a convex
+        // mix of seam-sanitized rates, so it inherits their positive/finite bounds and
+        // the cursor-validity argument below is unchanged.
+        float rateAlpha = 1.0f - std::exp(-1.0f / (kRateSmoothTimeConstantSec * (float) g.sampleRate));
+        rateAlpha = rateAlpha < 0.0f ? 0.0f : (rateAlpha > 1.0f ? 1.0f : rateAlpha);
+
         // Fill the mono input from this source's PCM, applying the fill gain and the ramp
-        // and advancing the cursor by `rate` (pitch) with linear interpolation between
-        // bracketing samples — nearest-sample at a fractional rate would add audible
-        // zipper/aliasing noise. Loop-wrap (seamless, preserving the fractional phase)
-        // when no interval is set; otherwise play once and pad the gap with silence until
-        // the interval restarts it; or zero-pad + latch `ended` at a one-shot's end.
+        // and advancing the cursor by the slewed rate (pitch), interpolating between
+        // bracketing samples (4-point Catmull-Rom below). Loop-wrap (seamless, preserving
+        // the fractional phase) when no interval is set; otherwise play once and pad the
+        // gap with silence until the interval restarts it; or zero-pad + latch `ended` at
+        // a one-shot's end.
+        const bool wrapsSeamlessly = s.loop && !intervalActive;
         double cursor = s.cursor;
         double intervalCounter = s.intervalCounter;
         float rampGain = s.rampGain;
+        float smoothRate = s.smoothRate;
         bool ended = s.ended;
         for (int n = 0; n < kFrameSize; n++) {
             // Interval restart, before sampling so the restarted cursor is used this frame.
@@ -460,7 +483,7 @@ void ProduceBlock() {
             // it is nonetheless the bounds check standing in front of the indexing, and a
             // bounds check does not get to assume its input was validated elsewhere.
             if (!(cursor >= 0.0 && cursor < s.frameCount)) {
-                if (!intervalActive && s.loop) {
+                if (wrapsSeamlessly) {
                     cursor -= s.frameCount;
                     if (!(cursor >= 0.0 && cursor < s.frameCount)) {
                         cursor = 0.0; // tiny pcm / huge rate overshoot, or a non-finite cursor
@@ -483,19 +506,39 @@ void ProduceBlock() {
                     continue;
                 }
             }
-            int i0 = (int) cursor;
-            float frac = (float) (cursor - i0);
-            float a = s.pcm[i0];
-            int i1 = i0 + 1;
-            // Next sample: wrap to the start for a seamless loop, hold otherwise (one-shot,
-            // or an interval source whose single playthrough must not wrap).
-            float b = (i1 < s.frameCount) ? s.pcm[i1] : ((s.loop && !intervalActive) ? s.pcm[0] : a);
-            mono[n] = (a + (b - a) * frac) * effGain * rampGain;
-            cursor += rate;
+            smoothRate += (rate - smoothRate) * rateAlpha;
+
+            // 4-point Catmull-Rom around the cursor — linear interpolation at a fractional
+            // rate leaves audible grit (no anti-alias rolloff pitching up, dulling pitching
+            // down). x1 is the sample at/behind the cursor, x0 its predecessor, x2/x3 the
+            // two ahead. Neighbors wrap for a seamless loop — each index lands at most one
+            // step out of range, so a single conditional wrap each (chained for x3) covers
+            // any frameCount >= 1 — and hold at the buffer edges otherwise (one-shot, or an
+            // interval source whose single playthrough must not wrap).
+            int i1 = (int) cursor;
+            float frac = (float) (cursor - i1);
+            float x1 = s.pcm[i1];
+            float x0 = (i1 > 0) ? s.pcm[i1 - 1] : (wrapsSeamlessly ? s.pcm[s.frameCount - 1] : x1);
+            float x2, x3;
+            if (wrapsSeamlessly) {
+                int i2 = (i1 + 1 < s.frameCount) ? i1 + 1 : 0;
+                int i3 = (i2 + 1 < s.frameCount) ? i2 + 1 : 0;
+                x2 = s.pcm[i2];
+                x3 = s.pcm[i3];
+            } else {
+                x2 = (i1 + 1 < s.frameCount) ? s.pcm[i1 + 1] : x1;
+                x3 = (i1 + 2 < s.frameCount) ? s.pcm[i1 + 2] : x2;
+            }
+            float c1 = 0.5f * (x2 - x0);
+            float c2 = x0 - 2.5f * x1 + 2.0f * x2 - 0.5f * x3;
+            float c3 = 0.5f * (x3 - x0) + 1.5f * (x1 - x2);
+            mono[n] = (((c3 * frac + c2) * frac + c1) * frac + x1) * effGain * rampGain;
+            cursor += smoothRate;
         }
         s.cursor = cursor;
         s.intervalCounter = intervalCounter;
         s.rampGain = rampGain;
+        s.smoothRate = smoothRate;
         // One-shot EOF latches `ended` (audio-thread-only) — it never touches `playing`,
         // so a concurrent Cue3D_Play cannot be lost. The next gen bump clears it and
         // rewinds the cursor.
