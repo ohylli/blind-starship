@@ -428,6 +428,7 @@ Cue* CueRegistry_Register(const char* id, const char* name, const char* descript
     CVarRegisterFloat(kCueRearGainDipCVar, CUE3D_REAR_GAIN_DIP_DEFAULT);
     CVarRegisterFloat(kCueRearTremoloDepthCVar, CUE3D_REAR_TREMOLO_DEPTH_DEFAULT);
     CVarRegisterFloat(kCueRearTremoloHzCVar, CUE3D_REAR_TREMOLO_HZ_DEFAULT);
+    CVarRegisterInteger(kCuePitchShiftCVar, 1);
     OwnedCues().emplace_back(new Cue(id, name, description, spec));
     Cue* cue = OwnedCues().back().get();
     AllCues().push_back(cue);
@@ -442,11 +443,13 @@ void CueRegistry_Tick() {
     // Re-read the rear-effect knobs and push them to the backend, for the same reason
     // PushGain re-reads the volume CVars: they are runtime-editable from the settings
     // sliders AND from the console, and a pull-per-tick is the only wiring that honours
-    // both. Four gets and four relaxed stores per 30 fps tick, so cheaper than PushGain.
+    // both. A handful of gets and relaxed stores per 30 fps tick, so cheaper than
+    // PushGain. The pitch-style flag rides the same cycle.
     Cue3D_SetRearEffect(CVarGetFloat(kCueRearCutoffCVar, CUE3D_REAR_CUTOFF_HZ_DEFAULT),
                         CVarGetFloat(kCueRearGainDipCVar, CUE3D_REAR_GAIN_DIP_DEFAULT),
                         CVarGetFloat(kCueRearTremoloDepthCVar, CUE3D_REAR_TREMOLO_DEPTH_DEFAULT),
                         CVarGetFloat(kCueRearTremoloHzCVar, CUE3D_REAR_TREMOLO_HZ_DEFAULT));
+    Cue3D_SetPitchStyle(CVarGetInteger(kCuePitchShiftCVar, 1) != 0 ? CUE3D_PITCH_SHIFT : CUE3D_PITCH_RESAMPLE);
     for (Cue* cue : AllCues()) {
         cue->Tick();
     }

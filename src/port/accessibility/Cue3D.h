@@ -109,13 +109,28 @@ void Cue3D_SetPosition(Cue3DSource* source, float x, float y, float z);
 // docs/accessibility-hrtf-cues.md "Known limitations".
 void Cue3D_SetGain(Cue3DSource* source, float gain);
 
-// Set a playback-rate multiplier on the source (1.0 = native rate / no shift,
+// Set a pitch multiplier on the source (1.0 = native pitch / no shift,
 // 2.0 = one octave up, 0.5 = one octave down). Cheap; safe to call every frame.
 // Used as an explicit elevation cue (higher source -> higher pitch) layered on
-// top of the spatializer's own positional rendering. Applied with a short
-// (~20 ms) slew, so per-game-frame updates glide instead of stepping; a
-// re-Play snaps straight to the latest rate.
+// top of the spatializer's own positional rendering. HOW the multiplier is
+// realized is selected by Cue3D_SetPitchStyle below; in RESAMPLE style it is
+// applied with a short (~20 ms) slew, so per-game-frame updates glide instead
+// of stepping, and a re-Play snaps straight to the latest rate.
 void Cue3D_SetPitch(Cue3DSource* source, float rate);
+
+// How the backend realizes Cue3D_SetPitch, for ALL sources (global, like
+// Cue3D_SetRearEffect). An A/B experiment toggle while the elevation-pitch sound
+// is being settled by ear — expect it to collapse to one style once judged:
+//   CUE3D_PITCH_RESAMPLE — playback-rate change. Artifact-free and latency-free,
+//     but pitch drags duration and timbre with it (the "chipmunk" effect): a cue
+//     pitched an octave up plays twice as fast and thin.
+//   CUE3D_PITCH_SHIFT    — spectral pitch shifter (Signalsmith Stretch). Duration
+//     and envelope stay fixed; costs ~0.1 s of latency on the AUDIO CONTENT
+//     (onsets, pitch changes — pulse cadence and spatial position are unaffected)
+//     plus some transient softening, and noticeably more CPU per source.
+// Cheap, lock-free, safe to call any time; takes effect within a block (~21 ms).
+typedef enum Cue3DPitchStyle { CUE3D_PITCH_RESAMPLE = 0, CUE3D_PITCH_SHIFT } Cue3DPitchStyle;
+void Cue3D_SetPitchStyle(Cue3DPitchStyle style);
 
 // Silence the source. It stays loaded and can be played again.
 void Cue3D_Stop(Cue3DSource* source);

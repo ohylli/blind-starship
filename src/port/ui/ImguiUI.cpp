@@ -1129,6 +1129,14 @@ void DrawDebugMenu() {
                 .format = "%.0f/oct",
                 .step = 250.0f,
             });
+            // HOW pitch is realized (Cue3D_SetPitchStyle) — deliberately NOT disabled with
+            // the height-to-pitch toggle: the bench's pitch slider goes through it too.
+            UIWidgets::CVarCheckbox("Spectral pitch shifter", kCuePitchShiftCVar, {
+                .tooltip = "Bend cue pitch with a spectral shifter, keeping each sound's length and "
+                           "character (off = classic playback-rate change: higher also means faster "
+                           "and thinner). Costs about a tenth of a second of cue-sound latency.",
+                .defaultValue = true,
+            });
             // Rear-effect tuning: how strongly the cue backend exaggerates "behind you"
             // (docs/accessibility-cues-tuning.md). Re-read and pushed to the audio thread
             // every tick by CueRegistry_Tick, so the knobs can be A/B'd by ear against the

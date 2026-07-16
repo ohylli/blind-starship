@@ -63,6 +63,11 @@ inline constexpr const char* kCueRearGainDipCVar = "gAccessibilityCueRearGainDip
 inline constexpr const char* kCueRearTremoloDepthCVar = "gAccessibilityCueRearTremoloDepth";
 inline constexpr const char* kCueRearTremoloHzCVar = "gAccessibilityCueRearTremoloHz";
 
+// Pitch realization style (int CVar, 1 = spectral pitch shifter, 0 = playback-rate
+// resample; see Cue3D_SetPitchStyle for the tradeoff). Same registration/push cycle as
+// the rear knobs above. Default 1 while the shifter is the experiment under evaluation.
+inline constexpr const char* kCuePitchShiftCVar = "gAccessibilityCuePitchShift";
+
 // Everything a cue is registered WITH (vs. the id/name/description identity strings, which
 // stay explicit parameters). Exactly one of wavPath/generator must be set — the cue's
 // sound either comes from a file or is synthesized once per voice at load time.

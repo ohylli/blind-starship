@@ -4,6 +4,7 @@
 
 #include <phonon.h>
 #include "miniaudio.h"
+#include "signalsmith-stretch.h"
 #include <spdlog/spdlog.h>
 #include <atomic>
 #include <cmath>
@@ -80,6 +81,12 @@ std::atomic<float> g_rearCutoffHz{ CUE3D_REAR_CUTOFF_HZ_DEFAULT };
 std::atomic<float> g_rearGainDip{ CUE3D_REAR_GAIN_DIP_DEFAULT };
 std::atomic<float> g_rearTremoloDepth{ CUE3D_REAR_TREMOLO_DEPTH_DEFAULT };
 std::atomic<float> g_rearTremoloHz{ CUE3D_REAR_TREMOLO_HZ_DEFAULT };
+
+// How Cue3D_SetPitch is realized (Cue3D_SetPitchStyle) — global across sources like the
+// rear knobs. RESAMPLE (rate-change) is the default so a caller that never touches the
+// style gets the seam's long-documented behavior; the cue settings layer pushes the
+// CVar-selected style every tick.
+std::atomic<int> g_pitchStyle{ CUE3D_PITCH_RESAMPLE };
 
 // Hard bounds for the values the game thread pushes at the audio thread. The CVars behind
 // them are reachable from the console and a hand-edited config, not just the sliders, so
@@ -162,6 +169,15 @@ struct Cue3DSource {
     float tremPhase = 0.0f;  // rear-tremolo LFO phase, radians (audio-thread-only, like cursor)
     float rampGain = 0.0f;   // start/stop click-guard ramp, 0..1 (audio-thread-only, like cursor)
     float smoothRate = 1.0f; // slewed pitch rate the cursor actually advances by (audio-thread-only, like cursor)
+
+    // Spectral pitch shifter for CUE3D_PITCH_SHIFT. Allocated and configured (which is
+    // what allocates) in CreateSource on the MAIN thread, freed in Cue3D_Shutdown; the
+    // audio thread only calls its allocation-free process()/reset()/setTransposeFactor().
+    // Visibility rides the inUse release/acquire pair like effect/pcm.
+    signalsmith::stretch::SignalsmithStretch<float>* stretch = nullptr;
+    int shiftLatencyFrames = 0;  // shifter input+output latency, frames (immutable after publish)
+    int shiftTail = 0;           // shifter tail left to drain after stop/EOF, frames (audio-thread-only)
+    bool shiftWasActive = false; // previous block took the shift path (audio-thread-only) — style-flip reset detector
     double intervalCounter = 0.0; // wall-clock frames since the last (re)start, for interval cadence (audio-thread-only)
     uint32_t lastGen = 0;    // last startGen the callback adopted (audio-thread-only, like cursor)
     bool ended = false;      // one-shot reached EOF; render gate, cleared on gen bump (audio-thread-only, like cursor)
@@ -225,6 +241,11 @@ struct SpatialState {
     float accL[kFrameSize] = { 0 };
     float accR[kFrameSize] = { 0 };
 
+    // Scratch mono block for CUE3D_PITCH_SHIFT: the fill loop renders native-rate PCM
+    // here and the spectral shifter produces the spatializer's mono input from it.
+    // Reused per source, audio-thread-only, like inBuf.
+    float shiftIn[kFrameSize] = { 0 };
+
     // Interleaved stereo carry buffer: one processed block, drained across however
     // many frames the device callback asks for. Audio-thread-only.
     float block[kFrameSize * 2] = { 0 };
@@ -270,9 +291,21 @@ Cue3DSource* CreateSource(const float* monoPcm, int frames, bool loop) {
 
     try {
         s.pcm.assign(monoPcm, monoPcm + frames);
+        // Pitch shifter for CUE3D_PITCH_SHIFT. Allocated once per slot and reconfigured
+        // on reuse (configure is where SignalsmithStretch allocates — done HERE, on the
+        // main thread, so the audio thread's process() never does). presetDefault is the
+        // library's full-quality setting: ~0.12 s analysis block, which is also where the
+        // shift path's latency comes from (see shiftLatencyFrames / the drain logic).
+        if (s.stretch == nullptr) {
+            s.stretch = new signalsmith::stretch::SignalsmithStretch<float>();
+        }
+        s.stretch->presetDefault(1, (float) g.sampleRate);
+        s.shiftLatencyFrames = s.stretch->inputLatency() + s.stretch->outputLatency();
     } catch (const std::exception& e) {
         // Never let a C++ allocation failure unwind through the extern "C" callers.
-        SPDLOG_ERROR("Cue3D: PCM allocation failed ({}); source not created", e.what());
+        SPDLOG_ERROR("Cue3D: source allocation failed ({}); source not created", e.what());
+        delete s.stretch; // possibly half-configured; drop it entirely
+        s.stretch = nullptr;
         iplBinauralEffectRelease(&s.effect); // undo the effect created just above
         return nullptr;
     }
@@ -283,6 +316,8 @@ Cue3DSource* CreateSource(const float* monoPcm, int frames, bool loop) {
     s.tremPhase = 0.0f;
     s.rampGain = 0.0f;
     s.smoothRate = 1.0f;
+    s.shiftTail = 0;
+    s.shiftWasActive = false; // forces a shifter reset on the slot's first shifted block
     s.intervalCounter = 0.0;
     s.lastGen = 0;
     s.ended = false;
@@ -313,6 +348,7 @@ void ProduceBlock() {
     std::memset(g.accR, 0, sizeof(g.accR));
 
     float* mono = g.inBuf.data[0];
+    const int pitchStyle = g_pitchStyle.load(std::memory_order_relaxed);
 
     for (int i = 0; i < kMaxSources; i++) {
         Cue3DSource& s = g_sources[i];
@@ -347,7 +383,16 @@ void ProduceBlock() {
         // not click. `audible` is the advisory status handed back to Cue3D_IsPlaying.
         const bool shouldRender = playing && !s.ended;
         s.audible.store(shouldRender, std::memory_order_relaxed);
-        if (!shouldRender && s.rampGain <= kRampSilenceGate) {
+        // SHIFT style routes the fill through the spectral shifter below. A source keeps
+        // rendering past stop/EOF while the shifter still holds signal (shiftTail, in
+        // frames) — the skip gate honours it so a one-shot's last ~0.1 s is not cut off.
+        // A style flip mid-drain zeroes the tail; RESAMPLE has nothing left to drain and
+        // the stale count must not keep the source alive forever.
+        const bool shiftPath = pitchStyle == CUE3D_PITCH_SHIFT && s.stretch != nullptr;
+        if (!shiftPath) {
+            s.shiftTail = 0;
+        }
+        if (!shouldRender && s.rampGain <= kRampSilenceGate && s.shiftTail <= 0) {
             continue;
         }
 
@@ -447,12 +492,16 @@ void ProduceBlock() {
         float rateAlpha = 1.0f - std::exp(-1.0f / (kRateSmoothTimeConstantSec * (float) g.sampleRate));
         rateAlpha = rateAlpha < 0.0f ? 0.0f : (rateAlpha > 1.0f ? 1.0f : rateAlpha);
 
-        // Fill the mono input from this source's PCM, applying the fill gain and the ramp
-        // and advancing the cursor by the slewed rate (pitch), interpolating between
-        // bracketing samples (4-point Catmull-Rom below). Loop-wrap (seamless, preserving
-        // the fractional phase) when no interval is set; otherwise play once and pad the
-        // gap with silence until the interval restarts it; or zero-pad + latch `ended` at
-        // a one-shot's end.
+        // Fill a mono block from this source's PCM, applying the fill gain and the ramp.
+        // RESAMPLE style renders straight into the spatializer's mono input, advancing
+        // the cursor by the slewed rate (pitch) and interpolating between bracketing
+        // samples (4-point Catmull-Rom below); SHIFT style renders at native rate (cursor
+        // advances by exactly 1) into the scratch block, and the spectral shifter after
+        // this loop produces the mono input from it. Either way: loop-wrap (seamless,
+        // preserving the fractional phase) when no interval is set; otherwise play once
+        // and pad the gap with silence until the interval restarts it; or zero-pad +
+        // latch `ended` at a one-shot's end.
+        float* fill = shiftPath ? g.shiftIn : mono;
         const bool wrapsSeamlessly = s.loop && !intervalActive;
         double cursor = s.cursor;
         double intervalCounter = s.intervalCounter;
@@ -499,12 +548,22 @@ void ProduceBlock() {
                     // interval source keeps rendering and waits for the counter above to
                     // restart it. The cursor is left past the end — the gen bump or interval
                     // restart rewinds it.
-                    mono[n] = 0.0f;
+                    fill[n] = 0.0f;
                     if (!s.loop) {
                         ended = true;
                     }
                     continue;
                 }
+            }
+            if (shiftPath) {
+                // Native-rate read: the pitch multiplier is realized by the spectral
+                // shifter after this loop, so no interpolation and no rate slew here.
+                // (int) truncation is exact — the cursor is integral on this path —
+                // except for one sample right after a style flip, where dropping the
+                // resample path's stale fraction once is inaudible.
+                fill[n] = s.pcm[(int) cursor] * effGain * rampGain;
+                cursor += 1.0;
+                continue;
             }
             smoothRate += (rate - smoothRate) * rateAlpha;
 
@@ -532,17 +591,48 @@ void ProduceBlock() {
             float c1 = 0.5f * (x2 - x0);
             float c2 = x0 - 2.5f * x1 + 2.0f * x2 - 0.5f * x3;
             float c3 = 0.5f * (x3 - x0) + 1.5f * (x1 - x2);
-            mono[n] = (((c3 * frac + c2) * frac + c1) * frac + x1) * effGain * rampGain;
+            fill[n] = (((c3 * frac + c2) * frac + c1) * frac + x1) * effGain * rampGain;
             cursor += smoothRate;
         }
         s.cursor = cursor;
         s.intervalCounter = intervalCounter;
         s.rampGain = rampGain;
-        s.smoothRate = smoothRate;
+        // On the shift path the slew never ran; pin it to the block target so a flip
+        // back to RESAMPLE starts at the current pitch instead of gliding out of a
+        // stale one.
+        s.smoothRate = shiftPath ? rate : smoothRate;
         // One-shot EOF latches `ended` (audio-thread-only) — it never touches `playing`,
         // so a concurrent Cue3D_Play cannot be lost. The next gen bump clears it and
         // rewinds the cursor.
         s.ended = ended;
+
+        // SHIFT style: realize the pitch multiplier by running the native-rate scratch
+        // block through the spectral shifter into the spatializer's mono input (1:1
+        // frame count, so pitch moves but duration/cadence do not). Everything after
+        // this point — per-source low-pass, rear effect, HRTF/pan/direct — is common to
+        // both styles and operates on the shifter's OUTPUT.
+        if (shiftPath) {
+            if (!s.shiftWasActive) {
+                // First shifted block (style flip, or a reused slot's first render):
+                // drop whatever a previous sound or style left inside the analysis
+                // window. reset() is allocation-free, so it is safe here.
+                s.stretch->reset();
+            }
+            // Applied per block (~21 ms); the shifter's own spectral hop smooths the
+            // steps, so no per-sample slew is needed on this path. The tonality limit
+            // (a fraction of the sample rate, the library's recommended shape for
+            // musical material) keeps the harmonics of tonal cues coherent.
+            s.stretch->setTransposeFactor(rate, 8000.0f / (float) g.sampleRate);
+            float* shiftInCh[1] = { g.shiftIn };
+            float* shiftOutCh[1] = { mono };
+            s.stretch->process(shiftInCh, kFrameSize, shiftOutCh, kFrameSize);
+            // Latency drain bookkeeping for the skip gate above: while rendering, the
+            // shifter always holds ~latency frames of signal; once stopped/ended, count
+            // that tail down block by block as silence flushes it out.
+            s.shiftTail = shouldRender ? s.shiftLatencyFrames
+                                       : (s.shiftTail > kFrameSize ? s.shiftTail - kFrameSize : 0);
+        }
+        s.shiftWasActive = shiftPath;
 
         // Per-source low-pass "muffle" (Cue3D_SetLowPass), in series BEFORE the rear muffle
         // and active in EVERY render mode — so it must run even when the rear block below
@@ -749,6 +839,10 @@ extern "C" void Cue3D_Shutdown(void) {
 
     for (int i = 0; i < kMaxSources; i++) {
         Cue3DSource& s = g_sources[i];
+        // The pitch shifter outlives inUse=false only until here (slots are reusable;
+        // the heap allocation is not kept across an Init/Shutdown cycle).
+        delete s.stretch;
+        s.stretch = nullptr;
         if (s.inUse.load(std::memory_order_relaxed)) {
             iplBinauralEffectRelease(&s.effect);
             s.pcm.clear();
@@ -904,6 +998,13 @@ extern "C" void Cue3D_SetPitch(Cue3DSource* source, float rate) {
     }
 }
 
+extern "C" void Cue3D_SetPitchStyle(Cue3DPitchStyle style) {
+    // Coerce like ProduceBlock's mode read: the CVar behind this is console-reachable,
+    // so any value that is not exactly SHIFT falls back to the RESAMPLE default.
+    g_pitchStyle.store(style == CUE3D_PITCH_SHIFT ? CUE3D_PITCH_SHIFT : CUE3D_PITCH_RESAMPLE,
+                       std::memory_order_relaxed);
+}
+
 extern "C" void Cue3D_SetPosition(Cue3DSource* source, float x, float y, float z) {
     if (source == nullptr) {
         return;
@@ -966,6 +1067,9 @@ extern "C" void Cue3D_SetGain(Cue3DSource* source, float gain) {
 extern "C" void Cue3D_SetPitch(Cue3DSource* source, float rate) {
     (void) source;
     (void) rate;
+}
+extern "C" void Cue3D_SetPitchStyle(Cue3DPitchStyle style) {
+    (void) style;
 }
 extern "C" void Cue3D_Stop(Cue3DSource* source) {
     (void) source;

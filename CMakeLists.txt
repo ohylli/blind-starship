@@ -394,6 +394,34 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "NintendoSwitch")
         endif()
     endif()
 
+    # Signalsmith Stretch (MIT, header-only): spectral pitch shifter behind the cue
+    # pitch path, so elevation pitch can move without the rate-change "chipmunk"
+    # duration/timbre shift. Tag 1.1.0 is self-contained (bundles its dsp/ headers),
+    # so this is a plain zip fetch like Steam Audio — no FetchContent, which matters
+    # here because of the PRISM target-name collision precedent (see the PRISM block).
+    set(SIGNALSMITH_STRETCH_VER 1.1.0)
+    set(SIGNALSMITH_STRETCH_DL_DIR ${CMAKE_BINARY_DIR}/signalsmith-stretch)
+    # The GitHub tag zip extracts to a single signalsmith-stretch-<ver>/ folder.
+    set(SIGNALSMITH_STRETCH_ROOT ${SIGNALSMITH_STRETCH_DL_DIR}/signalsmith-stretch-${SIGNALSMITH_STRETCH_VER})
+    if(NOT EXISTS ${SIGNALSMITH_STRETCH_ROOT}/signalsmith-stretch.h)
+        message(STATUS "Downloading Signalsmith Stretch ${SIGNALSMITH_STRETCH_VER}...")
+        file(DOWNLOAD
+            https://github.com/Signalsmith-Audio/signalsmith-stretch/archive/refs/tags/${SIGNALSMITH_STRETCH_VER}.zip
+            ${SIGNALSMITH_STRETCH_DL_DIR}/signalsmith-stretch-${SIGNALSMITH_STRETCH_VER}.zip
+            SHOW_PROGRESS STATUS _ss_status)
+        list(GET _ss_status 0 _ss_code)
+        if(NOT _ss_code EQUAL 0)
+            message(FATAL_ERROR "Failed to download Signalsmith Stretch: ${_ss_status}")
+        endif()
+        execute_process(
+            COMMAND ${CMAKE_COMMAND} -E tar xf signalsmith-stretch-${SIGNALSMITH_STRETCH_VER}.zip
+            WORKING_DIRECTORY ${SIGNALSMITH_STRETCH_DL_DIR}
+            RESULT_VARIABLE _ss_extract)
+        if(NOT _ss_extract EQUAL 0)
+            message(FATAL_ERROR "Failed to extract Signalsmith Stretch: ${_ss_extract}")
+        endif()
+    endif()
+
     if(WIN32)
         set(STEAMAUDIO_LIBDIR ${STEAMAUDIO_ROOT}/lib/windows-x64)
         set(STEAMAUDIO_IMPORT_LIB ${STEAMAUDIO_LIBDIR}/phonon.lib)
@@ -408,7 +436,8 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "NintendoSwitch")
         set(STEAMAUDIO_RUNTIME_LIB ${STEAMAUDIO_IMPORT_LIB})
     endif()
 
-    target_include_directories(${PROJECT_NAME} PRIVATE ${STEAMAUDIO_ROOT}/include ${MINIAUDIO_DIR})
+    target_include_directories(${PROJECT_NAME} PRIVATE ${STEAMAUDIO_ROOT}/include ${MINIAUDIO_DIR}
+                               ${SIGNALSMITH_STRETCH_ROOT})
     target_link_libraries(${PROJECT_NAME} PRIVATE ${STEAMAUDIO_IMPORT_LIB})
     target_compile_definitions(${PROJECT_NAME} PRIVATE HAVE_STEAM_AUDIO)
     add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
