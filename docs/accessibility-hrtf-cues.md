@@ -170,6 +170,15 @@ current cues, but each is a real gap.
   sharpening the HRTF's *own* elevation rendering is a **personalized SOFA HRTF**
   (`IPL_HRTFTYPE_SOFA` + `.sofaFileName`/`.sofaData` — see `phonon.h`), at which
   point the Y→pitch layer could potentially be dialled back.
+  - *How the pitch multiplier is realized is itself an open A/B.* The original
+    playback-rate change drags duration and timbre along with pitch (the
+    "chipmunk" character), so a spectral pitch shifter (Signalsmith Stretch) was
+    added alongside it — `Cue3D_SetPitchStyle`, switched live by the
+    `gAccessibilityCuePitchShift` checkbox (tuning doc § "Y→pitch"). The shifter
+    was judged the nicer sound in first listening; both styles are kept until the
+    choice is settled by ear, then the loser (and, if the rate path loses, its
+    Catmull-Rom/slew machinery) should be removed. Tradeoffs are documented at
+    the seam in `Cue3D.h`.
 
 - **Distance-model elevation handling.** The backend's inverse-distance model is
   *pure* — it uses the full 3D distance including the vertical component, so a
