@@ -83,6 +83,9 @@ struct CueSpec {
     int maxVoices = 1;                // voice-pool size, clamped to [1, 8]
     bool loop = true;                 // false = one-shot cue, driven via PlayOnce only
     Cue3DMode mode = CUE3D_MODE_HRTF; // pushed to each voice's source at load
+    // Per-source pitch-realization override (see Cue3D_SetSourcePitchStyle); GLOBAL follows
+    // the settings-layer A/B (kCuePitchShiftCVar). Pushed at load, like `mode`.
+    Cue3DSourcePitchStyle pitchStyle = CUE3D_SOURCE_PITCH_GLOBAL;
     bool hiddenFromSettings = false;  // bench/internal cues stay out of the volume-slider list
 };
 
@@ -159,10 +162,18 @@ class Cue {
     void StopPreview();
     bool IsPreviewing() const { return mPreviewing; }
 
-    // Recompute gGameMasterVolume x cue master x per-cue volume and push it to every live
-    // voice. SetTarget/TargetVoice/Start/StartPreview already do this; the settings UI
-    // calls it on slider change so a running preview tracks the slider live.
+    // Recompute gGameMasterVolume x cue master x per-cue volume (x gain boost, below) and
+    // push it to every live voice. SetTarget/TargetVoice/Start/StartPreview already do this;
+    // the settings UI calls it on slider change so a running preview tracks the slider live.
     void PushGain();
+
+    // Per-cue loudness normalization multiplied into PushGain()'s product UNDER the user's
+    // volume sliders (which stay 0..1): for sounds that are inherently quieter at equal
+    // sample level — a short click against a sustained loop — so every cue's slider means
+    // "relative to a sensible default" rather than leaving one cue with no headroom at 100%.
+    // Sanitized here (NaN / non-positive -> 1, capped at 8); applies to previews too, so the
+    // preview's loudness stays honest. Safe to push every tick from a CVar.
+    void SetGainBoost(float boost);
 
   private:
     friend Cue* CueRegistry_Register(const char* id, const char* name, const char* description, const CueSpec& spec);
@@ -203,6 +214,7 @@ class Cue {
     std::string mWavPath;    // owned copy of mSpec.wavPath (the registrant's pointer may not outlive registration)
 
     std::vector<Voice> mVoices; // fixed size (= registration maxVoices) for the cue's life
+    float mGainBoost = 1.0f;    // loudness normalization, see SetGainBoost
     bool mLoadFailed = false;   // don't retry a failed load every frame
     uint64_t mNextStartStamp = 1; // feeds Voice::startStamp on each PlayOnce
     bool mWarnedWrongApi = false; // one-time warn for looping-API-on-one-shot (and vice versa)

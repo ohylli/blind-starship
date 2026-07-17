@@ -198,6 +198,8 @@ struct Cue3DSource {
     std::atomic<float> intervalSec{ 0.0f }; // restart cadence, seconds; 0 = seamless loop (looping sources only)
     std::atomic<int> mode{ CUE3D_MODE_HRTF }; // Cue3DMode render selector (HRTF / PAN / DIRECT)
     std::atomic<float> lowPassHz{ 0.0f };   // per-source low-pass cutoff; 0 = off
+    // Cue3DSourcePitchStyle: per-source pitch-realization override; GLOBAL follows g_pitchStyle.
+    std::atomic<int> pitchStyleOverride{ CUE3D_SOURCE_PITCH_GLOBAL };
 
     // The stop lever, GAME-THREAD-WRITE-ONLY: Cue3D_Play sets it, Cue3D_Stop clears it,
     // and NOTHING else writes it. The callback only reads it. Split out from the old
@@ -336,6 +338,7 @@ Cue3DSource* CreateSource(const float* monoPcm, int frames, bool loop) {
     s.intervalSec.store(0.0f, std::memory_order_relaxed); // seamless loop until SetInterval
     s.mode.store(CUE3D_MODE_HRTF, std::memory_order_relaxed);
     s.lowPassHz.store(0.0f, std::memory_order_relaxed); // no per-source muffle until SetLowPass
+    s.pitchStyleOverride.store(CUE3D_SOURCE_PITCH_GLOBAL, std::memory_order_relaxed);
     s.playing.store(false, std::memory_order_relaxed);  // silent until Cue3D_Play
     // lastGen (0 above) matches this fresh startGen, so the first block does not spuriously
     // "restart" — the first real restart comes from Cue3D_Play bumping startGen to 1.
@@ -394,7 +397,11 @@ void ProduceBlock() {
         // frames) — the skip gate honours it so a one-shot's last ~0.1 s is not cut off.
         // A style flip mid-drain zeroes the tail; RESAMPLE has nothing left to drain and
         // the stale count must not keep the source alive forever.
-        const bool shiftPath = pitchStyle == CUE3D_PITCH_SHIFT && s.stretch != nullptr;
+        const int styleOverride = s.pitchStyleOverride.load(std::memory_order_relaxed);
+        const int effectiveStyle = styleOverride == CUE3D_SOURCE_PITCH_RESAMPLE ? CUE3D_PITCH_RESAMPLE
+                                   : styleOverride == CUE3D_SOURCE_PITCH_SHIFT  ? CUE3D_PITCH_SHIFT
+                                                                                : pitchStyle;
+        const bool shiftPath = effectiveStyle == CUE3D_PITCH_SHIFT && s.stretch != nullptr;
         if (!shiftPath) {
             s.shiftTail = 0;
         }
@@ -1009,6 +1016,18 @@ extern "C" void Cue3D_SetPitchStyle(Cue3DPitchStyle style) {
                        std::memory_order_relaxed);
 }
 
+extern "C" void Cue3D_SetSourcePitchStyle(Cue3DSource* source, Cue3DSourcePitchStyle style) {
+    if (source == nullptr) {
+        return;
+    }
+    // Coerce like Cue3D_SetPitchStyle: anything that is not exactly RESAMPLE or SHIFT
+    // falls back to the follow-global default.
+    int value = (style == CUE3D_SOURCE_PITCH_RESAMPLE || style == CUE3D_SOURCE_PITCH_SHIFT)
+                    ? (int) style
+                    : (int) CUE3D_SOURCE_PITCH_GLOBAL;
+    source->pitchStyleOverride.store(value, std::memory_order_relaxed);
+}
+
 extern "C" void Cue3D_SetPosition(Cue3DSource* source, float x, float y, float z) {
     if (source == nullptr) {
         return;
@@ -1073,6 +1092,10 @@ extern "C" void Cue3D_SetPitch(Cue3DSource* source, float rate) {
     (void) rate;
 }
 extern "C" void Cue3D_SetPitchStyle(Cue3DPitchStyle style) {
+    (void) style;
+}
+extern "C" void Cue3D_SetSourcePitchStyle(Cue3DSource* source, Cue3DSourcePitchStyle style) {
+    (void) source;
     (void) style;
 }
 extern "C" void Cue3D_Stop(Cue3DSource* source) {

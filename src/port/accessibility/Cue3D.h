@@ -132,6 +132,20 @@ void Cue3D_SetPitch(Cue3DSource* source, float rate);
 typedef enum Cue3DPitchStyle { CUE3D_PITCH_RESAMPLE = 0, CUE3D_PITCH_SHIFT } Cue3DPitchStyle;
 void Cue3D_SetPitchStyle(Cue3DPitchStyle style);
 
+// Per-source override of how THAT source realizes Cue3D_SetPitch, layered over the global
+// Cue3D_SetPitchStyle: GLOBAL (the default) follows the global A/B choice above; RESAMPLE
+// and SHIFT pin the style regardless of it. For sounds whose realization is structural
+// rather than a matter of taste — a click cue pins RESAMPLE because the shifter's ~0.1 s
+// latency and transient softening would blunt the very attack that carries the signal.
+// Cheap and lock-free like the other setters; the Cue layer pushes it once at load (it is
+// a property of the sound, not a per-frame signal).
+typedef enum Cue3DSourcePitchStyle {
+    CUE3D_SOURCE_PITCH_GLOBAL = 0, // follow Cue3D_SetPitchStyle
+    CUE3D_SOURCE_PITCH_RESAMPLE,
+    CUE3D_SOURCE_PITCH_SHIFT,
+} Cue3DSourcePitchStyle;
+void Cue3D_SetSourcePitchStyle(Cue3DSource* source, Cue3DSourcePitchStyle style);
+
 // Silence the source. It stays loaded and can be played again.
 void Cue3D_Stop(Cue3DSource* source);
 

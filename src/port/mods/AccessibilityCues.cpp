@@ -19,6 +19,7 @@
 // Registered in AccessibilityCues_Init; process-lifetime (the registry never frees).
 static Cue* sRingCue = nullptr;
 static Cue* sEnemyCue = nullptr;
+static Cue* sAimCue = nullptr;
 
 static bool AccessibilityCues_IsEnabled() {
     return CVarGetInteger("gAccessibilityAudioCues", 1) == 1;
@@ -374,6 +375,219 @@ static void AccessibilityCues_OnEnemyPostUpdate(IEvent* event) {
     }
 }
 
+// ===== Aim cue =====
+//
+// A repeated synthesized click whose stereo pan and pitch tell the player where they are
+// AIMING — unlike the ring/enemy cues it encodes the aim itself, not a target. Rendered in
+// CUE3D_MODE_PAN (plain stereo, no HRTF) at the backend's unity-gain distance, so distance
+// attenuation never varies and pan/pitch are pure functions of the aim. On rails the encoded
+// quantity is the projected aim point relative to the corridor center — lateral drift plus
+// the stick deflection projected kAimCueProjDistCVar ahead, normalized by the corridor
+// half-extents (pathWidth/pathHeight, the same box the engine clamps flight to) — so with a
+// neutral stick the cue doubles as a "where am I on screen" indicator. In all-range there is
+// no corridor: pan encodes the stick's yaw deflection (turning) and pitch the aim's world
+// elevation angle. On top of both, the click repeats faster as the aim line passes closer to
+// a lockable enemy (geiger-counter style), reusing the enemy cue's predicate and scoping.
+
+// Synthesized click: ~12 ms of silence, then a ~20 ms damped-sine tick, at the backend rate.
+// The lead-in exists because the backend fades each interval restart in from silence over
+// ~5 ms (the click guard) and the tick's energy sits entirely in its first few milliseconds —
+// without the lead-in the ramp eats the attack (~6 dB of loudness). The silence lets the ramp
+// open before the transient hits; it also delays every pulse by a constant 12 ms, inaudible
+// for a cadence signal. (The RESAMPLE pitch path scales the lead-in with pitch — at +1 octave
+// it halves to 6 ms, so the extremes give back a little of that loudness; the gain-boost knob
+// below covers the rest.) The whole buffer must finish inside the fastest geiger interval
+// (slider floor in ImguiUI.cpp) so pulses never truncate; the raised-cosine tail pins the
+// buffer to zero so the interval restart's rewind cannot click.
+static std::vector<float> AccessibilityCues_GenerateAimClick(int sampleRate) {
+    constexpr f32 kTwoPi = 6.2831853f;
+    constexpr f32 kLeadInSec = 0.012f;
+    constexpr f32 kTickSec = 0.02f;
+    constexpr f32 kToneHz = 1500.0f;
+    constexpr f32 kDecayPerSec = 150.0f;
+    constexpr f32 kAmplitude = 0.95f;
+    constexpr f32 kTailSec = 0.003f;
+    int lead = (int) (kLeadInSec * (f32) sampleRate);
+    int frames = (int) (kTickSec * (f32) sampleRate);
+    if (frames < 2) {
+        frames = 2;
+    }
+    int tail = (int) (kTailSec * (f32) sampleRate);
+    std::vector<float> pcm((size_t) (lead + frames), 0.0f);
+    for (int i = 0; i < frames; i++) {
+        f32 t = (f32) i / (f32) sampleRate;
+        f32 env = expf(-kDecayPerSec * t);
+        int remaining = frames - 1 - i;
+        if (remaining < tail) {
+            env *= 0.5f * (1.0f - cosf(0.5f * kTwoPi * (f32) remaining / (f32) tail));
+        }
+        pcm[(size_t) (lead + i)] = kAmplitude * env * sinf(kTwoPi * kToneHz * t);
+    }
+    return pcm;
+}
+
+// Clamp a normalized aim signal to [-1, 1]; NaN pins to center. The divisors upstream are
+// engine-owned (pathWidth/pathHeight) or guarded CVars, but a zero divisor's ±inf still
+// lands on a sane extreme here instead of riding into the pan/pitch math.
+static f32 AccessibilityCues_ClampUnit(f32 v) {
+    if (v > 1.0f) {
+        return 1.0f;
+    }
+    if (v < -1.0f) {
+        return -1.0f;
+    }
+    return (v == v) ? v : 0.0f;
+}
+
+// Normalized vertical aim [-1, 1] -> playback rate 2^(n * octaves). Deliberately separate
+// from AccessibilityCues_ComputeFreqModFromY: that maps a world-space HEIGHT (units per
+// octave) for HRTF cues, this maps an already-normalized aim signal, and the aim cue must
+// keep conveying the vertical even when the height-to-pitch toggle is off (in PAN mode
+// pitch is the only vertical channel there is).
+static f32 AccessibilityCues_AimPitch(f32 n) {
+    f32 octaves = CVarGetFloat(kAimCueOctavesCVar, kAimCueOctavesDefault);
+    if (!(octaves >= 0.0f)) {
+        octaves = kAimCueOctavesDefault; // negative or NaN
+    }
+    return powf(2.0f, AccessibilityCues_ClampUnit(n) * octaves);
+}
+
+// Smallest aim-to-enemy angle -> click repeat interval, linear in angle: at or past the max
+// angle — and when no enemy is in scope (angle = INFINITY) — the click idles at the slow
+// interval; dead on a target it reaches the fast one. NaN-guarded in the file's usual
+// !(x >= lo) style.
+static f32 AccessibilityCues_AimInterval(f32 angleRad) {
+    f32 maxAngle = CVarGetFloat(kAimCueGeigerAngleCVar, kAimCueGeigerAngleDefault) * M_DTOR;
+    f32 slow = CVarGetFloat(kAimCueGeigerSlowCVar, kAimCueGeigerSlowDefault);
+    f32 fast = CVarGetFloat(kAimCueGeigerFastCVar, kAimCueGeigerFastDefault);
+    if (!(maxAngle > 0.0f)) {
+        maxAngle = kAimCueGeigerAngleDefault * M_DTOR;
+    }
+    if (!(slow > 0.0f)) {
+        slow = kAimCueGeigerSlowDefault;
+    }
+    if (!(fast > 0.0f)) {
+        fast = kAimCueGeigerFastDefault;
+    }
+    if (!(angleRad < maxAngle)) {
+        return slow; // no target (INFINITY), NaN, or wider than the max angle
+    }
+    f32 t = angleRad / maxAngle;
+    if (t < 0.0f) {
+        t = 0.0f;
+    }
+    return fast + (slow - fast) * t;
+}
+
+// Smallest angle between the aim line and any in-scope cueable enemy, radians; INFINITY if
+// none. Same predicate and scoping as the enemy cue's scan: ahead of the aim only on rails,
+// full sphere within kEnemyCueAllRangeMaxDist in all-range. Assumes the caller just ran
+// AccessibilityCues_BuildWorldToBodyMatrix (gCalcMatrix holds world -> body).
+static f32 AccessibilityCues_MinEnemyAimAngle(Player* player, bool allRange) {
+    f32 best = INFINITY;
+    for (s32 i = 0; i < ARRAY_COUNT(gActors); i++) {
+        Actor* actor = &gActors[i];
+        if (!AccessibilityCues_IsCueableEnemy(actor)) {
+            continue;
+        }
+        Vec3f worldDelta;
+        worldDelta.x = actor->obj.pos.x - player->pos.x;
+        worldDelta.y = actor->obj.pos.y - player->pos.y;
+        worldDelta.z = actor->obj.pos.z - player->trueZpos;
+        Vec3f bodyDelta;
+        Matrix_MultVec3fNoTranslate(gCalcMatrix, &worldDelta, &bodyDelta);
+        if (!allRange && bodyDelta.z >= 0.0f) {
+            continue; // at or behind the aim line
+        }
+        f32 distSq = (bodyDelta.x * bodyDelta.x) + (bodyDelta.y * bodyDelta.y) + (bodyDelta.z * bodyDelta.z);
+        if (allRange && distSq > kEnemyCueAllRangeMaxDist * kEnemyCueAllRangeMaxDist) {
+            continue;
+        }
+        // 0 on the aim line, growing toward pi dead behind (reachable in all-range only).
+        f32 lateral = sqrtf((bodyDelta.x * bodyDelta.x) + (bodyDelta.y * bodyDelta.y));
+        f32 angle = atan2f(lateral, -bodyDelta.z);
+        if (angle < best) {
+            best = angle;
+        }
+    }
+    return best;
+}
+
+static void AccessibilityCues_OnAimPostUpdate(IEvent* event) {
+    (void) event;
+
+    // Loudness normalization against the sustained cues (the setter sanitizes and no-ops
+    // while stable). Pushed before the gate, not after: the settings-menu preview must
+    // honor the boost (and track its slider) even when gameplay is gated off.
+    sAimCue->SetGainBoost(CVarGetFloat(kAimCueBoostCVar, kAimCueBoostDefault));
+
+    bool allRange = (gLevelMode == LEVELMODE_ALL_RANGE);
+    bool modeOk = (gLevelMode == LEVELMODE_ON_RAILS) || (allRange && !gVersusMode);
+    // v1 is Arwing-only: the mappings below read the Arwing's aim fields. Landmaster /
+    // Blue-Marine / on-foot need their own mappings (future work); the form check also
+    // covers the gPlayer NULL guard the other listeners do separately.
+    bool arwing = (gPlayer != NULL) && (gPlayer[0].form == FORM_ARWING);
+    if (!AccessibilityCues_IsEnabled() || CVarGetInteger(kAimCueEnabledCVar, 1) != 1 || !modeOk || !arwing ||
+        AccessibilityCues_IsPaused()) {
+        sAimCue->Stop();
+        return;
+    }
+    Player* player = &gPlayer[0];
+
+    // Normalized aim signals, both [-1, 1]: nx -> pan (positive = right), ny -> pitch
+    // (positive = up). Sign notes, derived from the engine and worth keeping straight:
+    // the stick is NEGATED into rot (fox_play.c:4005/:4064), so rot.y < 0 means "aiming
+    // right", and a positive total pitch angle means "aiming up" (Player_SetupArwingShot's
+    // matrix maps positive pitch to +Y velocity). Hence the minus on the yaw terms and the
+    // plus on the pitch terms below.
+    f32 nx;
+    f32 ny;
+    if (allRange) {
+        f32 yawRange = CVarGetFloat(kAimCueYawRangeCVar, kAimCueYawRangeDefault);
+        if (!(yawRange >= 1.0f)) {
+            yawRange = kAimCueYawRangeDefault; // tiny, negative, or NaN
+        }
+        f32 pitchRange = CVarGetFloat(kAimCuePitchRangeDegCVar, kAimCuePitchRangeDegDefault);
+        if (!(pitchRange >= 1.0f)) {
+            pitchRange = kAimCuePitchRangeDegDefault;
+        }
+        nx = AccessibilityCues_ClampUnit(-player->rot.y / yawRange);
+        ny = AccessibilityCues_ClampUnit((player->xRot_120 + player->rot.x + player->aerobaticPitch) / pitchRange);
+    } else {
+        f32 dist = CVarGetFloat(kAimCueProjDistCVar, kAimCueProjDistDefault);
+        if (!(dist >= 0.0f)) {
+            dist = kAimCueProjDistDefault; // negative or NaN
+        }
+        // Projected aim point relative to the corridor center: lateral drift plus the
+        // stick deflection carried `dist` units ahead. xRot_120/yRot_114 (the path's own
+        // direction) stay out of the deflection — the path forward IS the neutral center.
+        f32 horiz = (player->pos.x - player->xPath) - dist * sinf(player->rot.y * M_DTOR);
+        f32 vert = (player->pos.y - player->yPath) + dist * sinf((player->rot.x + player->aerobaticPitch) * M_DTOR);
+        nx = AccessibilityCues_ClampUnit(horiz / player->pathWidth);
+        ny = AccessibilityCues_ClampUnit(vert / player->pathHeight);
+    }
+
+    AccessibilityCues_BuildWorldToBodyMatrix(player);
+    f32 interval = AccessibilityCues_AimInterval(AccessibilityCues_MinEnemyAimAngle(player, allRange));
+
+    // Place the source on the unity-gain arc: PAN mode derives its pan purely from the
+    // horizontal direction (x over the x/z length), so radius * (nx, 0, sqrt(1 - nx^2))
+    // renders a constant-power pan of exactly nx with distance attenuation pinned at
+    // unity. Y is irrelevant to PAN; the vertical is carried by pitch instead.
+    f32 radius = Cue3D_GetUnityGainDistance();
+    if (!(radius > 0.0f)) {
+        radius = 100.0f; // backend not up yet; any positive radius pans the same
+    }
+    CueTarget target;
+    target.x = radius * nx;
+    target.y = 0.0f;
+    target.z = radius * sqrtf(1.0f - nx * nx);
+    target.pitch = AccessibilityCues_AimPitch(ny);
+    target.intervalSec = interval;
+    sAimCue->SetTarget(target);
+    sAimCue->Start();
+}
+
 // ===== Entry points =====
 
 // Per-game-tick cue housekeeping: expires timed previews (the settings UI's "Preview"
@@ -391,6 +605,15 @@ void AccessibilityCues_Init() {
     CVarRegisterInteger(kCuePitchForHeightCVar, 1);
     CVarRegisterFloat(kCuePitchScaleCVar, kCuePitchScaleDefault);
     CVarRegisterFloat(kCuePitchRangeOctavesCVar, kCuePitchRangeOctavesDefault);
+    CVarRegisterInteger(kAimCueEnabledCVar, 1);
+    CVarRegisterFloat(kAimCueProjDistCVar, kAimCueProjDistDefault);
+    CVarRegisterFloat(kAimCueYawRangeCVar, kAimCueYawRangeDefault);
+    CVarRegisterFloat(kAimCuePitchRangeDegCVar, kAimCuePitchRangeDegDefault);
+    CVarRegisterFloat(kAimCueOctavesCVar, kAimCueOctavesDefault);
+    CVarRegisterFloat(kAimCueGeigerAngleCVar, kAimCueGeigerAngleDefault);
+    CVarRegisterFloat(kAimCueGeigerFastCVar, kAimCueGeigerFastDefault);
+    CVarRegisterFloat(kAimCueGeigerSlowCVar, kAimCueGeigerSlowDefault);
+    CVarRegisterFloat(kAimCueBoostCVar, kAimCueBoostDefault);
 
     sRingCue = CueRegistry_Register("Ring", "Ring guide", "Guides you toward the next training ring.",
                                     { .wavPath = "assets/accessibility/ring.wav" });
@@ -399,9 +622,19 @@ void AccessibilityCues_Init() {
                                      "all around you in all-range mode.",
                                      { .wavPath = "assets/accessibility/enemy.wav",
                                        .maxVoices = kAccessibilityEnemyCueMaxVoices });
+    // PAN render mode: the pan/pitch ARE the signal, so no HRTF; pinned RESAMPLE pitch: the
+    // spectral shifter's latency and transient softening would smear the click's attack.
+    sAimCue = CueRegistry_Register("Aim", "Aim guide",
+                                   "A repeating click that tells you where you are aiming: pan for "
+                                   "left/right, pitch for up/down; it clicks faster as your aim nears "
+                                   "a lockable enemy.",
+                                   { .generator = AccessibilityCues_GenerateAimClick,
+                                     .mode = CUE3D_MODE_PAN,
+                                     .pitchStyle = CUE3D_SOURCE_PITCH_RESAMPLE });
 
     REGISTER_LISTENER(GamePostUpdateEvent, AccessibilityCues_OnRingPostUpdate, EVENT_PRIORITY_NORMAL);
     REGISTER_LISTENER(GamePostUpdateEvent, AccessibilityCues_OnEnemyPostUpdate, EVENT_PRIORITY_NORMAL);
+    REGISTER_LISTENER(GamePostUpdateEvent, AccessibilityCues_OnAimPostUpdate, EVENT_PRIORITY_NORMAL);
     REGISTER_LISTENER(GamePostUpdateEvent, AccessibilityCues_OnCueTick, EVENT_PRIORITY_NORMAL);
 }
 

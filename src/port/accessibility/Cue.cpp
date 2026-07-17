@@ -112,6 +112,7 @@ bool Cue::EnsureVoiceLoaded(Voice& voice) {
             // Render mode is a per-source setting; push the spec's choice now that the source
             // exists (HRTF is the backend default, so this only matters for PAN/DIRECT).
             Cue3D_SetMode(voice.source, mSpec.mode);
+            Cue3D_SetSourcePitchStyle(voice.source, mSpec.pitchStyle);
         }
     } catch (const std::exception& e) {
         mLoadFailed = true;
@@ -143,7 +144,7 @@ void Cue::PushGain() {
     // blind player already knows about must not silently skip the second audio device
     // (review CUE3D-2). The cue master and per-cue trims layer on top for cue-only balance.
     float gain = CVarGetFloat("gGameMasterVolume", 1.0f) * CVarGetFloat(kCueMasterVolumeCVar, 1.0f) *
-                 CVarGetFloat(mVolumeCVar.c_str(), 1.0f);
+                 CVarGetFloat(mVolumeCVar.c_str(), 1.0f) * mGainBoost;
     if (mPreviewing) {
         // A preview is a single voice at reference loudness — no multi-voice trim, so the
         // slider maps 1:1 to what the player hears.
@@ -167,6 +168,21 @@ void Cue::PushGain() {
         if (voice.playing) {
             Cue3D_SetGain(voice.source, gain * trim);
         }
+    }
+}
+
+void Cue::SetGainBoost(float boost) {
+    // NaN / non-positive fall back to neutral; the cap keeps a console-typed value from
+    // slamming the backend's output clip. Only a real change re-pushes, so a CVar-driven
+    // per-tick call costs nothing while the value is stable.
+    if (!(boost > 0.0f)) {
+        boost = 1.0f;
+    } else if (boost > 8.0f) {
+        boost = 8.0f;
+    }
+    if (boost != mGainBoost) {
+        mGainBoost = boost;
+        PushGain();
     }
 }
 

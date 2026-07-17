@@ -405,6 +405,11 @@ void DrawSettingsMenu(){
                                      kAccessibilityEnemyCueMaxVoices, kAccessibilityEnemyCueDefaultVoices, {
                 .tooltip = "How many of the closest lockable enemies the enemy locator sounds at once."
             });
+            UIWidgets::CVarCheckbox("Aim guide", kAimCueEnabledCVar, {
+                .tooltip = "A repeating click that tells you where you are aiming: pan for left/right, pitch for "
+                           "up/down; it clicks faster as your aim nears a lockable enemy. Arwing only.",
+                .defaultValue = true
+            });
             if (UIWidgets::BeginMenu("Cue volumes")) {
                 // Slider changes are pushed to the live sources immediately so a running
                 // preview (and any in-level cue) tracks the drag; gameplay ticks would pick
@@ -1102,6 +1107,75 @@ void DrawDebugMenu() {
                 UIWidgets::CVarCheckbox("Start/stop stress", kCueBenchStartStopStressCVar, {
                     .tooltip = "Toggle the continuous source Play/Stop every few ticks. Stress for the ramps: listen for clicks.",
                     .defaultValue = false,
+                });
+                ImGui::EndMenu();
+            }
+            if (UIWidgets::BeginMenu("Aim guide")) {
+                // Aim-cue tuning (docs/accessibility-cues-tuning.md). Every knob is a CVar the
+                // aim listener re-reads each tick, so all of it is live. AlwaysClamp on all:
+                // the enter-to-type path accepts out-of-range values, and several of these
+                // feed divisions or the interval math.
+                UIWidgets::CVarSliderFloat("Projection distance", kAimCueProjDistCVar, 400.0f, 3000.0f,
+                                           kAimCueProjDistDefault, {
+                    .tooltip = "How far ahead (world units) the stick deflection is projected on rails before "
+                               "comparing the aim point to the corridor center.",
+                    .flags = ImGuiSliderFlags_AlwaysClamp,
+                    .format = "%.0f",
+                    .step = 100.0f,
+                });
+                UIWidgets::CVarSliderFloat("All-range pan range", kAimCueYawRangeCVar, 20.0f, 90.0f,
+                                           kAimCueYawRangeDefault, {
+                    .tooltip = "Steering deflection that pans the click fully to one side in all-range mode.",
+                    .flags = ImGuiSliderFlags_AlwaysClamp,
+                    .format = "%.0f deg",
+                    .step = 5.0f,
+                });
+                UIWidgets::CVarSliderFloat("All-range pitch range", kAimCuePitchRangeDegCVar, 30.0f, 90.0f,
+                                           kAimCuePitchRangeDegDefault, {
+                    .tooltip = "Aim elevation that bends the click pitch fully up/down in all-range mode.",
+                    .flags = ImGuiSliderFlags_AlwaysClamp,
+                    .format = "%.0f deg",
+                    .step = 5.0f,
+                });
+                UIWidgets::CVarSliderFloat("Aim pitch range", kAimCueOctavesCVar, 0.0f, 2.0f,
+                                           kAimCueOctavesDefault, {
+                    .tooltip = "Octaves the click bends up/down at the vertical aim extremes.",
+                    .flags = ImGuiSliderFlags_AlwaysClamp,
+                    .format = "%.2f oct",
+                    .step = 0.25f,
+                });
+                UIWidgets::CVarSliderFloat("Geiger angle", kAimCueGeigerAngleCVar, 5.0f, 90.0f,
+                                           kAimCueGeigerAngleDefault, {
+                    .tooltip = "Aim-to-enemy angle where the click rate starts rising: slowest at or beyond "
+                               "this, fastest dead on target.",
+                    .flags = ImGuiSliderFlags_AlwaysClamp,
+                    .format = "%.0f deg",
+                    .step = 5.0f,
+                });
+                // Floor at the click buffer's ~32 ms length (AccessibilityCues_GenerateAimClick,
+                // lead-in + tick): a shorter interval would truncate each click at the restart,
+                // and pitched-down clicks stretch further still.
+                UIWidgets::CVarSliderFloat("Geiger fast interval", kAimCueGeigerFastCVar, 0.04f, 0.3f,
+                                           kAimCueGeigerFastDefault, {
+                    .tooltip = "Click repeat interval when aiming dead on a lockable enemy.",
+                    .flags = ImGuiSliderFlags_AlwaysClamp,
+                    .format = "%.2f s",
+                    .step = 0.01f,
+                });
+                UIWidgets::CVarSliderFloat("Geiger slow interval", kAimCueGeigerSlowCVar, 0.2f, 2.0f,
+                                           kAimCueGeigerSlowDefault, {
+                    .tooltip = "Click repeat interval with no lockable enemy near the aim.",
+                    .flags = ImGuiSliderFlags_AlwaysClamp,
+                    .format = "%.2f s",
+                    .step = 0.05f,
+                });
+                UIWidgets::CVarSliderFloat("Click loudness", kAimCueBoostCVar, 0.5f, 4.0f, kAimCueBoostDefault, {
+                    .tooltip = "Loudness boost for the aim click relative to the other cues - a short click "
+                               "reads quieter than a sustained loop at the same level. Applied under the "
+                               "volume sliders.",
+                    .flags = ImGuiSliderFlags_AlwaysClamp,
+                    .format = "%.2fx",
+                    .step = 0.25f,
                 });
                 ImGui::EndMenu();
             }

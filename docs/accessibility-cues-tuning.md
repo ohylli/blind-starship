@@ -5,9 +5,10 @@ The cues render through the Steam Audio HRTF backend (see
 path — it was removed, along with the `gAccessibilityCue3D` toggle. The pieces are:
 
 - **The `Cue` layer** (`src/port/accessibility/Cue.{h,cpp}`) — game-agnostic: each cue owns its sound file, its per-cue volume CVar, the three-factor gain, and a preview mode. A registry lets the settings UI enumerate cues.
-- **The consumer mod** (`src/port/mods/AccessibilityCues.{cpp,h}`) — the Star Fox side, housing two cues sharing the `gAccessibilityAudioCues` CVar:
+- **The consumer mod** (`src/port/mods/AccessibilityCues.{cpp,h}`) — the Star Fox side, housing three cues sharing the `gAccessibilityAudioCues` CVar:
   - **Ring cue** — tracks the next Training ring ahead of the Arwing (scoped to `LEVEL_TRAINING`).
   - **Enemy cue** — tracks the closest cueable enemies relative to the Arwing's aim: ahead of the aim line on on-rails levels, the full sphere (including behind you) in solo all-range mode. Coordinate frame is body-frame (rotated by the player's yaw + pitch) rather than world-frame; see `docs/accessibility-enemy-cue.md` for the derivation.
+  - **Aim cue ("Aim guide")** — the inverse concern of the other two: a repeated synthesized click encoding the *aim itself* (stereo pan = left/right, pitch = up/down), sped up geiger-counter-style as the aim line nears a lockable enemy. Has its own additional toggle (`gAccessibilityAimCue`) because a continuous click is the most fatiguing cue to leave on. See "Aim cue" below for all its knobs.
 
 Direction is now the HRTF backend's job (true left/right and front/back). The mod still drives pitch from altitude via `AccessibilityCues_ComputeFreqModFromY`, layered on top of the HRTF (the generic HRTF's own elevation cue is weak — see `docs/accessibility-hrtf-cues.md`). Distance drives volume through the backend's inverse-distance model. Most knobs below apply to either cue; function names are prefixed `Ring` or `Enemy` to disambiguate.
 
@@ -19,7 +20,7 @@ For background on *why* the cues are shaped this way (player-relative coordinate
 
 ### The sound file
 
-Each cue loads a WAV from `assets/accessibility/` (`ring.wav`, `enemy.wav`), named in `AccessibilityCues_Init` where the cues are registered. Swap the file to change the sound. Favor sounds with clearly different timbres between the two cues, so both can fire simultaneously on Training without blending into one sound. Unlike the old SF64-SFX path, there are no bank/flag/range constraints — the HRTF backend plays an arbitrary mono WAV; distance, direction, and pitch are all applied by the backend or the mod, not baked into the sound.
+The ring and enemy cues load a WAV from `assets/accessibility/` (`ring.wav`, `enemy.wav`), named in `AccessibilityCues_Init` where the cues are registered; the aim cue synthesizes its click instead (see "Aim cue" below). Swap the file to change a WAV cue's sound. Favor sounds with clearly different timbres between the two cues, so both can fire simultaneously on Training without blending into one sound. Unlike the old SF64-SFX path, there are no bank/flag/range constraints — the HRTF backend plays an arbitrary mono WAV; distance, direction, and pitch are all applied by the backend or the mod, not baked into the sound.
 
 ### Ring cue distance falloff
 
@@ -95,6 +96,23 @@ The enemy cue voices the N closest lockable enemies simultaneously, each on its 
 - **`gAccessibilityEnemyCueVoices`** — how many targets to voice. Clamped to 1–`kAccessibilityEnemyCueMaxVoices`, and starts at `kAccessibilityEnemyCueDefaultVoices`; both live in `AccessibilityCues.h`. Runtime-tunable: F1 → Blind Starship → "Enemy locator voices". Set to 1 for the original single-target behavior.
 - **Multi-voice headroom trim**, `Cue::PushGain` (`Cue.cpp`) — with N voices playing, each is trimmed by 1/√N so near-identical loops don't sum hot. If two voices feel too quiet next to one, soften or drop this.
 - **Per-voice identity pitch**, `kVoiceIdentityPitch` (`Cue.cpp`) — a per-voice-slot pitch multiplier for telling simultaneous copies of the same loop apart. All 1.0 (off) today, deliberately: pitch already carries the elevation signal, so a detune would read as a false above/below. If spatial separation alone proves insufficient by ear, prefer per-voice timbre (WAV variants) before touching this.
+
+### Aim cue
+
+The aim cue is deliberately *not* an HRTF cue: it renders in `CUE3D_MODE_PAN` (plain constant-power stereo) at the backend's unity-gain distance, so pan, pitch, and repeat rate are pure functions of the aim with no distance falloff and no rear effect. It also pins the playback-rate pitch style per-source (`CueSpec::pitchStyle = CUE3D_SOURCE_PITCH_RESAMPLE`) regardless of the global spectral-shifter A/B — the shifter's ~0.1 s latency and transient softening would smear the click attack that *is* the signal. Its sound is synthesized (`AccessibilityCues_GenerateAimClick`), not a WAV: ~12 ms of silence then a ~20 ms damped-sine tick. The lead-in silence is load-bearing — the backend fades every pulse restart in over ~5 ms, and without the lead-in that ramp eats the click's attack (~6 dB of loudness); the tick must also finish inside the fastest repeat interval. Retune the timbre by editing the constants in the generator (rebuild-to-tune on purpose — the *mapping* knobs below are the ones that need by-ear iteration).
+
+What pan and pitch encode differs by mode:
+
+- **On rails** — the projected aim point relative to the corridor center: lateral drift off the path centerline plus the stick deflection projected `gAccessibilityAimCueProjDist` world units ahead (default 1200, the near reticle's distance), normalized by the corridor half-extents the engine clamps flight to (`pathWidth`/`pathHeight`). With a neutral stick this degrades to "where am I on screen". A larger projection distance weights the stick deflection more against the drift; smaller reads more like a pure position indicator.
+- **All-range** — no corridor exists, so pan encodes the stick's yaw deflection (full pan at `gAccessibilityAimCueYawRangeDeg`, default 55°) and pitch the aim's world elevation angle (full bend at `gAccessibilityAimCuePitchRangeDeg`, default 90°).
+
+Shared knobs, all live CVars with sliders under **F1 → Developer → Blind Starship → Aim guide**:
+
+- **Pitch bend** — `gAccessibilityAimCueOctaves` (default 1.0): octaves the click bends at the vertical extremes, same shape as the Y→pitch range knob but independent of it (and independent of the height-to-pitch toggle — in PAN mode pitch is the only vertical channel there is).
+- **Geiger mapping** — `gAccessibilityAimCueGeigerAngleDeg` (default 30°), `gAccessibilityAimCueGeigerSlowSec` (default 0.8), `gAccessibilityAimCueGeigerFastSec` (default 0.06): the smallest angle between the aim line and any cueable enemy (same predicate and scoping as the enemy cue, including the all-range range limit) maps linearly from the slow interval at/beyond the max angle — and when no enemy is in scope — down to the fast interval dead on target.
+- **Click loudness** — `gAccessibilityAimCueBoost` (default 2.0): a gain boost applied *under* the volume sliders via `Cue::SetGainBoost`, because a short click reads perceptually quieter than the sustained ring/enemy loops at the same sample level and the per-cue volume slider (0–100%) has no headroom above its default. Applies to the settings-menu preview too, so the preview stays honest.
+
+Scope: every on-rails level and solo all-range, **Arwing only** (`player->form == FORM_ARWING`) — the mappings read Arwing aim fields; Landmaster/Blue-Marine need their own mappings (future work). Sign conventions are derived, not guessed: the stick is negated into `rot` (`fox_play.c`), so `rot.y < 0` means "aiming right" and a positive total pitch angle means "aiming up" — if a direction ever reads flipped by ear, the sign notes in `AccessibilityCues_OnAimPostUpdate` say which term to flip.
 
 ### CVar default
 
