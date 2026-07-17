@@ -428,7 +428,7 @@ Cue* CueRegistry_Register(const char* id, const char* name, const char* descript
     CVarRegisterFloat(kCueRearGainDipCVar, CUE3D_REAR_GAIN_DIP_DEFAULT);
     CVarRegisterFloat(kCueRearTremoloDepthCVar, CUE3D_REAR_TREMOLO_DEPTH_DEFAULT);
     CVarRegisterFloat(kCueRearTremoloHzCVar, CUE3D_REAR_TREMOLO_HZ_DEFAULT);
-    CVarRegisterInteger(kCuePitchShiftCVar, 1);
+    CVarRegisterInteger(kCuePitchShiftCVar, kCuePitchShiftDefault);
     OwnedCues().emplace_back(new Cue(id, name, description, spec));
     Cue* cue = OwnedCues().back().get();
     AllCues().push_back(cue);
@@ -449,7 +449,8 @@ void CueRegistry_Tick() {
                         CVarGetFloat(kCueRearGainDipCVar, CUE3D_REAR_GAIN_DIP_DEFAULT),
                         CVarGetFloat(kCueRearTremoloDepthCVar, CUE3D_REAR_TREMOLO_DEPTH_DEFAULT),
                         CVarGetFloat(kCueRearTremoloHzCVar, CUE3D_REAR_TREMOLO_HZ_DEFAULT));
-    Cue3D_SetPitchStyle(CVarGetInteger(kCuePitchShiftCVar, 1) != 0 ? CUE3D_PITCH_SHIFT : CUE3D_PITCH_RESAMPLE);
+    Cue3D_SetPitchStyle(CVarGetInteger(kCuePitchShiftCVar, kCuePitchShiftDefault) != 0 ? CUE3D_PITCH_SHIFT
+                                                                                       : CUE3D_PITCH_RESAMPLE);
     for (Cue* cue : AllCues()) {
         cue->Tick();
     }

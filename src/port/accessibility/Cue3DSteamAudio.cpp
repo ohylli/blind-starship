@@ -131,6 +131,12 @@ constexpr float kRampSilenceGate = 1.0e-4f;
 // signal barely lags the target.
 constexpr float kRateSmoothTimeConstantSec = 0.020f;
 
+// Tonality limit handed to the spectral shifter (SHIFT style) each block: harmonics below
+// this stay phase-coherent when transposed, which is what keeps tonal cues sounding like
+// themselves. The library's docs recommend sampleRate/4-ish for musical material; 8 kHz is
+// that shape at the 48 kHz device rate and covers every cue sound's harmonic content.
+constexpr float kShiftTonalityLimitHz = 8000.0f;
+
 constexpr float kInvSqrt2 = 0.70710678f; // equal-power center gain for CUE3D_MODE_DIRECT
 
 // Non-finite input falls back to the caller's default rather than a bound: NaN has no
@@ -619,10 +625,8 @@ void ProduceBlock() {
                 s.stretch->reset();
             }
             // Applied per block (~21 ms); the shifter's own spectral hop smooths the
-            // steps, so no per-sample slew is needed on this path. The tonality limit
-            // (a fraction of the sample rate, the library's recommended shape for
-            // musical material) keeps the harmonics of tonal cues coherent.
-            s.stretch->setTransposeFactor(rate, 8000.0f / (float) g.sampleRate);
+            // steps, so no per-sample slew is needed on this path.
+            s.stretch->setTransposeFactor(rate, kShiftTonalityLimitHz / (float) g.sampleRate);
             float* shiftInCh[1] = { g.shiftIn };
             float* shiftOutCh[1] = { mono };
             s.stretch->process(shiftInCh, kFrameSize, shiftOutCh, kFrameSize);

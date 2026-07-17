@@ -65,8 +65,11 @@ inline constexpr const char* kCueRearTremoloHzCVar = "gAccessibilityCueRearTremo
 
 // Pitch realization style (int CVar, 1 = spectral pitch shifter, 0 = playback-rate
 // resample; see Cue3D_SetPitchStyle for the tradeoff). Same registration/push cycle as
-// the rear knobs above. Default 1 while the shifter is the experiment under evaluation.
+// the rear knobs above. The default lives here (not at the seam) on purpose: the backend's
+// own no-CVar fallback is RESAMPLE, and this settings-layer default of "shifter on" is the
+// experiment under evaluation. Registration, re-read, and the F1 checkbox all share it.
 inline constexpr const char* kCuePitchShiftCVar = "gAccessibilityCuePitchShift";
+inline constexpr int kCuePitchShiftDefault = 1;
 
 // Everything a cue is registered WITH (vs. the id/name/description identity strings, which
 // stay explicit parameters). Exactly one of wavPath/generator must be set — the cue's

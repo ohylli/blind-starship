@@ -1135,7 +1135,7 @@ void DrawDebugMenu() {
                 .tooltip = "Bend cue pitch with a spectral shifter, keeping each sound's length and "
                            "character (off = classic playback-rate change: higher also means faster "
                            "and thinner). Costs about a tenth of a second of cue-sound latency.",
-                .defaultValue = true,
+                .defaultValue = kCuePitchShiftDefault != 0,
             });
             // Rear-effect tuning: how strongly the cue backend exaggerates "behind you"
             // (docs/accessibility-cues-tuning.md). Re-read and pushed to the audio thread
