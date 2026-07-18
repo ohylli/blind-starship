@@ -267,6 +267,14 @@ suggested ordering; it is not a commitment.
 - **Team recommendation (option):** inside the existing non-Switch block, set
   `INSTALL_RPATH`/`BUILD_RPATH` to `@loader_path` on APPLE and `$ORIGIN` on UNIX (two
   lines, no Windows behavior change).
+- **Resolution (addressed):** fixed in `CMakeLists.txt` right after the phonon
+  POST_BUILD copy — `@loader_path` on APPLE, `$ORIGIN` on the non-Windows/non-Apple
+  branch, Windows left untouched (it ignores rpath and searches the exe dir). Guard
+  written as `if(APPLE)/elseif(NOT WIN32)` rather than `APPLE/UNIX` because `UNIX` is
+  also true on macOS. `BUILD_RPATH` is the property that matters since Starship runs
+  from the build tree; `INSTALL_RPATH` set alongside for a future install path. Not
+  build-verified on Linux/macOS (developed on Windows, release jobs still `if: false`);
+  the Windows build is provably unaffected by the guard.
 
 ### CUE3D-8 — `miniaudio.h` pulled from a mutable upstream tag with no verification
 - **Severity:** MEDIUM (verified). The one supply-chain item the build reviewer would

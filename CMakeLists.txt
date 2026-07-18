@@ -445,6 +445,22 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "NintendoSwitch")
                 ${STEAMAUDIO_RUNTIME_LIB} $<TARGET_FILE_DIR:${PROJECT_NAME}>
         COMMENT "Copying phonon shared library next to Starship executable"
     )
+    # phonon is copied next to the exe (above), but on Linux/macOS the dynamic
+    # loader does not search the executable's own directory by default, so the
+    # copy would still fail to load with an unhelpful "library not found". Point
+    # the rpath at the loading binary's directory ($ORIGIN on ELF, @loader_path
+    # on Mach-O). BUILD_RPATH is the one that matters since Starship runs from the
+    # build tree; INSTALL_RPATH covers a future install path. Windows searches the
+    # exe dir already and ignores rpath, so this is a no-op there.
+    if(APPLE)
+        set_target_properties(${PROJECT_NAME} PROPERTIES
+            BUILD_RPATH "@loader_path"
+            INSTALL_RPATH "@loader_path")
+    elseif(NOT WIN32)
+        set_target_properties(${PROJECT_NAME} PROPERTIES
+            BUILD_RPATH "$ORIGIN"
+            INSTALL_RPATH "$ORIGIN")
+    endif()
 endif()
 
 if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
