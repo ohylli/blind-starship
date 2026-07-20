@@ -58,13 +58,17 @@ namespace UIWidgets {
     void PaddedSeparator(bool padTop = true, bool padBottom = true, float extraVerticalTopPadding = 0.0f, float extraVerticalBottomPadding = 0.0f);
 
     void RenderCross(ImDrawList* draw_list, ImVec2 pos, ImU32 col, float sz);
-    bool CustomCheckbox(const char* label, bool* v, bool disabled, CheckboxGraphics disabledGraphic);
+    // tooltip: descriptive help text; spoken to the screen reader as part of the item's focus
+    // announcement (must be threaded in here because the narration fires inside this function,
+    // where the checkbox is still the focused "last item") and shown on mouse hover.
+    bool CustomCheckbox(const char* label, bool* v, bool disabled, CheckboxGraphics disabledGraphic,
+                        const char* tooltip = "");
 
     void ReEnableComponent(const char* disabledTooltipText);
     void DisableComponent(const float alpha);
 
-    bool EnhancementCheckbox(const char* text, const char* cvarName, bool disabled = false, const char* disabledTooltipText = "", CheckboxGraphics disabledGraphic = CheckboxGraphics::Cross, bool defaultValue = false);
-    bool PaddedEnhancementCheckbox(const char* text, const char* cvarName, bool padTop = true, bool padBottom = true, bool disabled = false, const char* disabledTooltipText = "", CheckboxGraphics disabledGraphic = CheckboxGraphics::Cross, bool defaultValue = false);
+    bool EnhancementCheckbox(const char* text, const char* cvarName, bool disabled = false, const char* disabledTooltipText = "", CheckboxGraphics disabledGraphic = CheckboxGraphics::Cross, bool defaultValue = false, const char* tooltip = "");
+    bool PaddedEnhancementCheckbox(const char* text, const char* cvarName, bool padTop = true, bool padBottom = true, bool disabled = false, const char* disabledTooltipText = "", CheckboxGraphics disabledGraphic = CheckboxGraphics::Cross, bool defaultValue = false, const char* tooltip = "");
 
     bool EnhancementCombobox(const char* cvarName, std::span<const char*, std::dynamic_extent> comboArray, uint8_t defaultIndex, bool disabled = false, const char* disabledTooltipText = "", uint8_t disabledValue = -1);
     bool LabeledRightAlignedEnhancementCombobox(const char* label, const char* cvarName, std::span<const char*, std::dynamic_extent> comboArray, uint8_t defaultIndex, bool disabled = false, const char* disabledTooltipText = "", uint8_t disabledValue = -1);

@@ -212,7 +212,8 @@ static std::string StripImGuiIdSuffix(const char* label) {
     return text;
 }
 
-void AccessibilityImGuiMenu_ItemFocused(const char* label, const char* role, const char* stateText) {
+void AccessibilityImGuiMenu_ItemFocused(const char* label, const char* role, const char* stateText,
+                                        const char* tooltip) {
     if (!sSessionActive) {
         return;
     }
@@ -258,7 +259,10 @@ void AccessibilityImGuiMenu_ItemFocused(const char* label, const char* role, con
     const char* hint = (transitionHint != nullptr) ? transitionHint : HintForRole(role);
 
     std::string text = StripImGuiIdSuffix(label);
-    for (const char* part : { role, stateText, hint }) {
+    // The tooltip (item help text) trails everything so quick navigation surfaces the
+    // label/role/state/hint first; it rides in this one utterance so a Braille display
+    // keeps the whole line rather than having a follow-up announcement overwrite it.
+    for (const char* part : { role, stateText, hint, tooltip }) {
         if (part != nullptr && part[0] != '\0') {
             if (!text.empty()) {
                 text += ", ";

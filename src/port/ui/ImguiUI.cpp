@@ -569,25 +569,32 @@ void DrawSettingsMenu(){
             }
             CVarSetInteger("gInterpolationFPS", currentFps);
             Ship::Context::GetInstance()->GetWindow()->GetGui()->SaveConsoleVariablesNextFrame();
-        #else
-            bool matchingRefreshRate = CVarGetInteger("gMatchRefreshRate", 0);
-            UIWidgets::CVarSliderInt((currentFps == 30) ? "FPS: Original (30)" : "FPS: %d", "gInterpolationFPS", minFps, maxFps, 60, {
-                .disabled = matchingRefreshRate
-            });
-        #endif
+            // WiiU uses a raw slider + buttons above, so it still needs the standalone hover
+            // tooltip; the non-WiiU path carries it in the CVarSliderInt options below so the
+            // screen reader speaks it as part of the slider's focus announcement.
             UIWidgets::Tooltip(
                 "Uses Matrix Interpolation to create extra frames, resulting in smoother graphics. This is purely "
                 "visual and does not impact game logic, execution of glitches etc.\n\n"
                 "A higher target FPS than your monitor's refresh rate will waste resources, and might give a worse result."
             );
+        #else
+            bool matchingRefreshRate = CVarGetInteger("gMatchRefreshRate", 0);
+            UIWidgets::CVarSliderInt((currentFps == 30) ? "FPS: Original (30)" : "FPS: %d", "gInterpolationFPS", minFps, maxFps, 60, {
+                .tooltip = "Uses Matrix Interpolation to create extra frames, resulting in smoother graphics. This is purely "
+                           "visual and does not impact game logic, execution of glitches etc.\n\n"
+                           "A higher target FPS than your monitor's refresh rate will waste resources, and might give a worse result.",
+                .disabled = matchingRefreshRate
+            });
+        #endif
         } // END FPS Slider
 
-        UIWidgets::PaddedEnhancementCheckbox("Match Refresh Rate", "gMatchRefreshRate", true, false);
-        UIWidgets::Tooltip("Matches interpolation value to the refresh rate of your display.");
+        UIWidgets::PaddedEnhancementCheckbox("Match Refresh Rate", "gMatchRefreshRate", true, false, false, "",
+                                             UIWidgets::CheckboxGraphics::Cross, false,
+                                             "Matches interpolation value to the refresh rate of your display.");
 
         if (Ship::Context::GetInstance()->GetWindow()->GetWindowBackend() == Ship::WindowBackend::FAST3D_DXGI_DX11) {
-            UIWidgets::PaddedEnhancementCheckbox("Render parallelization","gRenderParallelization", true, false, {}, {}, {}, true);
-            UIWidgets::Tooltip(
+            UIWidgets::PaddedEnhancementCheckbox("Render parallelization","gRenderParallelization", true, false, false, "",
+                                                 UIWidgets::CheckboxGraphics::Cross, true,
                 "This setting allows the CPU to work on one frame while GPU works on the previous frame.\n"
                 "Recommended if you can't reach the FPS you set, despite it being set below your refresh rate "
                 "or if you notice other performance problems.\n"
@@ -641,8 +648,8 @@ void DrawSettingsMenu(){
         }
 
         if (Ship::Context::GetInstance()->GetWindow()->CanDisableVerticalSync()) {
-            UIWidgets::PaddedEnhancementCheckbox("Enable Vsync", "gVsyncEnabled", true, false, false, "", UIWidgets::CheckboxGraphics::Cross, true);
-            UIWidgets::Tooltip("Removes tearing, but clamps your max FPS to your displays refresh rate.");
+            UIWidgets::PaddedEnhancementCheckbox("Enable Vsync", "gVsyncEnabled", true, false, false, "", UIWidgets::CheckboxGraphics::Cross, true,
+                                                 "Removes tearing, but clamps your max FPS to your displays refresh rate.");
         }
 
         if (Ship::Context::GetInstance()->GetWindow()->SupportsWindowedFullscreen()) {
@@ -650,8 +657,8 @@ void DrawSettingsMenu(){
         }
 
         if (Ship::Context::GetInstance()->GetWindow()->GetGui()->SupportsViewports()) {
-            UIWidgets::PaddedEnhancementCheckbox("Allow multi-windows", "gEnableMultiViewports", true, false, false, "", UIWidgets::CheckboxGraphics::Cross, true);
-            UIWidgets::Tooltip("Allows windows to be able to be dragged off of the main game window. Requires a reload to take effect.");
+            UIWidgets::PaddedEnhancementCheckbox("Allow multi-windows", "gEnableMultiViewports", true, false, false, "", UIWidgets::CheckboxGraphics::Cross, true,
+                                                 "Allows windows to be able to be dragged off of the main game window. Requires a reload to take effect.");
         }
 
         UIWidgets::PaddedEnhancementCheckbox("Enable Alternative Assets", "gEnhancements.Mods.AlternateAssets");

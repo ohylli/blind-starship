@@ -216,7 +216,17 @@ suffixes before speaking. Legacy slider labels are printf format strings rendere
 `disabledTooltip` for disabled items; checkbox state is "checked/unchecked", combo
 state is the selected entry text, slider state is the formatted value (respect
 `isPercentage`), `WindowButton` state is whether its window is open.
-Tooltips-on-demand can come later.
+
+Tooltips (done): a focused item's descriptive tooltip is appended as the final clause
+of its focus announcement — one utterance, so a Braille display keeps the label/value
+on the line rather than having a follow-up announcement overwrite it.
+`AccessibilityImGuiMenu_ItemFocused` takes an optional trailing `tooltip`; the modern
+options-struct widgets pass `options.tooltip` (or `disabledTooltip` when disabled), and
+the legacy Graphics checkboxes thread the text through
+`PaddedEnhancementCheckbox`→`EnhancementCheckbox`→`CustomCheckbox` so it reaches the
+narrator where the checkbox is still the focused item — their old trailing standalone
+`UIWidgets::Tooltip()` runs after the `BeginGroup`/`EndGroup` boundary, where nothing is
+focused, so it could not feed the announcement.
 
 ### Phase 3 — instrument UIWidgets
 

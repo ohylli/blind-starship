@@ -140,7 +140,7 @@ namespace UIWidgets {
         draw_list->PathStroke(col, 0, thickness);
     }
 
-    bool CustomCheckbox(const char* label, bool* v, bool disabled, CheckboxGraphics disabledGraphic) {
+    bool CustomCheckbox(const char* label, bool* v, bool disabled, CheckboxGraphics disabledGraphic, const char* tooltip) {
         ImGuiWindow* window = ImGui::GetCurrentWindow();
         if (window->SkipItems) {
             return false;
@@ -195,10 +195,12 @@ namespace UIWidgets {
         }
 
         // Narration — the RenderText/RenderFrame calls above add no item, so g.LastItemData is
-        // still this checkbox (docs/accessibility-imgui-menu-plan.md).
+        // still this checkbox (docs/accessibility-imgui-menu-plan.md). The tooltip rides in the
+        // same announcement; it must be threaded in here rather than spoken by the callers'
+        // trailing UIWidgets::Tooltip(), which runs after the group closes and sees no focus.
         if (ImGui::IsItemFocused()) {
             AccessibilityImGuiMenu_ItemFocused(label, AccessibilityRole::Checkbox,
-                                               disabled ? "unavailable" : (*v ? "checked" : "unchecked"));
+                                               disabled ? "unavailable" : (*v ? "checked" : "unchecked"), tooltip);
         }
         if (pressed) {
             AccessibilityImGuiMenu_ValueChanged(label, *v ? "checked" : "unchecked");
@@ -222,17 +224,22 @@ namespace UIWidgets {
         ImGui::PushStyleVar(ImGuiStyleVar_Alpha, alpha);
     }
 
-    bool EnhancementCheckbox(const char* text, const char* cvarName, bool disabled, const char* disabledTooltipText, CheckboxGraphics disabledGraphic, bool defaultValue) {
+    bool EnhancementCheckbox(const char* text, const char* cvarName, bool disabled, const char* disabledTooltipText, CheckboxGraphics disabledGraphic, bool defaultValue, const char* tooltip) {
         bool changed = false;
         if (disabled) {
             DisableComponent(ImGui::GetStyle().Alpha * 0.5f);
         }
 
         bool val = (bool)CVarGetInteger(cvarName, defaultValue);
-        if (CustomCheckbox(text, &val, disabled, disabledGraphic)) {
+        if (CustomCheckbox(text, &val, disabled, disabledGraphic, tooltip)) {
             CVarSetInteger(cvarName, val);
             Ship::Context::GetInstance()->GetWindow()->GetGui()->SaveConsoleVariablesNextFrame();
             changed = true;
+        }
+        // Visible hover tooltip for mouse users (the screen-reader path is handled inside
+        // CustomCheckbox). LastItem is still the checkbox here — RenderText added no item.
+        if (!disabled && tooltip[0] != '\0') {
+            Tooltip(tooltip);
         }
 
         if (disabled) {
@@ -241,11 +248,11 @@ namespace UIWidgets {
         return changed;
     }
 
-    bool PaddedEnhancementCheckbox(const char* text, const char* cvarName, bool padTop, bool padBottom, bool disabled, const char* disabledTooltipText, CheckboxGraphics disabledGraphic, bool defaultValue) {
+    bool PaddedEnhancementCheckbox(const char* text, const char* cvarName, bool padTop, bool padBottom, bool disabled, const char* disabledTooltipText, CheckboxGraphics disabledGraphic, bool defaultValue, const char* tooltip) {
         ImGui::BeginGroup();
         if (padTop) Spacer(0);
 
-        bool changed = EnhancementCheckbox(text, cvarName, disabled, disabledTooltipText, disabledGraphic, defaultValue);
+        bool changed = EnhancementCheckbox(text, cvarName, disabled, disabledTooltipText, disabledGraphic, defaultValue, tooltip);
 
         if (padBottom) Spacer(0);
         ImGui::EndGroup();
@@ -709,8 +716,10 @@ namespace UIWidgets {
         PushStyleButton(options.color);
         bool dirty = ImGui::Button(label, options.size);
         if (!suppressNarration && ImGui::IsItemFocused()) {
+            const char* tip = (options.disabled && options.disabledTooltip[0] != '\0') ? options.disabledTooltip
+                                                                                       : options.tooltip;
             AccessibilityImGuiMenu_ItemFocused(narrateLabel != nullptr ? narrateLabel : label, AccessibilityRole::Button,
-                                               narrateState);
+                                               narrateState, tip);
         }
         PopStyleButton();
         ImGui::EndDisabled();
@@ -788,8 +797,11 @@ namespace UIWidgets {
         // Must be before the label Text calls below — those submit items and would clobber
         // g.LastItemData (docs/accessibility-imgui-menu-plan.md).
         if (ImGui::IsItemFocused()) {
+            const char* tip = (options.disabled && options.disabledTooltip[0] != '\0') ? options.disabledTooltip
+                                                                                       : options.tooltip;
             AccessibilityImGuiMenu_ItemFocused(label, AccessibilityRole::Checkbox,
-                                               options.disabled ? "unavailable" : (*value ? "checked" : "unchecked"));
+                                               options.disabled ? "unavailable" : (*value ? "checked" : "unchecked"),
+                                               tip);
         }
         if (dirty) {
             AccessibilityImGuiMenu_ValueChanged(label, *value ? "checked" : "unchecked");
@@ -890,7 +902,9 @@ namespace UIWidgets {
         }
         bool comboOpen = ImGui::BeginCombo(invisibleLabel, comboArray[*value], options.flags);
         if (ImGui::IsItemFocused()) {
-            AccessibilityImGuiMenu_ItemFocused(label, AccessibilityRole::ComboBox, comboArray[*value]);
+            const char* tip = (options.disabled && options.disabledTooltip[0] != '\0') ? options.disabledTooltip
+                                                                                       : options.tooltip;
+            AccessibilityImGuiMenu_ItemFocused(label, AccessibilityRole::ComboBox, comboArray[*value], tip);
         }
         if (comboOpen) {
             ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(10.0f, 10.0f));
@@ -1012,8 +1026,10 @@ namespace UIWidgets {
         }
         if (AccessibilityImGuiMenu_IsSessionActive()) {
             if (ImGui::IsItemFocused()) {
+                const char* tip = (options.disabled && options.disabledTooltip[0] != '\0') ? options.disabledTooltip
+                                                                                           : options.tooltip;
                 AccessibilityImGuiMenu_ItemFocused(FormatValue(label, *value).c_str(), AccessibilityRole::Slider,
-                                                   FormatValue(options.format, *value).c_str());
+                                                   FormatValue(options.format, *value).c_str(), tip);
             }
             // Capture here, before the + button below clobbers LastItemData: on the frame the
             // slider becomes active the narrator speaks how to adjust/exit (tweak vs text-input).
@@ -1111,8 +1127,10 @@ namespace UIWidgets {
         if (AccessibilityImGuiMenu_IsSessionActive()) {
             if (ImGui::IsItemFocused()) {
                 float dv = options.isPercentage ? *value * 100.0f : *value;
+                const char* tip = (options.disabled && options.disabledTooltip[0] != '\0') ? options.disabledTooltip
+                                                                                           : options.tooltip;
                 AccessibilityImGuiMenu_ItemFocused(FormatValue(label, dv).c_str(), AccessibilityRole::Slider,
-                                                   FormatValue(options.format, dv).c_str());
+                                                   FormatValue(options.format, dv).c_str(), tip);
             }
             // Capture here, before the + button below clobbers LastItemData: on the frame the
             // slider becomes active the narrator speaks how to adjust/exit (tweak vs text-input).

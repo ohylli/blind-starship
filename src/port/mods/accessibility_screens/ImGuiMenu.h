@@ -47,9 +47,14 @@ bool AccessibilityImGuiMenu_IsSessionActive();
 // already-formatted text (no printf specifiers).
 
 // Call right after a focusable sub-widget when ImGui::IsItemFocused() is true. Dedups
-// on ImGui::GetItemID() so each focus change is spoken once, as "label, role, state"
-// (empty parts are skipped). Interrupts current speech.
-void AccessibilityImGuiMenu_ItemFocused(const char* label, const char* role, const char* stateText);
+// on ImGui::GetItemID() so each focus change is spoken once, as "label, role, state,
+// tooltip" (empty parts are skipped). The tooltip is the item's descriptive help text
+// (the same string shown on mouse hover); it is appended to the *same* utterance rather
+// than spoken separately so a Braille reader keeps the label and value on one line — a
+// follow-up announcement would refresh the display and wipe them. Interrupts current
+// speech.
+void AccessibilityImGuiMenu_ItemFocused(const char* label, const char* role, const char* stateText,
+                                        const char* tooltip = nullptr);
 
 // Call when a widget's value changed. Speaks just the value — snappier for repeated
 // slider ticks — falling back to the label if valueText is empty. Interrupts.
