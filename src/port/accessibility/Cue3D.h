@@ -47,8 +47,8 @@ typedef struct Cue3DSource Cue3DSource;
 // Defaults for Cue3D_SetRearEffect — also the values in effect if it is never called.
 // Defined at the seam so the backend's initial state and the settings layer's CVar
 // registration share one source of truth. Tuning guidance: docs/accessibility-cues-tuning.md.
-#define CUE3D_REAR_CUTOFF_HZ_DEFAULT 1000.0f
-#define CUE3D_REAR_GAIN_DIP_DEFAULT 0.25f
+#define CUE3D_REAR_CUTOFF_HZ_DEFAULT 600.0f
+#define CUE3D_REAR_GAIN_DIP_DEFAULT 0.0f
 #define CUE3D_REAR_TREMOLO_DEPTH_DEFAULT 0.5f
 #define CUE3D_REAR_TREMOLO_HZ_DEFAULT 10.0f
 
