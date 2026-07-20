@@ -571,6 +571,8 @@ void CheatRam_UpdateEntry(CheatEntry* cheat) {
                 } else if ((gLevelMode == LEVELMODE_ALL_RANGE) && (cheat->option == MISSION_ACCOMPLISHED)) {
                     gLevelMode = LEVELMODE_ON_RAILS;
                 }
+                // @port: @event: debug complete-mission cheat flips the mode.
+                CALL_EVENT(LevelModeChangedEvent, gLevelMode, false);
             }
             gPlayer[0].state = PLAYERSTATE_LEVEL_COMPLETE;
         default:

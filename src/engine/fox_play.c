@@ -2871,6 +2871,9 @@ void Play_Init(void) {
     if ((gCurrentLevel == LEVEL_VENOM_ANDROSS) && (gLevelPhase == 1)) {
         gLevelMode = LEVELMODE_ALL_RANGE;
     }
+    // @port: @event: level (re)start establishes the mode; isLevelStart forces the
+    // accessibility announcement even when it matches the previous level's mode.
+    CALL_EVENT(LevelModeChangedEvent, gLevelMode, true);
 
     gVsMatchStart = false;
     Play_InitEnvironment();
@@ -7110,6 +7113,9 @@ void Play_Main(void) {
     if (gChangeTo360) {
         gChangeTo360 = false;
         gLevelMode = LEVELMODE_ALL_RANGE;
+        // @port: @event: mid-level rails->all-range switch (Corneria/Sector Y boss,
+        // Training's all-range phase, Andross entry).
+        CALL_EVENT(LevelModeChangedEvent, gLevelMode, false);
 
         if (gCurrentLevel != LEVEL_VENOM_ANDROSS) {
             MEM_ARRAY_ALLOCATE(gScenery360, 200);

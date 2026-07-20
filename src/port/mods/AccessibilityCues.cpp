@@ -1,4 +1,5 @@
 #include "AccessibilityCues.h"
+#include "Accessibility.h"
 
 #include <math.h>
 
@@ -45,27 +46,11 @@ static s32 AccessibilityCues_EnemyCueVoiceCount() {
 // docs/accessibility-cues-tuning.md); promote to a CVar if by-ear tuning wants it live.
 static constexpr f32 kEnemyCueAllRangeMaxDist = 10000.0f;
 
-// True only while the player is actually flying the ship. The 3D cue backend
-// runs its own OS audio device that the game's pause/cutscene handling never
-// reaches, so a looping Cue3D source keeps sounding until we stop it by hand —
-// the listeners treat "no control" as the signal to stop, and the first
-// in-control tick re-acquires targets and restarts. Each clause has a case it
-// alone catches:
-//  - gGameState: the dev return-to-map shortcut (PortEnhancements.c) jumps to
-//    GSTATE_MAP leaving gPlayer/gActors as stale-but-valid level memory, so
-//    only the game state betrays that the level is gone.
-//  - gPlayState: PLAY_PAUSE while paused (positions frozen, resume re-acquires
-//    the same targets), PLAY_INIT during level setup.
-//  - player state: cutscenes park the player outside PLAYERSTATE_ACTIVE —
-//    LEVEL_INTRO on entry, STANDBY for mid-level scenes (Star Wolf entry in
-//    fox_360.c, Katina's mothership in fox_ka.c), LEVEL_COMPLETE/DOWN/... for
-//    victory and shot-down sequences. U_TURN is kept: it is player-initiated,
-//    combat stays live through it (the game gates on ACTIVE || U_TURN all
-//    over), and it's exactly when you want the enemy cue to help reacquire.
-static bool AccessibilityCues_PlayerHasControl() {
-    return gGameState == GSTATE_PLAY && gPlayState == PLAY_UPDATE && gPlayer != NULL &&
-           (gPlayer[0].state == PLAYERSTATE_ACTIVE || gPlayer[0].state == PLAYERSTATE_U_TURN);
-}
+// The cue listeners gate on Accessibility_PlayerHasControl() (shared predicate,
+// Accessibility.cpp). The 3D cue backend runs its own OS audio device that the
+// game's pause/cutscene handling never reaches, so a looping Cue3D source keeps
+// sounding until we stop it by hand — the listeners treat "no control" as the
+// signal to stop, and the first in-control tick re-acquires targets and restarts.
 
 // Per-tick diagnostic trace for the enemy cue. Off by default. Even when on,
 // emitted lines still go through SPDLOG_TRACE, so the global log threshold
@@ -187,7 +172,7 @@ static void AccessibilityCues_OnRingPostUpdate(IEvent* event) {
     // (sf64context.h:324), zero-initialized at process start and only allocated
     // when a level loads, and this listener fires on GamePostUpdateEvent which
     // can tick before that.
-    if (!AccessibilityCues_IsEnabled() || gCurrentLevel != LEVEL_TRAINING || !AccessibilityCues_PlayerHasControl()) {
+    if (!AccessibilityCues_IsEnabled() || gCurrentLevel != LEVEL_TRAINING || !Accessibility_PlayerHasControl()) {
         sRingCue->Stop();
         return;
     }
@@ -343,7 +328,7 @@ static void AccessibilityCues_OnEnemyPostUpdate(IEvent* event) {
     bool enabled = AccessibilityCues_IsEnabled();
     bool allRange = (gLevelMode == LEVELMODE_ALL_RANGE);
     bool modeOk = (gLevelMode == LEVELMODE_ON_RAILS) || (allRange && !gVersusMode);
-    bool control = AccessibilityCues_PlayerHasControl();
+    bool control = Accessibility_PlayerHasControl();
     if (!enabled || !modeOk || !control) {
         ENEMY_CUE_TRACE("[enemy-cue] gated enabled={} mode={} versus={} control={}", enabled, (int) gLevelMode,
                         gVersusMode, control);
@@ -533,7 +518,7 @@ static void AccessibilityCues_OnAimPostUpdate(IEvent* event) {
 
     bool allRange = (gLevelMode == LEVELMODE_ALL_RANGE);
     bool modeOk = (gLevelMode == LEVELMODE_ON_RAILS) || (allRange && !gVersusMode);
-    bool control = AccessibilityCues_PlayerHasControl();
+    bool control = Accessibility_PlayerHasControl();
     // v1 is Arwing-only: the mappings below read the Arwing's aim fields. Landmaster /
     // Blue-Marine / on-foot need their own mappings (future work). `control` guarantees
     // gPlayer is non-null before the form read.

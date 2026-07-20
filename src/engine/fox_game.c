@@ -4,7 +4,7 @@
 #include "assets/ast_logo.h"
 #include "mods.h"
 #include "port/interpolation/FrameInterpolation.h"
-#include "port/hooks/list/EngineEvent.h"
+#include "port/hooks/Events.h"
 #include "port/mods/PortEnhancements.h"
 
 f32 gNextVsViewScale;

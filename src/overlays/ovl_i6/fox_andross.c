@@ -611,6 +611,8 @@ void Andross_80189214(void) {
     }
 
     gLevelMode = LEVELMODE_ON_RAILS;
+    // @port: @event: Andross fight's on-rails approach sub-phase.
+    CALL_EVENT(LevelModeChangedEvent, gLevelMode, false);
     player->wingPosition = 0;
     gPlayer[0].pos.x = 0.0f;
     player->cam.eye.z = 400.0f;
@@ -4038,6 +4040,8 @@ void Andross_80193C4C(Player* player) {
                     gCurrentLevel = LEVEL_VENOM_2;
                     gLevelPhase = 1;
                     gLevelMode = LEVELMODE_ALL_RANGE;
+                    // @port: @event: Andross fight's all-range transition to the brain.
+                    CALL_EVENT(LevelModeChangedEvent, gLevelMode, false);
                     player->csState = 3;
                     player->zPath = gPathProgress = 0.0f;
                     gDrawBackdrop = gDrawGround = true;

@@ -28,3 +28,11 @@ DEFINE_EVENT(BonusTextEvent, s32 value;);
 // cockpit/external view; in all-range it switches the follow distance. The
 // consumer reads gLevelMode to phrase it, so the producer stays policy-free.
 DEFINE_EVENT(CameraViewChangedEvent, s32 alternateView;);
+
+// The on-rails / all-range level mode was (re)established. mode is the new
+// gLevelMode (LEVELMODE_ON_RAILS / LEVELMODE_ALL_RANGE). isLevelStart is true
+// only for the fire from Play_Init (a fresh level or restart) and false for the
+// mid-level switches (the gChangeTo360 boss/Training transition, the Andross
+// fight's sub-phases, the debug complete-mission cheat). gLevelMode is written
+// from several scattered sites, so each fires this rather than a single producer.
+DEFINE_EVENT(LevelModeChangedEvent, s32 mode; s32 isLevelStart;);
