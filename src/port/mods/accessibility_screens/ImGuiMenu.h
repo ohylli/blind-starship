@@ -48,7 +48,7 @@ bool AccessibilityImGuiMenu_IsSessionActive();
 
 // Call right after a focusable sub-widget when ImGui::IsItemFocused() is true. Dedups
 // on ImGui::GetItemID() so each focus change is spoken once, as "label, role, state,
-// tooltip" (empty parts are skipped). The tooltip is the item's descriptive help text
+// hint, tooltip" (empty parts are skipped). The tooltip is the item's descriptive help text
 // (the same string shown on mouse hover); it is appended to the *same* utterance rather
 // than spoken separately so a Braille reader keeps the label and value on one line — a
 // follow-up announcement would refresh the display and wipe them. Interrupts current

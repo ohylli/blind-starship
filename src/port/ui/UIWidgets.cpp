@@ -30,6 +30,16 @@ namespace UIWidgets {
             snprintf(buf, sizeof(buf), fmt, value);
             return buf;
         }
+
+        // The tooltip a widget should surface: its disabled-state tooltip when disabled and one is
+        // set, otherwise its normal tooltip. Templated over the options structs, which all share the
+        // tooltip/disabled/disabledTooltip field names. One home for the policy the narration paths
+        // below share (the hover branches spell the same rule inline).
+        template <typename Opts>
+        const char* EffectiveTooltip(const Opts& options) {
+            return (options.disabled && options.disabledTooltip[0] != '\0') ? options.disabledTooltip
+                                                                            : options.tooltip;
+        }
     }
 
     // MARK: - Layout Helper
@@ -716,10 +726,8 @@ namespace UIWidgets {
         PushStyleButton(options.color);
         bool dirty = ImGui::Button(label, options.size);
         if (!suppressNarration && ImGui::IsItemFocused()) {
-            const char* tip = (options.disabled && options.disabledTooltip[0] != '\0') ? options.disabledTooltip
-                                                                                       : options.tooltip;
             AccessibilityImGuiMenu_ItemFocused(narrateLabel != nullptr ? narrateLabel : label, AccessibilityRole::Button,
-                                               narrateState, tip);
+                                               narrateState, EffectiveTooltip(options));
         }
         PopStyleButton();
         ImGui::EndDisabled();
@@ -797,11 +805,9 @@ namespace UIWidgets {
         // Must be before the label Text calls below — those submit items and would clobber
         // g.LastItemData (docs/accessibility-imgui-menu-plan.md).
         if (ImGui::IsItemFocused()) {
-            const char* tip = (options.disabled && options.disabledTooltip[0] != '\0') ? options.disabledTooltip
-                                                                                       : options.tooltip;
             AccessibilityImGuiMenu_ItemFocused(label, AccessibilityRole::Checkbox,
                                                options.disabled ? "unavailable" : (*value ? "checked" : "unchecked"),
-                                               tip);
+                                               EffectiveTooltip(options));
         }
         if (dirty) {
             AccessibilityImGuiMenu_ValueChanged(label, *value ? "checked" : "unchecked");
@@ -902,9 +908,8 @@ namespace UIWidgets {
         }
         bool comboOpen = ImGui::BeginCombo(invisibleLabel, comboArray[*value], options.flags);
         if (ImGui::IsItemFocused()) {
-            const char* tip = (options.disabled && options.disabledTooltip[0] != '\0') ? options.disabledTooltip
-                                                                                       : options.tooltip;
-            AccessibilityImGuiMenu_ItemFocused(label, AccessibilityRole::ComboBox, comboArray[*value], tip);
+            AccessibilityImGuiMenu_ItemFocused(label, AccessibilityRole::ComboBox, comboArray[*value],
+                                               EffectiveTooltip(options));
         }
         if (comboOpen) {
             ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(10.0f, 10.0f));
@@ -1026,10 +1031,8 @@ namespace UIWidgets {
         }
         if (AccessibilityImGuiMenu_IsSessionActive()) {
             if (ImGui::IsItemFocused()) {
-                const char* tip = (options.disabled && options.disabledTooltip[0] != '\0') ? options.disabledTooltip
-                                                                                           : options.tooltip;
                 AccessibilityImGuiMenu_ItemFocused(FormatValue(label, *value).c_str(), AccessibilityRole::Slider,
-                                                   FormatValue(options.format, *value).c_str(), tip);
+                                                   FormatValue(options.format, *value).c_str(), EffectiveTooltip(options));
             }
             // Capture here, before the + button below clobbers LastItemData: on the frame the
             // slider becomes active the narrator speaks how to adjust/exit (tweak vs text-input).
@@ -1127,10 +1130,8 @@ namespace UIWidgets {
         if (AccessibilityImGuiMenu_IsSessionActive()) {
             if (ImGui::IsItemFocused()) {
                 float dv = options.isPercentage ? *value * 100.0f : *value;
-                const char* tip = (options.disabled && options.disabledTooltip[0] != '\0') ? options.disabledTooltip
-                                                                                           : options.tooltip;
                 AccessibilityImGuiMenu_ItemFocused(FormatValue(label, dv).c_str(), AccessibilityRole::Slider,
-                                                   FormatValue(options.format, dv).c_str(), tip);
+                                                   FormatValue(options.format, dv).c_str(), EffectiveTooltip(options));
             }
             // Capture here, before the + button below clobbers LastItemData: on the frame the
             // slider becomes active the narrator speaks how to adjust/exit (tweak vs text-input).
