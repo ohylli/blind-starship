@@ -45,15 +45,26 @@ static s32 AccessibilityCues_EnemyCueVoiceCount() {
 // docs/accessibility-cues-tuning.md); promote to a CVar if by-ear tuning wants it live.
 static constexpr f32 kEnemyCueAllRangeMaxDist = 10000.0f;
 
-// True while the level is paused (START during play -> gPlayState == PLAY_PAUSE,
-// see fox_play.c). The 3D cue backend runs its own OS audio device that the
-// game's pause doesn't reach, so a looping Cue3D source keeps sounding through a
-// pause unless we stop it by hand. The listeners treat pause as one more reason
-// to stop the cue; because Play_Update is skipped while paused, the player /
-// ring / enemy positions are frozen, so the next unpaused tick re-acquires the
-// same target and restarts the cue.
-static bool AccessibilityCues_IsPaused() {
-    return gPlayState == PLAY_PAUSE;
+// True only while the player is actually flying the ship. The 3D cue backend
+// runs its own OS audio device that the game's pause/cutscene handling never
+// reaches, so a looping Cue3D source keeps sounding until we stop it by hand —
+// the listeners treat "no control" as the signal to stop, and the first
+// in-control tick re-acquires targets and restarts. Each clause has a case it
+// alone catches:
+//  - gGameState: the dev return-to-map shortcut (PortEnhancements.c) jumps to
+//    GSTATE_MAP leaving gPlayer/gActors as stale-but-valid level memory, so
+//    only the game state betrays that the level is gone.
+//  - gPlayState: PLAY_PAUSE while paused (positions frozen, resume re-acquires
+//    the same targets), PLAY_INIT during level setup.
+//  - player state: cutscenes park the player outside PLAYERSTATE_ACTIVE —
+//    LEVEL_INTRO on entry, STANDBY for mid-level scenes (Star Wolf entry in
+//    fox_360.c, Katina's mothership in fox_ka.c), LEVEL_COMPLETE/DOWN/... for
+//    victory and shot-down sequences. U_TURN is kept: it is player-initiated,
+//    combat stays live through it (the game gates on ACTIVE || U_TURN all
+//    over), and it's exactly when you want the enemy cue to help reacquire.
+static bool AccessibilityCues_PlayerHasControl() {
+    return gGameState == GSTATE_PLAY && gPlayState == PLAY_UPDATE && gPlayer != NULL &&
+           (gPlayer[0].state == PLAYERSTATE_ACTIVE || gPlayer[0].state == PLAYERSTATE_U_TURN);
 }
 
 // Per-tick diagnostic trace for the enemy cue. Off by default. Even when on,
@@ -172,11 +183,11 @@ static Item* AccessibilityCues_FindNextTrainingRing() {
 static void AccessibilityCues_OnRingPostUpdate(IEvent* event) {
     (void) event;
 
-    // gPlayer is a pointer (sf64context.h:324), zero-initialized at process
-    // start and only allocated when a level loads. The listener fires on
-    // GamePostUpdateEvent which can tick before that — guard it.
-    if (!AccessibilityCues_IsEnabled() || gCurrentLevel != LEVEL_TRAINING || gPlayer == NULL ||
-        AccessibilityCues_IsPaused()) {
+    // PlayerHasControl also covers the gPlayer null guard: gPlayer is a pointer
+    // (sf64context.h:324), zero-initialized at process start and only allocated
+    // when a level loads, and this listener fires on GamePostUpdateEvent which
+    // can tick before that.
+    if (!AccessibilityCues_IsEnabled() || gCurrentLevel != LEVEL_TRAINING || !AccessibilityCues_PlayerHasControl()) {
         sRingCue->Stop();
         return;
     }
@@ -325,18 +336,17 @@ static void AccessibilityCues_OnEnemyPostUpdate(IEvent* event) {
 
     // The cue runs on-rails and in solo all-range; Versus shares LEVELMODE_ALL_RANGE
     // but is untested multiplayer territory, so gVersusMode gates it out. gLevelMode
-    // and gPlayer both default to "ready-looking" zero values at process start
-    // (LEVELMODE_ON_RAILS = 0, gPlayer = NULL pointer) before any level loads, so the
-    // mode check alone doesn't filter the pre-game title/menu ticks. Null-check
-    // gPlayer to keep the listener safe there.
+    // defaults to a "ready-looking" zero value at process start (LEVELMODE_ON_RAILS
+    // = 0) before any level loads, so the mode check alone doesn't filter the
+    // pre-game title/menu ticks; PlayerHasControl (which also null-checks gPlayer)
+    // does.
     bool enabled = AccessibilityCues_IsEnabled();
     bool allRange = (gLevelMode == LEVELMODE_ALL_RANGE);
     bool modeOk = (gLevelMode == LEVELMODE_ON_RAILS) || (allRange && !gVersusMode);
-    bool hasPlayer = (gPlayer != NULL);
-    bool paused = AccessibilityCues_IsPaused();
-    if (!enabled || !modeOk || !hasPlayer || paused) {
-        ENEMY_CUE_TRACE("[enemy-cue] gated enabled={} mode={} versus={} hasPlayer={} paused={}", enabled,
-                        (int) gLevelMode, gVersusMode, hasPlayer, paused);
+    bool control = AccessibilityCues_PlayerHasControl();
+    if (!enabled || !modeOk || !control) {
+        ENEMY_CUE_TRACE("[enemy-cue] gated enabled={} mode={} versus={} control={}", enabled, (int) gLevelMode,
+                        gVersusMode, control);
         sEnemyCue->StopAllVoices();
         return;
     }
@@ -523,12 +533,12 @@ static void AccessibilityCues_OnAimPostUpdate(IEvent* event) {
 
     bool allRange = (gLevelMode == LEVELMODE_ALL_RANGE);
     bool modeOk = (gLevelMode == LEVELMODE_ON_RAILS) || (allRange && !gVersusMode);
+    bool control = AccessibilityCues_PlayerHasControl();
     // v1 is Arwing-only: the mappings below read the Arwing's aim fields. Landmaster /
-    // Blue-Marine / on-foot need their own mappings (future work); the form check also
-    // covers the gPlayer NULL guard the other listeners do separately.
-    bool arwing = (gPlayer != NULL) && (gPlayer[0].form == FORM_ARWING);
-    if (!AccessibilityCues_IsEnabled() || CVarGetInteger(kAimCueEnabledCVar, 1) != 1 || !modeOk || !arwing ||
-        AccessibilityCues_IsPaused()) {
+    // Blue-Marine / on-foot need their own mappings (future work). `control` guarantees
+    // gPlayer is non-null before the form read.
+    bool arwing = control && (gPlayer[0].form == FORM_ARWING);
+    if (!AccessibilityCues_IsEnabled() || CVarGetInteger(kAimCueEnabledCVar, 1) != 1 || !modeOk || !arwing) {
         sAimCue->Stop();
         return;
     }
