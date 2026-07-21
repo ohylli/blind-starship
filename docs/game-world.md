@@ -360,7 +360,16 @@ of those functions handle `OBJ_DYING`. The actual coverage:
 | `OBJECT_TYPE_ITEM` | yes (`:3011`) | yes (`:3020`) | **no** |
 | `OBJECT_TYPE_EFFECT` | yes (`:3038`) | yes (`:3046`) | **no** |
 | `OBJECT_TYPE_ACTOR_EVENT` | (no lifecycle events; only fires for draw events) | | |
-| `OBJECT_TYPE_SCENERY360` | (no lifecycle events; only fires for draw events) | | |
+| `OBJECT_TYPE_SCENERY360` | Training only (`fox_tr360.c`, `Training_Setup360`) | **no** | **no** |
+
+`Scenery360` objects are written directly into `gScenery360` by per-level
+setup loops that bypass `fox_enmy.c` entirely (there is no per-object
+`Scenery360_Update`). Training's loop (`Training_Setup360`) fires a
+cancellable `ObjectInitEvent` per spawn — cancelling it reuses the slot for
+the next entry — but the equivalent loops in Bolse, Sector Z, Fortuna, and
+Venom 2 (`fox_bo.c`, `fox_sz.c`, `fox_fo.c`, `fox_ve2.c`) do not fire it
+yet; give them the same one-line treatment if hazard filtering reaches
+those levels. Draw events fire for all of them.
 
 So if you want to know "this scenery / item / effect was just removed,"
 `ObjectDestroyEvent` will not help — its `*_Update` switch has no

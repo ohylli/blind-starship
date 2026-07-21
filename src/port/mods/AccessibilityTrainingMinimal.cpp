@@ -5,14 +5,22 @@
 #include "port/hooks/Events.h"
 
 // AccessibilityTrainingMinimal — strips collidable environmental obstacles
-// from Training so a blind player can fly the on-rails phase without
-// colliding into geometry they cannot see (see CLAUDE.md "Accessibility
-// fork"). Active only when gAccessibilityTrainingMinimal is set AND the
-// player is in Training's on-rails phase (see ScopeActive); the all-range
-// phase is intentionally out of scope.
+// from Training so a blind player can fly the level without colliding into
+// geometry they cannot see (see CLAUDE.md "Accessibility fork"). Active
+// only when gAccessibilityTrainingMinimal is set AND the player is in
+// Training (see ScopeActive); covers both the on-rails phase and the
+// all-range phase.
 //
 // WHAT IT REMOVES:
 //   - Collidable scenery and bosses (e.g. OBJ_SCENERY_TR_BUILDING).
+//   - The all-range phase's buildings — the same OBJ_SCENERY_TR_BUILDING id,
+//     but spawned by Training_Setup360 (fox_tr360.c) from a second object
+//     list directly into the gScenery360 array, bypassing the fox_enmy.c
+//     lifecycle. Caught via the ObjectInitEvent that Training_Setup360 now
+//     fires per spawn (type OBJECT_TYPE_SCENERY360). Side effect: the
+//     enemy AI's building-avoidance check (Training_EnemyObstacleCheck)
+//     then never triggers, so enemies fly straight paths — acceptable,
+//     they remain lockable cue targets.
 //   - Actors with a collidable hitbox AND info.targetOffset == 0.0f — i.e.
 //     things the engine treats as non-lockable hazards. Catches the scripted
 //     training barrier (OBJ_ACTOR_EVENT / EVID_TR_BARRIER) and would catch
@@ -49,15 +57,15 @@ static bool AccessibilityTrainingMinimal_IsEnabled() {
 
 static bool AccessibilityTrainingMinimal_ScopeActive() {
     return AccessibilityTrainingMinimal_IsEnabled() &&
-           (gCurrentLevel == LEVEL_TRAINING) &&
-           (gLevelMode == LEVELMODE_ON_RAILS);
+           (gCurrentLevel == LEVEL_TRAINING);
 }
 
 static bool AccessibilityTrainingMinimal_ShouldFilter(ObjectEventType type, void* object) {
     if (!AccessibilityTrainingMinimal_ScopeActive()) {
         return false;
     }
-    if ((type != OBJECT_TYPE_ACTOR) && (type != OBJECT_TYPE_SCENERY) && (type != OBJECT_TYPE_BOSS)) {
+    if ((type != OBJECT_TYPE_ACTOR) && (type != OBJECT_TYPE_SCENERY) && (type != OBJECT_TYPE_SCENERY360) &&
+        (type != OBJECT_TYPE_BOSS)) {
         return false;
     }
     if (!Object_HasCollidableHitbox(type, object)) {

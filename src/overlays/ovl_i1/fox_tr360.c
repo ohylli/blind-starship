@@ -6,6 +6,7 @@
 
 #include "global.h"
 #include "assets/ast_training.h"
+#include "port/hooks/Events.h"
 
 void Training_Setup360(void) {
     Scenery360* scenery360;
@@ -29,7 +30,13 @@ void Training_Setup360(void) {
             scenery360->obj.pos.y = gLevelObjects[i].yPos - RAND_FLOAT_SEEDED(300.0f);
             scenery360->obj.rot.y = gLevelObjects[i].rot.y;
             Object_SetInfo(&scenery360->info, scenery360->obj.id);
-            scenery360++;
+            // Scenery360 spawns bypass the OBJ_INIT machinery in fox_enmy.c, so
+            // fire the lifecycle event here. A cancelling listener leaves the
+            // slot behind (status already reset by the listener) and the next
+            // list entry reuses it.
+            CALL_CANCELLABLE_EVENT(ObjectInitEvent, OBJECT_TYPE_SCENERY360, scenery360) {
+                scenery360++;
+            }
         }
     }
 }

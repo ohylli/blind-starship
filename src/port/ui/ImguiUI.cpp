@@ -468,7 +468,7 @@ void DrawSettingsMenu(){
                 .defaultValue = true
             });
             UIWidgets::CVarCheckbox("Minimal training", "gAccessibilityTrainingMinimal", {
-                .tooltip = "Strips collidable obstacles from Training's on-rails phase while keeping enemies as cue targets.",
+                .tooltip = "Strips collidable obstacles from Training while keeping enemies.",
                 .defaultValue = true
             });
             ImGui::EndMenu();

@@ -33,6 +33,9 @@ static inline bool Object_HasCollidableHitbox(ObjectEventType type, void* object
         case OBJECT_TYPE_SCENERY:
             info = &((Scenery*) object)->info;
             break;
+        case OBJECT_TYPE_SCENERY360:
+            info = &((Scenery360*) object)->info;
+            break;
         default:
             return false;
     }
