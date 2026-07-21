@@ -126,6 +126,7 @@ void Radio_PlayMessage(u16* msg, RadioCharacterId character) {
     gRadioState = 100;
 
     gRadioMsgId = Message_IdFromPtr(msg);
+    CALL_EVENT(RadioMessageEvent, msg, gRadioMsgId, (s32) character);
     Audio_PlayVoice(gRadioMsgId);
 }
 

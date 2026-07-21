@@ -29,6 +29,13 @@ DEFINE_EVENT(BonusTextEvent, s32 value;);
 // consumer reads gLevelMode to phrase it, so the producer stays policy-free.
 DEFINE_EVENT(CameraViewChangedEvent, s32 alternateView;);
 
+// A radio message was accepted for display by Radio_PlayMessage (fired after
+// its priority/dead-teammate guards, so suppressed messages never reach this).
+// msg is the SEGMENTED_TO_VIRTUAL'd message pointer (resolve the u16 character
+// stream with LOAD_ASSET), msgId the Message_IdFromPtr result, character the
+// RadioCharacterId of the speaker.
+DEFINE_EVENT(RadioMessageEvent, u16* msg; s32 msgId; s32 character;);
+
 // The on-rails / all-range level mode was (re)established. mode is the new
 // gLevelMode (LEVELMODE_ON_RAILS / LEVELMODE_ALL_RANGE). isLevelStart is true
 // only for the fire from Play_Init (a fresh level or restart) and false for the

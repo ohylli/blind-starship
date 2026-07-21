@@ -466,6 +466,7 @@ void PortEnhancements_Register() {
     REGISTER_EVENT(BonusTextEvent);
     REGISTER_EVENT(CameraViewChangedEvent);
     REGISTER_EVENT(LevelModeChangedEvent);
+    REGISTER_EVENT(RadioMessageEvent);
 
     // Register item events
     REGISTER_EVENT(ItemDropEvent);

@@ -467,6 +467,10 @@ void DrawSettingsMenu(){
                 .tooltip = "Speaks hit/bonus popups and the Training ring streak.",
                 .defaultValue = true
             });
+            UIWidgets::CVarCheckbox("Radio message text", "gAccessibilityRadioText", {
+                .tooltip = "Speaks radio messages that have no voice acting, such as the Training mode instructions.",
+                .defaultValue = true
+            });
             UIWidgets::CVarCheckbox("Minimal training", "gAccessibilityTrainingMinimal", {
                 .tooltip = "Strips collidable obstacles from Training while keeping enemies.",
                 .defaultValue = true

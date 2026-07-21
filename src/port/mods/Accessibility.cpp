@@ -26,6 +26,7 @@ void Accessibility_Init() {
     AccessibilityScore_Register();
     AccessibilityCameraView_Register();
     AccessibilityLevelMode_Register();
+    AccessibilityRadioMessages_Register();
     AccessibilityImGuiMenu_Register();
 
     AccessibilityCues_Init();
