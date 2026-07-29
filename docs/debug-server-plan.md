@@ -1,9 +1,11 @@
 # Plan: debug control server for the running game
 
-Status: proposed (2026-07-29). Design agreed in outline with the maintainer; no
-implementation yet. This document is the what-and-why record and the starting point for
-refinement — it deliberately stops short of an implementation specification (no wire
-protocol, no file layout). Open questions for the next session are collected at the end.
+Status: proposed (2026-07-29). Design agreed in outline with the maintainer; refined
+the same day after a code review of the libultraship console, threading, and
+debug-pause machinery; no implementation yet. This document is the what-and-why record
+and the starting point for refinement — it deliberately stops short of an
+implementation specification (no wire protocol, no file layout). Remaining open
+questions are collected at the end.
 
 ## Problem
 
@@ -39,15 +41,36 @@ Rationale for this shape:
   `Run(command, &output)` entry point; port code can register commands with
   `AddCommand`. `set`/`get` for any CVar are already registered
   (`libultraship/src/window/gui/ConsoleWindow.cpp:303-308`), and both the console and
-  its ImGui window are created unconditionally (`Context.cpp:306`, `Gui.cpp:81`). The
-  server is "just" a second frontend on infrastructure that is already wired in — and
-  CVar get/set alone already controls every mod, cheat, and accessibility toggle.
+  its ImGui window are created unconditionally (`Context.cpp:306`, `Gui.cpp:81` —
+  `AddGuiWindow` calls `Init()` on the window, so registration does not depend on the
+  window ever being opened). The server is "just" a second frontend on infrastructure
+  that is already wired in — and CVar get/set alone already controls every mod, cheat,
+  and accessibility toggle.
+- **The server owns its dispatch; `Console::Run` is one backend, not the funnel.** The
+  registry (the shared command *vocabulary*) is the reuse target, but the server should
+  dispatch via `HasCommand` + `GetCommand(...).Handler(...)` with its own parsing and
+  status reporting rather than routing every request through `Console::Run`. Three
+  concrete reasons, found by code review: `Run` splits on spaces with no quoting
+  (`Console.cpp:30`), so any argument containing a space is unrepresentable through it;
+  `Run` logs every command *with its full output* at INFO (`Console.cpp:45`), which at
+  our default log level would pour entire JSON dumps into `logs/Starship.log` for a
+  polling client; and `Run`'s return value is ambiguous (0 means both "command not
+  found" and "success", and handler conventions vary), so the wire protocol must carry
+  a server-determined status anyway. Commands registered by the server remain fully
+  usable from the in-game ImGui console; the reverse (server-issued commands appearing
+  in the console window's history) is not a goal — that history is `ConsoleWindow`'s
+  private log.
 - **Debug pause is the ideal inspection partner.** `gDebugPause` works by cancelling
   the play-update event (`src/port/mods/PortEnhancements.c:184`), so a "paused" game
   still runs its render loop, ImGui, CVar system, and event bus. The server therefore
-  stays responsive while the simulation is frozen: pause, inspect at leisure,
-  single-step with the existing `gLToFrameAdvance` machinery, resume — all drivable
-  remotely via CVars from day one.
+  stays responsive while the simulation is frozen. Two caveats found by code review:
+  the same handler force-resets `gDebugPause` to 0 every play frame while
+  `gLToDebugPause` is 0 (`PortEnhancements.c:181`), so a remote pause must set both
+  CVars (or that guard gets reworked); and single-stepping is not CVar-drivable — the
+  existing `gLToFrameAdvance` machinery is driven by a physical L-trigger press, and a
+  socket client flipping `gDebugPause` off/on cannot guarantee exactly one frame
+  elapses in between. Pause/resume work via CVars from day one; `step [n]` needs to be
+  a real command with a game-thread frame counter.
 - **The threading model is already solved in this codebase.** Game state must only be
   touched from the game thread. The socket thread only ferries strings; commands are
   queued and drained once per frame from a game-thread hook, the same
@@ -75,11 +98,16 @@ Rationale for this shape:
 
 ## Capability phases (scope outline, not a spec)
 
-1. **Core**: socket listener + game-thread queue/drain + bridge to `Console::Run`; CVar
-   get/set thereby free. First new commands: JSON dumps of player state and the
-   object/actor lists (a programmatic sibling of the object-RAM viewer,
-   `src/mods/object_ram.c`). JSON output because the primary consumer is a script, not
-   an eyeball — composition (filtering, diffing, watching) happens client-side.
+1. **Core**: socket listener + game-thread queue/drain + server-owned dispatch over the
+   `Ship::Console` registry (see rationale above); CVar get/set thereby free. First new
+   commands: JSON dumps of player state and the object/actor lists (a programmatic
+   sibling of the object-RAM viewer, `src/mods/object_ram.c`). JSON output because the
+   primary consumer is a script, not an eyeball — composition (filtering, diffing,
+   watching) happens client-side. **Play-mode guard from day one**: these first dumps
+   already dereference play-mode state, so every command that touches it needs a
+   "requires play mode" precondition checked at dispatch (returning a clean error when
+   invoked from a menu or the title screen) — this is a per-command property, not a
+   drain-location concern.
 2. **Control & accessibility queries**: pause/step/resume convenience commands (sugar
    over the existing CVars), warp (the level-select mod shows how), recent-TTS-lines
    query, current cue-state query.
@@ -118,21 +146,31 @@ repeatable, doesn't suspend the process); cdb is the occasional scalpel for
   machine as an already-trusted process.
 - Not a general modding API; no stability promises for command names or output shapes.
 
+## Resolved by code review (2026-07-29)
+
+- **Drain point: the engine tick.** `GameEngine::StartFrame()` (`src/port/Engine.cpp`)
+  is the right place — it runs every loop iteration including menus and pause, and the
+  ImGuiMenu accessibility module already ticks from there. Threading is even simpler
+  than assumed: `push_frame()` in `src/port/Game.cpp` shows a single main-loop thread
+  running game logic, `StartFrame`, and ImGui rendering in sequence, so a drain there
+  executes commands on the very thread that runs `ConsoleWindow::Dispatch` today.
+  Play-mode safety is a per-command precondition (see phase 1), not a reason to drain
+  in two places.
+- **Console bridge.** `Console::Run` has no main-thread or ImGui-context assumptions —
+  it is a pure map lookup + handler call, and the built-in handlers (`set`/`get`/
+  `help`) touch only CVars and the command map. Its limitations (space-splitting, INFO
+  logging of full output, ambiguous return codes) are what motivate the server-owned
+  dispatch layer in the Decision section.
+
 ## Open questions for refinement
 
-- **Drain point.** Candidates: `GameEngine::StartFrame()` (`src/port/Engine.cpp:326`,
-  runs every frame including menus — the ImGuiMenu accessibility module already ticks
-  from there) vs. an event-bus listener (`PlayUpdateEvent` fires only in play mode;
-  `DisplayPostUpdateEvent` only on play-draw frames). Likely answer: the engine tick,
-  for menu/pause coverage — verify command execution is safe there, or drain in two
-  places with a "requires play mode" flag per command.
 - **Transport and framing.** Plain TCP works on all desktop platforms and every
   client; is line-oriented text with a JSON payload per response enough, or is
   length-prefixed framing needed for multi-line dumps? (Named pipes would be
-  Windows-only; no reason found yet to prefer them.)
-- **Console bridge details.** Does `Console::Run` have any hidden main-thread or
-  ImGui-context assumptions? (`ConsoleWindow::Dispatch` runs it from the render/UI
-  path today.)
+  Windows-only; no reason found yet to prefer them.) On Windows the socket thread
+  needs `WSAStartup` and `ws2_32` linkage; a 127.0.0.1-only bind avoids the firewall
+  prompt a wildcard bind would trigger. Responses inherently carry up-to-one-frame
+  latency (socket thread waits for the game-thread drain).
 - **Dump surface.** Which `Player` / object fields go in the first JSON dumps, and do
   dumps live game-side (C, next to the structs) or port-side (C++ via
   `CGameCompat.h`)? What identifies an object across frames for client-side diffing?
