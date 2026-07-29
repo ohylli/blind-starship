@@ -2,7 +2,8 @@
 
 Status: proposed (2026-07-29). Design agreed in outline with the maintainer; refined
 the same day after a code review of the libultraship console, threading, and
-debug-pause machinery; no implementation yet. This document is the what-and-why record
+debug-pause machinery, and after a live experiment with the native debugger (see
+"Relationship to the native debugger"); no implementation yet. This document is the what-and-why record
 and the starting point for refinement — it deliberately stops short of an
 implementation specification (no wire protocol, no file layout). Remaining open
 questions are collected at the end.
@@ -136,8 +137,34 @@ cdb (installed; invoked as `cdbX64`, the Store-package alias) complements rather
 competes: with the MSVC PDB it can read any global by name with zero game modification,
 and it has the one capability the server cannot replicate — hardware data breakpoints
 ("break when anything writes this variable"). The server is the everyday tool (fast,
-repeatable, doesn't suspend the process); cdb is the occasional scalpel for
-"who mutates this?" mysteries.
+repeatable, semantic); cdb is the occasional scalpel for "who mutates this?" mysteries.
+
+**Verified against a running game (2026-07-29).** A four-check experiment attached to
+the Debug build at the title screen and confirmed the assumptions above:
+
+- **Agent-drivable batch attach.** `cdbX64 -p <pid> -c "ld Starship; <cmds>; qd"` runs
+  from a non-interactive shell with no stdin, and `qd` detaches leaving the game alive
+  and running — `gGameFrameCount` read 890 on one attach and 1233 on the next.
+- **Decomp C globals resolve with full type info.** `?? Starship!gLevelMode` printed
+  `LevelMode LEVELMODE_ON_RAILS (0n0)` — the enum by name, not a bare integer — and the
+  C++ expression evaluator traverses struct pointers (`?? Starship!gPlayer->pos`).
+- **Hardware write breakpoints work as advertised.** `ba w4 Starship!gGameFrameCount`
+  hit on the next frame, and with `.lines -e` the stack came back source-annotated all
+  the way down (`Title_Main` at `fox_title.c:238` → `Game_Update` → `push_frame`).
+- **The "suspends the process" cost is negligible.** A full attach + symbol load + read
+  + detach measured **0.4 s** against the 243 MB PDB. Non-invasive `-pv` (read-only, no
+  breakpoints) measured slightly *slower*, so there is no reason to prefer it.
+
+That last result corrects the original framing: process suspension is *not* why cdb
+stays the occasional tool. The real limits are that each query is a fresh process spawn
+with no session continuity, nothing can be run on the game thread, and the answers are
+raw memory rather than semantic ("which enemies is the cue voicing right now?") — which
+is exactly the gap the server fills. Two practical notes for scripting it: the first
+attach of a session stalls briefly validating the default `srv*` symbol path, and every
+run ends with NatVis-unload noise plus a benign checksum warning that a wrapper should
+filter. A caveat for the interesting reads: `gPlayer` is null outside play mode, so
+useful dereferences need the game already in a level — the same precondition the
+server's play-mode guard encodes.
 
 ## Non-goals
 
