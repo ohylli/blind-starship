@@ -203,6 +203,20 @@ server's play-mode guard encodes.
   `CGameCompat.h`)? What identifies an object across frames for client-side diffing?
 - **TTS history query.** Where to record announcements — in the TTS transport
   (`src/port/accessibility/`) as a ring buffer, or as a tap on the speak call sites?
-- **Launch story.** Anything needed for the agent to launch the game headless-ish
-  (skip the ROM picker when `sf64.o2r` exists, start straight into a level via CVar)?
+- **Launch story.** Half of this is already solved: `tools/launch.ps1` starts the game
+  without stealing focus (`CreateProcess` with `STARTF_USESHOWWINDOW` +
+  `SW_SHOWMINNOACTIVE`, which covers the game window and the `AllocConsole` console
+  alike), so an agent-driven test run no longer interrupts the developer's screen reader.
+  Today it proves the launch worked by enumerating the process's windows and checking who
+  holds the foreground — a proxy for "the game is up", since it cannot see past the
+  window into the game's own readiness, and its fixed settle delay is a guess.
+  **The server should replace that with a real readiness handshake**: a `health` command
+  in the phase-1 core (cheap, no play-mode precondition, answers with something like
+  version + current game state), and a wait loop in the launcher that polls the port until
+  it answers or the process dies. Polling the process as well as the port matters — it
+  turns "exited during startup" into an immediate, specific failure instead of a silent
+  timeout. The soundz mod (github.com/ahicks92/soundz, `scripts/launch.ps1`) is where the
+  focus trick came from and does exactly this handshake against its own dev server; worth
+  a look when writing ours. Still open beyond that: skip the ROM picker when `sf64.o2r`
+  exists, and start straight into a level via CVar.
 - **Naming.** CVar (`gDebugServer`?), module name, default port.
