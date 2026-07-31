@@ -24,7 +24,7 @@ static const char* ObjectSpawnLog_TypeName(ObjectEventType type) {
     }
 }
 
-static const char* ObjectSpawnLog_LevelName(s32 level) {
+const char* Starship_LevelName(int level) {
     switch (level) {
         case LEVEL_CORNERIA:       return "LEVEL_CORNERIA";
         case LEVEL_METEO:          return "LEVEL_METEO";
@@ -67,7 +67,7 @@ static void ObjectSpawnLog_Emit(ObjectEventType type, void* object, bool cancell
                      EventId_GetName(eventType), eventType,
                      obj->pos.x, obj->pos.y, obj->pos.z,
                      Object_HasCollidableHitbox(type, object) ? "collidable" : "none",
-                     ObjectSpawnLog_LevelName(gCurrentLevel), (int) gCurrentLevel,
+                     Starship_LevelName(gCurrentLevel), (int) gCurrentLevel,
                      cancelled ? "FILTERED" : "PASSED");
         return;
     }
@@ -77,7 +77,7 @@ static void ObjectSpawnLog_Emit(ObjectEventType type, void* object, bool cancell
                  ObjectId_GetName(obj->id),
                  obj->pos.x, obj->pos.y, obj->pos.z,
                  Object_HasCollidableHitbox(type, object) ? "collidable" : "none",
-                 ObjectSpawnLog_LevelName(gCurrentLevel), (int) gCurrentLevel,
+                 Starship_LevelName(gCurrentLevel), (int) gCurrentLevel,
                  cancelled ? "FILTERED" : "PASSED");
 }
 

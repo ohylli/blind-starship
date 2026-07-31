@@ -42,6 +42,7 @@
 #include "port/mods/PortEnhancements.h"
 #include "port/mods/Accessibility.h"
 #include "port/mods/accessibility_screens/ImGuiMenu.h"
+#include "port/mods/debugserver/DebugServer.h"
 #include "port/accessibility/Tts.h"
 
 #include <Fast3D/interpreter.h>
@@ -308,9 +309,12 @@ void GameEngine::Create() {
 
     Tts_Init();
     Accessibility_Init();
+    DebugServer_Init();
 }
 
 void GameEngine::Destroy() {
+    // First: a pending debug command may touch state the other Exits tear down.
+    DebugServer_Exit();
     Accessibility_Exit();
     Tts_Shutdown();
     PortEnhancements_Exit();
@@ -326,6 +330,7 @@ void GameEngine::Destroy() {
 
 void GameEngine::StartFrame() const {
     AccessibilityImGuiMenu_FrameTick();
+    DebugServer_FrameTick();
 
     using Ship::KbScancode;
     const int32_t dwScancode = this->context->GetWindow()->GetLastScancode();

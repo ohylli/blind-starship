@@ -1,12 +1,12 @@
 # Plan: debug control server for the running game
 
-Status: proposed (2026-07-29). Design agreed in outline with the maintainer; refined
-the same day after a code review of the libultraship console, threading, and
-debug-pause machinery, and after a live experiment with the native debugger (see
-"Relationship to the native debugger"); no implementation yet. This document is the what-and-why record
-and the starting point for refinement — it deliberately stops short of an
-implementation specification (no wire protocol, no file layout). Remaining open
-questions are collected at the end.
+Status: phase 1 (Core) implemented (2026-07-31) — see "Resolved by implementation"
+near the end for the decisions that closed most open questions. Design agreed in
+outline with the maintainer 2026-07-29; refined the same day after a code review of
+the libultraship console, threading, and debug-pause machinery, and after a live
+experiment with the native debugger (see "Relationship to the native debugger").
+This document remains the what-and-why record; the implementation lives in
+`src/port/mods/debugserver/` and `tools/debug_client.py`.
 
 ## Problem
 
@@ -189,34 +189,47 @@ server's play-mode guard encodes.
   logging of full output, ambiguous return codes) are what motivate the server-owned
   dispatch layer in the Decision section.
 
+## Resolved by implementation (2026-07-31)
+
+Phase 1 (Core) is implemented: `src/port/mods/debugserver/DebugServer.{h,cpp}`
+(transport, threading, dispatch) + `DebugCommands.{h,cpp}` (`health`, `player`,
+`objects`), ticked from `GameEngine::StartFrame` and torn down first in
+`GameEngine::Destroy`. Client: `tools/debug_client.py` (stdlib Python; `--wait`
+polls readiness, `--repl` for batch use). Decisions that closed the open questions:
+
+- **Transport and framing: plain TCP, line-oriented both ways.** Raw sockets
+  (Winsock behind a small `#ifdef`, `ws2_32` linked on Windows; no-op stubs on
+  Switch), bound to 127.0.0.1 only. Request: one text line; whitespace-split with
+  double-quote grouping (the quoting `Console::Run` lacks). Response: exactly one
+  JSON object per line — `{"status":"ok","output":"..."}` or
+  `{"status":"error","error":"..."}`. JSON string escaping keeps any dump on one
+  line, so no length-prefixed framing is needed. Dump commands put compact JSON *as
+  a string* in `output`, keeping the envelope uniform for every registry command
+  (`set`/`get`/`help` included); clients parse twice. One outstanding request per
+  connection; multiple connections fine.
+- **Dump surface: port-side C++ via `CGameCompat.h`.** `player` serializes the
+  useful `Player` fields (pos + `trueZpos`, rot, vel, speeds, shields, state/form,
+  boost, wings, camera); `objects` covers the eight object arrays with the common
+  `Object` header plus per-type extras. Identity for client-side diffing is
+  (array, index, id, `eventType` for actors) — the same tuple the enemy-cue voice
+  keys use; a FREE→INIT transition on a slot means a new entity. One trap found
+  during implementation: `gScenery360` is only allocated in all-range levels and
+  left dangling afterwards, so that one array carries its own precondition on top
+  of the play-mode guard.
+- **Launch story: done as designed.** `health` reports protocol version, game/play
+  state, level, frame, and the pre-evaluated play-mode predicate;
+  `tools/launch.ps1` polls it (and the process — dead-during-startup fails
+  immediately and specifically) instead of sleeping a fixed settle delay, falling
+  back to the old behavior with a warning when the server is off.
+- **Naming.** `gDebugServer.Enabled` + `gDebugServer.Port` (default 7764) — dotted
+  because the CVar config file nests on `.`, so a scalar `gDebugServer` could not
+  coexist with `gDebugServer.Port`. Runtime-toggleable: the frame tick notices the
+  CVar and starts/stops the listener without a restart.
+
 ## Open questions for refinement
 
-- **Transport and framing.** Plain TCP works on all desktop platforms and every
-  client; is line-oriented text with a JSON payload per response enough, or is
-  length-prefixed framing needed for multi-line dumps? (Named pipes would be
-  Windows-only; no reason found yet to prefer them.) On Windows the socket thread
-  needs `WSAStartup` and `ws2_32` linkage; a 127.0.0.1-only bind avoids the firewall
-  prompt a wildcard bind would trigger. Responses inherently carry up-to-one-frame
-  latency (socket thread waits for the game-thread drain).
-- **Dump surface.** Which `Player` / object fields go in the first JSON dumps, and do
-  dumps live game-side (C, next to the structs) or port-side (C++ via
-  `CGameCompat.h`)? What identifies an object across frames for client-side diffing?
-- **TTS history query.** Where to record announcements — in the TTS transport
-  (`src/port/accessibility/`) as a ring buffer, or as a tap on the speak call sites?
-- **Launch story.** Half of this is already solved: `tools/launch.ps1` starts the game
-  without stealing focus (`CreateProcess` with `STARTF_USESHOWWINDOW` +
-  `SW_SHOWMINNOACTIVE`, which covers the game window and the `AllocConsole` console
-  alike), so an agent-driven test run no longer interrupts the developer's screen reader.
-  Today it proves the launch worked by enumerating the process's windows and checking who
-  holds the foreground — a proxy for "the game is up", since it cannot see past the
-  window into the game's own readiness, and its fixed settle delay is a guess.
-  **The server should replace that with a real readiness handshake**: a `health` command
-  in the phase-1 core (cheap, no play-mode precondition, answers with something like
-  version + current game state), and a wait loop in the launcher that polls the port until
-  it answers or the process dies. Polling the process as well as the port matters — it
-  turns "exited during startup" into an immediate, specific failure instead of a silent
-  timeout. The soundz mod (github.com/ahicks92/soundz, `scripts/launch.ps1`) is where the
-  focus trick came from and does exactly this handshake against its own dev server; worth
-  a look when writing ours. Still open beyond that: skip the ROM picker when `sf64.o2r`
-  exists, and start straight into a level via CVar.
-- **Naming.** CVar (`gDebugServer`?), module name, default port.
+- **TTS history query** (phase 2). Where to record announcements — in the TTS
+  transport (`src/port/accessibility/`) as a ring buffer, or as a tap on the speak
+  call sites?
+- **Launch conveniences.** Skip the ROM picker when `sf64.o2r` exists, and start
+  straight into a level via CVar.

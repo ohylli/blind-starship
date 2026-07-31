@@ -45,8 +45,14 @@ param(
     # only happens when the game starts focused.
     [switch]$Focus,
 
-    # How long to let the game settle before reporting what it owns.
-    [int]$SettleSeconds = 8
+    # How long to wait for the game to come up before reporting what it owns. With the
+    # debug server enabled (gDebugServer.Enabled CVar) this is an upper bound - the wait
+    # ends as soon as the server answers a health command. With it off, the full wait is
+    # spent as a plain settle delay, like before.
+    [int]$SettleSeconds = 8,
+
+    # Debug server port to poll for the readiness handshake (gDebugServer.Port CVar).
+    [int]$Port = 7764
 )
 
 $ErrorActionPreference = 'Stop'
@@ -119,13 +125,53 @@ if ($Focus) {
     $script:targetPid = $pi.dwProcessId
 }
 
-Write-Host "pid $targetPid; waiting $SettleSeconds s for startup ..."
-Start-Sleep -Seconds $SettleSeconds
+# Readiness handshake: send "health" to the debug server (tools/debug_client.py describes
+# the protocol) and return the parsed inner payload, or $null if the server did not answer.
+function Test-DebugServer {
+    param([int]$Port)
+    $client = New-Object System.Net.Sockets.TcpClient
+    try {
+        $async = $client.BeginConnect('127.0.0.1', $Port, $null, $null)
+        if (-not $async.AsyncWaitHandle.WaitOne(500)) { return $null }
+        $client.EndConnect($async)
+        $stream = $client.GetStream()
+        $stream.ReadTimeout = 2000
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes("health`n")
+        $stream.Write($bytes, 0, $bytes.Length)
+        $reader = New-Object System.IO.StreamReader($stream)
+        $line = $reader.ReadLine()
+        if (-not $line) { return $null }
+        $resp = $line | ConvertFrom-Json
+        if ($resp.status -ne 'ok') { return $null }
+        return ($resp.output | ConvertFrom-Json)
+    } catch {
+        return $null
+    } finally {
+        $client.Close()
+    }
+}
 
-if (-not (Get-Process -Id $targetPid -ErrorAction SilentlyContinue)) {
-    Write-Host "Starship exited during startup. Check the log:" -ForegroundColor Red
-    Write-Host "  $dir\logs\Starship.log"
-    exit 1
+Write-Host "pid $targetPid; waiting up to $SettleSeconds s for startup ..."
+$deadline = (Get-Date).AddSeconds($SettleSeconds)
+$health = $null
+while ($true) {
+    # Polling the process as well as the port turns "exited during startup" into an
+    # immediate, specific failure instead of a silent timeout.
+    if (-not (Get-Process -Id $targetPid -ErrorAction SilentlyContinue)) {
+        Write-Host "Starship exited during startup. Check the log:" -ForegroundColor Red
+        Write-Host "  $dir\logs\Starship.log"
+        exit 1
+    }
+    $health = Test-DebugServer -Port $Port
+    if ($health) { break }
+    if ((Get-Date) -gt $deadline) { break }
+    Start-Sleep -Milliseconds 250
+}
+
+if ($health) {
+    Write-Host ("Debug server ready on port " + $Port + ": " + $health.gameStateName + ", frame " + $health.frame)
+} else {
+    Write-Host "Debug server did not answer on port $Port (gDebugServer.Enabled off?). Proceeding on the settle timeout alone." -ForegroundColor Yellow
 }
 
 # Report what came up and who holds the foreground, so an unattended run can tell whether the launch

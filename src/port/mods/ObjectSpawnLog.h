@@ -2,6 +2,9 @@
 
 #ifdef __cplusplus
 void ObjectSpawnLog_Init();
+
+// Level id -> "LEVEL_CORNERIA" style name; shared with the debug server's dumps.
+const char* Starship_LevelName(int level);
 #endif
 
 // ObjectId_GetName and EventId_GetName are defined in ObjectIdNames.generated.c
