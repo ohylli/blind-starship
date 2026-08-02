@@ -4,6 +4,7 @@
 #include <math.h>
 
 #include "port/CGameCompat.h"
+#include "port/PlayerAim.h"
 #include "port/hooks/Events.h"
 #include "port/accessibility/Cue.h"
 
@@ -203,8 +204,8 @@ static void AccessibilityCues_OnRingPostUpdate(IEvent* event) {
 // for the derivation. gCalcMatrix is a scratch the game reuses every frame;
 // we own it for the brief window between this call and the loop below.
 static void AccessibilityCues_BuildWorldToBodyMatrix(Player* player) {
-    f32 yaw = player->yRot_114 + player->rot.y;
-    f32 pitch = player->xRot_120 + player->rot.x + player->aerobaticPitch;
+    f32 yaw = Player_AimYaw(*player);
+    f32 pitch = Player_AimPitch(*player);
     // body = Rx(-pitch) · Ry(-yaw) · world
     Matrix_RotateX(gCalcMatrix, -pitch * M_DTOR, MTXF_NEW);
     Matrix_RotateY(gCalcMatrix, -yaw * M_DTOR, MTXF_APPLY);
@@ -547,7 +548,7 @@ static void AccessibilityCues_OnAimPostUpdate(IEvent* event) {
             pitchRange = kAimCuePitchRangeDegDefault;
         }
         nx = AccessibilityCues_ClampUnit(-player->rot.y / yawRange);
-        ny = AccessibilityCues_ClampUnit((player->xRot_120 + player->rot.x + player->aerobaticPitch) / pitchRange);
+        ny = AccessibilityCues_ClampUnit(Player_AimPitch(*player) / pitchRange);
     } else {
         f32 dist = CVarGetFloat(kAimCueProjDistCVar, kAimCueProjDistDefault);
         if (!(dist >= 0.0f)) {

@@ -43,6 +43,7 @@
 #include "port/mods/Accessibility.h"
 #include "port/mods/accessibility_screens/ImGuiMenu.h"
 #include "port/mods/debugserver/DebugServer.h"
+#include "port/mods/debugserver/DebugCommands.h"
 #include "port/accessibility/Tts.h"
 
 #include <Fast3D/interpreter.h>
@@ -309,6 +310,10 @@ void GameEngine::Create() {
 
     Tts_Init();
     Accessibility_Init();
+    // Commands before transport, and from here rather than DebugServer_Init: the in-game
+    // ImGui console needs them on every platform, including Switch where the socket
+    // server is compiled out.
+    DebugCommands_Register();
     DebugServer_Init();
 }
 

@@ -19,6 +19,9 @@ void DebugServer_Exit() {
 }
 void DebugServer_FrameTick() {
 }
+bool DebugServer_Defer(DebugServerPollFn poll) {
+    return false; // no socket transport: commands must answer synchronously
+}
 
 #else
 
@@ -43,6 +46,8 @@ void DebugServer_FrameTick() {
 
 #include <condition_variable>
 #include <cctype>
+#include <cerrno>
+#include <cstring>
 #include <deque>
 #include <memory>
 #include <mutex>
@@ -50,7 +55,16 @@ void DebugServer_FrameTick() {
 #include <thread>
 #include <vector>
 
-#include "DebugCommands.h"
+// send() must not raise SIGPIPE when the client vanished mid-request — the default
+// disposition kills the process, and a client timing out and closing while the game
+// thread still owes it a response is a normal flow. Linux spells the opt-out
+// MSG_NOSIGNAL per send; macOS has no MSG_NOSIGNAL and uses SO_NOSIGPIPE per socket
+// (set where sockets are accepted); Windows has no SIGPIPE at all.
+#ifdef MSG_NOSIGNAL
+#define SEND_FLAGS MSG_NOSIGNAL
+#else
+#define SEND_FLAGS 0
+#endif
 
 #ifdef _WIN32
 using SocketT = SOCKET;
@@ -81,12 +95,13 @@ struct Request {
     std::vector<std::string> args;
     std::string responseLine; // full JSON line including the trailing '\n', filled on the game thread
     bool done = false;
+    DebugServerPollFn poll; // non-empty while the handler has deferred completion to a later frame
 };
 
 struct ClientSlot {
     SocketT sock = kInvalidSocket;
     std::thread thread;
-    bool closed = false; // socket shut down + closed (by the thread itself or by Stop)
+    bool closed = false; // socket closed by its owner thread — the only closer (Stop only shuts down)
     bool exited = false; // thread function has finished; safe to join and reap
 };
 
@@ -99,18 +114,31 @@ std::thread sAcceptThread;
 std::vector<std::unique_ptr<ClientSlot>> sClients;
 bool sWanted = false; // last CVar state acted on, so a failed Start is not retried every frame
 
+// Game thread only: requests whose handlers deferred completion (DebugServer_Defer),
+// re-polled every FrameTick until their poll reports done.
+std::vector<std::shared_ptr<Request>> sPending;
+DebugServerPollFn sDeferredPoll; // armed by DebugServer_Defer during a socket dispatch
+bool sDispatching = false;       // true while Dispatch runs a handler for a socket request
+
+// The replace error handler is load-bearing: request tokens come off the socket
+// unvalidated and get echoed into responses, and the default strict handler *throws*
+// on invalid UTF-8 — from here that exception would escape into the frame loop.
+std::string DumpJsonLine(const nlohmann::json& j) {
+    return j.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace) + "\n";
+}
+
 std::string OkJson(const std::string& output) {
     nlohmann::json j;
     j["status"] = "ok";
     j["output"] = output;
-    return j.dump() + "\n";
+    return DumpJsonLine(j);
 }
 
 std::string ErrJson(const std::string& message) {
     nlohmann::json j;
     j["status"] = "error";
     j["error"] = message;
-    return j.dump() + "\n";
+    return DumpJsonLine(j);
 }
 
 // Whitespace-separated tokens; a double-quoted span groups one token (quotes stripped, no
@@ -147,32 +175,46 @@ std::vector<std::string> Tokenize(const std::string& line) {
     return tokens;
 }
 
-// Game thread only. HasCommand must precede GetCommand (map operator[] would insert a
-// null handler), and the try/catch is load-bearing: the LUS `set` handler calls
-// std::stoi/stoul, which throw on malformed input.
-std::string Dispatch(const std::vector<std::string>& args) {
-    auto console = Ship::Context::GetInstance()->GetConsole();
-    if (!console->HasCommand(args[0])) {
-        return ErrJson("unknown command: " + args[0]);
-    }
-    auto& entry = console->GetCommand(args[0]);
-    std::string output;
-    int32_t rc;
+// Game thread only. Fills request.responseLine, or arms request.poll when the handler
+// deferred completion to a later frame via DebugServer_Defer. HasCommand must precede
+// GetCommand (map operator[] would insert a null handler), and the try wrapping the
+// *whole* body is load-bearing: the LUS `set` handler calls std::stoi/stoul, which throw
+// on malformed input, and nothing thrown in here may escape into the frame loop —
+// ErrJson itself is throw-free (see DumpJsonLine).
+void Dispatch(Request& request) {
     try {
-        rc = entry.Handler(console, args, &output);
+        auto console = Ship::Context::GetInstance()->GetConsole();
+        if (!console->HasCommand(request.args[0])) {
+            request.responseLine = ErrJson("unknown command: " + request.args[0]);
+            return;
+        }
+        auto& entry = console->GetCommand(request.args[0]);
+        std::string output;
+        sDeferredPoll = nullptr;
+        sDispatching = true;
+        int32_t rc = entry.Handler(console, request.args, &output);
+        sDispatching = false;
+        if (rc == 0 && sDeferredPoll) {
+            request.poll = std::move(sDeferredPoll);
+        } else if (rc == 0) {
+            request.responseLine = OkJson(output);
+        } else {
+            request.responseLine =
+                ErrJson(output.empty() ? "command failed (code " + std::to_string(rc) + ")" : output);
+        }
     } catch (const std::exception& e) {
-        return ErrJson("command threw: " + std::string(e.what()));
+        request.responseLine = ErrJson("command threw: " + std::string(e.what()));
+    } catch (...) {
+        request.responseLine = ErrJson("command threw an unknown exception");
     }
-    if (rc == 0) {
-        return OkJson(output);
-    }
-    return ErrJson(output.empty() ? "command failed (code " + std::to_string(rc) + ")" : output);
+    sDispatching = false;
+    sDeferredPoll = nullptr;
 }
 
 bool SendAll(SocketT sock, const std::string& data) {
     size_t sent = 0;
     while (sent < data.size()) {
-        int n = send(sock, data.data() + sent, static_cast<int>(data.size() - sent), 0);
+        int n = send(sock, data.data() + sent, static_cast<int>(data.size() - sent), SEND_FLAGS);
         if (n <= 0) {
             return false;
         }
@@ -223,12 +265,13 @@ void ClientThread(ClientSlot* slot) {
             }
         }
     }
+    // Sole closer of the socket. Stop() only calls shutdown() on it (under sMutex, gated
+    // on !closed), so a thread blocked in recv/send is unblocked without its descriptor
+    // being recycled to an unrelated file/socket by another subsystem mid-call.
     std::lock_guard<std::mutex> lock(sMutex);
-    if (!slot->closed) {
-        ShutdownSock(slot->sock);
-        CloseSock(slot->sock);
-        slot->closed = true;
-    }
+    ShutdownSock(slot->sock);
+    CloseSock(slot->sock);
+    slot->closed = true;
     slot->exited = true;
 }
 
@@ -236,8 +279,34 @@ void AcceptThread() {
     for (;;) {
         SocketT client = accept(sListenSock, nullptr, nullptr);
         if (client == kInvalidSocket) {
-            break; // listen socket closed by Stop
+            {
+                std::lock_guard<std::mutex> lock(sMutex);
+                if (!sRunning) {
+                    break; // listener kicked by Stop
+                }
+            }
+            // Transient per-connection failures (a client aborting its handshake shows up
+            // as ECONNABORTED/WSAECONNRESET, signals as EINTR) must not silently kill the
+            // listener for the rest of the session.
+#ifdef _WIN32
+            int err = WSAGetLastError();
+            if (err == WSAECONNRESET || err == WSAEINTR) {
+                continue;
+            }
+            SPDLOG_WARN("Debug server: accept() failed (WSA error {}); listener exiting", err);
+#else
+            if (errno == EINTR || errno == ECONNABORTED) {
+                continue;
+            }
+            SPDLOG_WARN("Debug server: accept() failed ({}); listener exiting", strerror(errno));
+#endif
+            break;
         }
+#ifdef SO_NOSIGPIPE
+        // macOS has no MSG_NOSIGNAL; suppress SIGPIPE per socket instead (see SEND_FLAGS).
+        int one = 1;
+        setsockopt(client, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof(one));
+#endif
         std::lock_guard<std::mutex> lock(sMutex);
         if (!sRunning) {
             CloseSock(client);
@@ -321,25 +390,36 @@ void Stop() {
         sRunning = false;
     }
     sCv.notify_all(); // waiters answer "server shutting down" and unwind
-    // shutdown-then-close is the portable way to kick threads blocked in accept/recv.
-    ShutdownSock(sListenSock);
+    // Kick the accept thread out of accept(). POSIX: shutdown() unblocks it while the
+    // descriptor stays alive until after the join, so its fd number cannot be recycled
+    // under the still-blocked thread. Windows: shutdown() on a listening socket is an
+    // error and does not unblock accept(); closesocket() is the documented way to abort
+    // it (SOCKET handles are not sequentially reused the way POSIX fds are).
+#ifdef _WIN32
     CloseSock(sListenSock);
+#else
+    ShutdownSock(sListenSock);
+#endif
+    // Unblock client threads stuck in recv/send. Shutdown only — each socket is closed
+    // by its owner thread's exit path (see ClientThread), never from here.
     {
         std::lock_guard<std::mutex> lock(sMutex);
         for (auto& client : sClients) {
             if (!client->closed) {
                 ShutdownSock(client->sock);
-                CloseSock(client->sock);
-                client->closed = true;
             }
         }
     }
     sAcceptThread.join();
+#ifndef _WIN32
+    CloseSock(sListenSock);
+#endif
     for (auto& client : sClients) {
         client->thread.join();
     }
     sClients.clear();
     sQueue.clear();
+    sPending.clear(); // their waiters woke on !sRunning and answered "server shutting down"
     sListenSock = kInvalidSocket;
 #ifdef _WIN32
     WSACleanup();
@@ -354,9 +434,8 @@ void DebugServer_Init() {
     // coexist with "gDebugServer.Port" in starship.cfg.json.
     CVarRegisterInteger("gDebugServer.Enabled", 0);
     CVarRegisterInteger("gDebugServer.Port", 7764);
-    // Commands register unconditionally so the ImGui console has them even with the
-    // socket server off.
-    DebugCommands_Register();
+    // The game-state console commands are NOT registered here: GameEngine::Create does
+    // that on every platform, including Switch where this whole transport is stubbed out.
     sWanted = CVarGetInteger("gDebugServer.Enabled", 0) != 0;
     if (sWanted) {
         Start();
@@ -383,21 +462,63 @@ void DebugServer_FrameTick() {
     std::deque<std::shared_ptr<Request>> batch;
     {
         std::lock_guard<std::mutex> lock(sMutex);
-        if (sQueue.empty()) {
-            return;
-        }
         batch.swap(sQueue);
     }
+    if (batch.empty() && sPending.empty()) {
+        return;
+    }
+    std::vector<std::shared_ptr<Request>> completed;
     for (auto& request : batch) {
-        request->responseLine = Dispatch(request->args); // outside the lock: handlers can be slow
+        Dispatch(*request); // outside the lock: handlers can be slow
+        if (request->poll) {
+            sPending.push_back(std::move(request));
+        } else {
+            completed.push_back(std::move(request));
+        }
+    }
+    // Re-poll deferred requests. Freshly deferred ones are polled in the same tick, so a
+    // condition that is already satisfied still answers this frame. A poll must be as
+    // throw-free as a handler; the catch keeps the frame loop safe if one is not.
+    for (auto it = sPending.begin(); it != sPending.end();) {
+        auto& request = **it;
+        std::string output;
+        try {
+            if (!request.poll(&output)) {
+                ++it;
+                continue;
+            }
+            request.responseLine = OkJson(output);
+        } catch (const std::exception& e) {
+            request.responseLine = ErrJson("command threw: " + std::string(e.what()));
+        } catch (...) {
+            request.responseLine = ErrJson("command threw an unknown exception");
+        }
+        completed.push_back(std::move(*it));
+        it = sPending.erase(it);
+    }
+    if (completed.empty()) {
+        return;
     }
     {
         std::lock_guard<std::mutex> lock(sMutex);
-        for (auto& request : batch) {
+        for (auto& request : completed) {
             request->done = true;
         }
     }
     sCv.notify_all();
+}
+
+// Game thread, callable from inside a command handler: hand the transport a poll that is
+// re-run every frame until it returns true, at which point its output becomes the ok
+// response. Returns false when the command was not invoked through the socket transport
+// (e.g. from the in-game ImGui console) — the handler must then answer synchronously,
+// typically with a fire-and-forget acknowledgment.
+bool DebugServer_Defer(DebugServerPollFn poll) {
+    if (!sDispatching) {
+        return false;
+    }
+    sDeferredPoll = std::move(poll);
+    return true;
 }
 
 #endif // __SWITCH__

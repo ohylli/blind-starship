@@ -71,7 +71,11 @@ Rationale for this shape:
   existing `gLToFrameAdvance` machinery is driven by a physical L-trigger press, and a
   socket client flipping `gDebugPause` off/on cannot guarantee exactly one frame
   elapses in between. Pause/resume work via CVars from day one; `step [n]` needs to be
-  a real command with a game-thread frame counter.
+  a real command with a game-thread frame counter. The transport supports this since
+  phase 1: a handler calls `DebugServer_Defer(poll)` and the poll is re-run every
+  frame until it reports done, so a request can stay open across N frames without
+  blocking the game thread (falls back to a synchronous acknowledgment when invoked
+  from the ImGui console).
 - **The threading model is already solved in this codebase.** Game state must only be
   touched from the game thread. The socket thread only ferries strings; commands are
   queued and drained once per frame from a game-thread hook, the same

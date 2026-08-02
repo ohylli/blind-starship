@@ -7,6 +7,7 @@
 #include "DebugCommands.h"
 
 #include "port/CGameCompat.h"
+#include "port/PlayerAim.h"
 #include "port/mods/ObjectSpawnLog.h"
 
 #include <nlohmann/json.hpp>
@@ -156,34 +157,25 @@ static nlohmann::json DumpPlayer(const Player& p) {
     j["pos"] = Vec3(p.pos); // pos.z is progress along the level path, not world Z
     j["trueZpos"] = p.trueZpos;
     j["rot"] = Vec3(p.rot);
-    // `rot` alone is not the Arwing's orientation -- it is a modifier layered on top of the
-    // heading below, and reads 0 on y even while the player is mid-turn in all-range mode.
-    //
-    // `aimYaw`/`aimPitch` are the flight direction. Together they reproduce velocity exactly
-    // through the standard spherical form, with no special case anywhere:
-    //
-    //     forward = (-sin(aimYaw)*cos(aimPitch), sin(aimPitch), -cos(aimYaw)*cos(aimPitch))
-    //
-    // Verified live on Fortuna against measured velocity at speed 40, in four samples that
-    // agree to every printed digit: two in normal flight (aimPitch 0 and 30.4278) and two
-    // mid-U-turn (aimPitch 66.0 and 138.0559). aerobaticPitch is part of aimPitch, exactly as
-    // fox_display.c:970 and fox_demo.c:1548 add it. Past 90 degrees the Arwing is inverted and
-    // travels backward relative to its nose, but that needs no branch -- cos(aimPitch) turns
-    // negative and reverses the horizontal terms on its own. The 138.0559 sample is the one
-    // that pins this down: climbing 41.9441 degrees by velocity, i.e. 180 - aimPitch.
-    //
-    // `faceYaw` is the +180 model-draw convention (fox_display.c:967), useful only for
-    // reasoning about rendering -- do not steer by it. Neither composition folds in
-    // damageShake, which some draw sites add, and fox_beam.c:861 uses a different yaw offset
-    // for its shot type, so exact projectile trajectories still want the raw fields.
+    // `aimYaw`/`aimPitch` are the flight direction — derivation, live verification, and
+    // the faceYaw draw convention are documented on the shared helpers in
+    // port/PlayerAim.h. They only hold for the forms that fly by the Arwing composition
+    // (Arwing, Blue Marine); the Landmaster and on-foot Fox compose velocity differently,
+    // so those forms report null rather than a number that is not the flight direction.
     j["heading"] = { { "yRot", p.yRot_114 },
                      { "xRot", p.xRot_120 },
                      { "yRotVel", p.yRotVel_11C },
-                     { "aimYaw", p.yRot_114 + p.rot.y },
-                     { "aimPitch", p.xRot_120 + p.rot.x + p.aerobaticPitch },
                      { "aerobaticPitch", p.aerobaticPitch },
-                     { "somersault", (bool) p.somersault },
-                     { "faceYaw", p.yRot_114 + p.rot.y + 180.0f } };
+                     { "somersault", (bool) p.somersault } };
+    if (Player_AimAnglesValid(p)) {
+        j["heading"]["aimYaw"] = Player_AimYaw(p);
+        j["heading"]["aimPitch"] = Player_AimPitch(p);
+        j["heading"]["faceYaw"] = Player_FaceYaw(p);
+    } else {
+        j["heading"]["aimYaw"] = nullptr;
+        j["heading"]["aimPitch"] = nullptr;
+        j["heading"]["faceYaw"] = nullptr;
+    }
     j["vel"] = Vec3(p.vel);
     j["baseSpeed"] = p.baseSpeed;
     j["boostSpeed"] = p.boostSpeed;
