@@ -208,8 +208,8 @@ polls readiness, `--repl` for batch use). Decisions that closed the open questio
   (`set`/`get`/`help` included); clients parse twice. One outstanding request per
   connection; multiple connections fine.
 - **Dump surface: port-side C++ via `CGameCompat.h`.** `player` serializes the
-  useful `Player` fields (pos + `trueZpos`, rot, vel, speeds, shields, state/form,
-  boost, wings, camera); `objects` covers the eight object arrays with the common
+  useful `Player` fields (pos + `trueZpos`, rot + `heading`, vel, speeds, shields,
+  state/form, boost, wings, camera); `objects` covers the eight object arrays with the common
   `Object` header plus per-type extras. Identity for client-side diffing is
   (array, index, id, `eventType` for actors) — the same tuple the enemy-cue voice
   keys use; a FREE→INIT transition on a slot means a new entity. One trap found
