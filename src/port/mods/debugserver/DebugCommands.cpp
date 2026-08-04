@@ -1,8 +1,10 @@
-// Game-state commands for the debug control server: `health` (readiness handshake),
-// `player` and `objects` (JSON dumps). Handlers write compact JSON into the console
-// output string; the server wraps it in its wire envelope, the ImGui console prints it
-// verbatim. JSON because the primary consumer is a script — filtering/diffing/watching
-// happens client-side (docs/debug-server-plan.md).
+// Commands for the debug control server: `health` (readiness handshake), `player` and
+// `objects` (JSON dumps), and the execution controls `pause` / `resume` / `step`, whose
+// frame counting runs on game-thread event listeners registered here alongside the
+// commands. Handlers write compact JSON into the console output string; the server wraps
+// it in its wire envelope, the ImGui console prints it verbatim. JSON because the primary
+// consumer is a script — filtering/diffing/watching happens client-side
+// (docs/debug-server-plan.md).
 
 #include "DebugCommands.h"
 #include "DebugServer.h"
@@ -13,7 +15,9 @@
 #include "port/mods/ObjectSpawnLog.h"
 
 #include <nlohmann/json.hpp>
+#include <cerrno>
 #include <cstdlib>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -168,23 +172,61 @@ static int32_t HealthHandler(std::shared_ptr<Ship::Console> console, const std::
 // final cancelled flag; on the frame the count hits zero it re-sets gDebugPause, which
 // takes effect from the next play update — the n-th frame itself still runs.
 
-static int sStepFramesRequested = 0;
-static int sStepFramesRemaining = 0;
-static int sStepFramesRun = 0;
+// Reject step counts that could truncate on the long long -> int narrowing or run the
+// game away unpaused for hours; generous enough for any real use (~an hour of play).
+static constexpr long long kMaxStepFrames = 100000;
+
+// State of the step in flight. Each `step` request allocates a fresh StepState and its
+// deferred poll captures the shared_ptr, so a poll always answers from the request it
+// belongs to — even if another frontend arms a new step on the very tick the old one
+// finished (a new request replaces sStep, never mutates a predecessor).
+struct StepState {
+    int requested = 0;
+    int remaining = 0;               // > 0 while the step is in flight
+    int run = 0;                     // play frames that actually executed
+    const char* endedEarly = nullptr; // why the step stopped short, for the response note
+};
+static std::shared_ptr<StepState> sStep; // game thread only
+
+static bool StepInFlight() {
+    return sStep != nullptr && sStep->remaining > 0;
+}
+
+static void StepCancel(const char* why) {
+    if (StepInFlight()) {
+        sStep->remaining = 0;
+        sStep->endedEarly = why;
+    }
+}
 
 static void StepOnPlayUpdate(IEvent* event) {
-    if (sStepFramesRemaining <= 0) {
+    if (!StepInFlight()) {
         return;
     }
     if (event->cancelled) {
         return; // something re-paused mid-step (e.g. the L shortcut); hold the count
     }
-    sStepFramesRun++;
-    if (--sStepFramesRemaining == 0) {
+    sStep->run++;
+    if (--sStep->remaining == 0) {
         CVarSetInteger("gDebugPause", 1);
     }
 }
 
+// Fires every tick, in play mode or not — the one cleanup path that also covers steps
+// started from the ImGui console, which have no deferred poll. Without it, a step that
+// outlives its level (death, level clear) would keep its count armed, reject every later
+// `step` as "already in progress", and silently re-pause the next level that many frames
+// in. The socket poll only observes completion; it never has to enforce it.
+static void StepOnGamePostUpdate(IEvent* event) {
+    if (StepInFlight() && !InPlayMode()) {
+        StepCancel("play mode ended before the step completed");
+    }
+}
+
+// `frame` is gGameFrameCount, which Play_Main increments *before* the cancellable
+// play-update event: it keeps ticking while debug-paused. It timestamps the response but
+// must not be used to count elapsed simulation frames — that is the step reply's
+// `framesRun`.
 static std::string PauseStateJson() {
     nlohmann::json j;
     j["paused"] = IsDebugPaused();
@@ -197,7 +239,7 @@ static int32_t PauseHandler(std::shared_ptr<Ship::Console> console, const std::v
     if (!RequirePlay(output)) {
         return 1;
     }
-    sStepFramesRemaining = 0; // a pause beats an in-flight step: freeze now, don't finish it
+    StepCancel("cancelled by pause"); // a pause beats an in-flight step: freeze now, don't finish it
     CVarSetInteger("gDebugPause", 1);
     if (output != nullptr) {
         *output += PauseStateJson();
@@ -209,7 +251,7 @@ static int32_t PauseHandler(std::shared_ptr<Ship::Console> console, const std::v
 // outlived its level (or was set by mistake) can always be cleared.
 static int32_t ResumeHandler(std::shared_ptr<Ship::Console> console, const std::vector<std::string>& args,
                              std::string* output) {
-    sStepFramesRemaining = 0; // resume means run freely, not "finish the step and repause"
+    StepCancel("cancelled by resume"); // resume means run freely, not "finish the step and repause"
     CVarSetInteger("gDebugPause", 0);
     if (output != nullptr) {
         *output += PauseStateJson();
@@ -232,44 +274,49 @@ static int32_t StepHandler(std::shared_ptr<Ship::Console> console, const std::ve
         }
         return 1;
     }
-    if (sStepFramesRemaining > 0) {
+    if (StepInFlight()) {
         if (output != nullptr) {
             *output += "a step is already in progress";
         }
         return 1;
     }
-    long n = 1;
+    long long n = 1;
     if (args.size() > 1) {
         char* end = nullptr;
-        n = strtol(args[1].c_str(), &end, 10);
-        if (end == args[1].c_str() || *end != '\0' || n < 1) {
+        errno = 0;
+        n = strtoll(args[1].c_str(), &end, 10);
+        // The overflow check matters: unchecked, a huge count either truncates to <= 0 on
+        // the int narrowing (arming nothing after gDebugPause was already cleared — a
+        // `step` that silently resumes) or saturates into a billions-of-frames run.
+        if (end == args[1].c_str() || *end != '\0' || errno == ERANGE || n < 1 || n > kMaxStepFrames) {
             if (output != nullptr) {
-                *output += "step count must be a positive integer";
+                *output += "step count must be an integer between 1 and ";
+                *output += std::to_string(kMaxStepFrames);
             }
             return 1;
         }
     }
-    sStepFramesRequested = (int) n;
-    sStepFramesRun = 0;
-    sStepFramesRemaining = (int) n; // arms the listener; set last
+    auto step = std::make_shared<StepState>();
+    step->requested = (int) n;
+    step->remaining = (int) n;
+    sStep = step; // arms the listener
     CVarSetInteger("gDebugPause", 0);
     // Answer only once the frames have actually elapsed, so a client can `step 30` and
-    // immediately dump post-step state. Completes early (with the partial count) if play
-    // mode ends mid-step — e.g. the level finishes before n frames ran.
-    bool deferred = DebugServer_Defer([](std::string* out) {
-        if (sStepFramesRemaining > 0 && InPlayMode()) {
+    // immediately dump post-step state. Ends early (with the partial count and a note)
+    // when play mode ends mid-step or a pause/resume cancels it — the listeners above
+    // clear `remaining` in every such case, so completion is the only condition.
+    bool deferred = DebugServer_Defer([step](std::string* out) {
+        if (step->remaining > 0) {
             return false;
         }
-        bool interrupted = sStepFramesRemaining > 0;
-        sStepFramesRemaining = 0; // don't let a leftover count re-arm in the next level
         if (out != nullptr) {
             nlohmann::json j;
-            j["requested"] = sStepFramesRequested;
-            j["framesRun"] = sStepFramesRun;
+            j["requested"] = step->requested;
+            j["framesRun"] = step->run;
             j["paused"] = IsDebugPaused();
             j["frame"] = gGameFrameCount;
-            if (interrupted) {
-                j["note"] = "play mode ended before the step completed";
+            if (step->endedEarly != nullptr) {
+                j["note"] = step->endedEarly;
             }
             *out += j.dump();
         }
@@ -581,10 +628,11 @@ static int32_t ObjectsHandler(std::shared_ptr<Ship::Console> console, const std:
     return 0;
 }
 
-void DebugCommands_Register() {
+void DebugCommands_Init() {
     // Runs after PortEnhancements_Init (GameEngine::Create), so the event IDs exist and
-    // HIGH sorts this listener after the NORMAL pause handler on the same event.
+    // HIGH sorts the step listener after the NORMAL pause handler on the same event.
     REGISTER_LISTENER(PlayUpdateEvent, StepOnPlayUpdate, EVENT_PRIORITY_HIGH);
+    REGISTER_LISTENER(GamePostUpdateEvent, StepOnGamePostUpdate, EVENT_PRIORITY_NORMAL);
 
     auto console = Ship::Context::GetInstance()->GetConsole();
     console->AddCommand("health", { HealthHandler,

@@ -269,6 +269,21 @@ mid-step (level complete, death) the response completes early with the partial
 the listener skips cancelled frames — and a second press lets the step finish. `pause`
 requires play mode; `resume` works anywhere so a stale pause can always be cleared.
 
+Post-review hardening (same day): the "play mode ended → abort the step" cleanup runs on
+an unconditional per-tick `GamePostUpdateEvent` listener rather than inside the socket
+poll, because the poll only exists on the socket path — a step started from the ImGui
+console would otherwise leak its count when the level ended early, rejecting every later
+`step` and silently re-pausing the next level that many frames in. Each `step` request
+now owns its state (a `shared_ptr` the poll captures), so a request always answers with
+its own numbers even if another frontend arms a new step on the tick the old one
+finished, and a cancelled step says why in its `note`. The count is parsed with overflow
+checking and capped (see `kMaxStepFrames`) — unchecked, a huge value either truncated to
+a no-op *after* clearing `gDebugPause` (a `step` that silently resumes) or saturated into
+a billions-of-frames run. One field to know about: `frame` in the responses is
+`gGameFrameCount`, which is incremented before the cancellable play update and therefore
+keeps advancing while debug-paused — it timestamps the response; only `framesRun` counts
+elapsed simulation frames.
+
 ## Open questions for refinement
 
 - **TTS history query** (phase 2). Where to record announcements — in the TTS

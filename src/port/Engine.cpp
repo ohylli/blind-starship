@@ -313,7 +313,7 @@ void GameEngine::Create() {
     // Commands before transport, and from here rather than DebugServer_Init: the in-game
     // ImGui console needs them on every platform, including Switch where the socket
     // server is compiled out.
-    DebugCommands_Register();
+    DebugCommands_Init();
     DebugServer_Init();
 }
 
