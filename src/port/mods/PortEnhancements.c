@@ -172,14 +172,20 @@ void OnGameUpdatePost(IEvent* event) {
 void OnPlayUpdateEvent(IEvent* event) {
     bool debugPaused = CVarGetInteger("gDebugPause", 0);
     bool shouldRepause = false;
-    if (CVarGetInteger("gLToDebugPause", 0)) {
+    bool shortcutEnabled = CVarGetInteger("gLToDebugPause", 0);
+    static bool shortcutWasEnabled = false;
+    if (shortcutEnabled) {
         if (gControllerPress[0].button & L_TRIG) {
             CVarSetInteger("gDebugPause", !debugPaused);
             shouldRepause = debugPaused && CVarGetInteger("gLToFrameAdvance", 0);
         }
-    } else {
-        CVarSetInteger("gDebugPause", 0); // Unpause if we disable the shortcut
+    } else if (shortcutWasEnabled) {
+        // Unpause if we disable the shortcut — but only on the transition: gDebugPause is
+        // also driven by the debug server's pause/resume/step commands, and a server pause
+        // must survive frames where the L shortcut simply is not in use.
+        CVarSetInteger("gDebugPause", 0);
     }
+    shortcutWasEnabled = shortcutEnabled;
 
     event->cancelled = CVarGetInteger("gDebugPause", 0);
     if (shouldRepause) {

@@ -5,9 +5,11 @@
 // happens client-side (docs/debug-server-plan.md).
 
 #include "DebugCommands.h"
+#include "DebugServer.h"
 
 #include "port/CGameCompat.h"
 #include "port/PlayerAim.h"
+#include "port/hooks/Events.h"
 #include "port/mods/ObjectSpawnLog.h"
 
 #include <nlohmann/json.hpp>
@@ -125,6 +127,10 @@ static bool RequirePlay(std::string* output) {
     return false;
 }
 
+static bool IsDebugPaused() {
+    return CVarGetInteger("gDebugPause", 0) != 0;
+}
+
 static int32_t HealthHandler(std::shared_ptr<Ship::Console> console, const std::vector<std::string>& args,
                              std::string* output) {
     nlohmann::json j;
@@ -138,10 +144,141 @@ static int32_t HealthHandler(std::shared_ptr<Ship::Console> console, const std::
     j["levelMode"] = (s32) gLevelMode;
     j["frame"] = gGameFrameCount;
     j["players"] = gCamCount;
+    j["paused"] = IsDebugPaused();
     // The guard predicate, pre-evaluated: tells clients whether guarded commands will
     // succeed without having to try one.
     j["playMode"] = InPlayMode();
     if (output != nullptr) {
+        *output += j.dump();
+    }
+    return 0;
+}
+
+// --- pause / resume / step ---------------------------------------------------------------
+//
+// One shared pause state: gDebugPause, the same CVar the in-game L-trigger shortcut and
+// the F1 Frame Advance machinery drive (src/port/mods/PortEnhancements.c). Pausing from
+// the server and resuming with L in game (or vice versa) therefore compose freely, and
+// the cues keep sounding at their frozen positions while paused — the cue listeners run
+// on GamePostUpdateEvent, which is not on the cancelled play-update chain.
+//
+// `step [n]` lets exactly n play frames through: it unpauses and counts PlayUpdateEvents
+// that actually ran. Its listener registers at EVENT_PRIORITY_HIGH so it runs after the
+// pause handler (EventSystem calls listeners in ascending priority order) and sees the
+// final cancelled flag; on the frame the count hits zero it re-sets gDebugPause, which
+// takes effect from the next play update — the n-th frame itself still runs.
+
+static int sStepFramesRequested = 0;
+static int sStepFramesRemaining = 0;
+static int sStepFramesRun = 0;
+
+static void StepOnPlayUpdate(IEvent* event) {
+    if (sStepFramesRemaining <= 0) {
+        return;
+    }
+    if (event->cancelled) {
+        return; // something re-paused mid-step (e.g. the L shortcut); hold the count
+    }
+    sStepFramesRun++;
+    if (--sStepFramesRemaining == 0) {
+        CVarSetInteger("gDebugPause", 1);
+    }
+}
+
+static std::string PauseStateJson() {
+    nlohmann::json j;
+    j["paused"] = IsDebugPaused();
+    j["frame"] = gGameFrameCount;
+    return j.dump();
+}
+
+static int32_t PauseHandler(std::shared_ptr<Ship::Console> console, const std::vector<std::string>& args,
+                            std::string* output) {
+    if (!RequirePlay(output)) {
+        return 1;
+    }
+    sStepFramesRemaining = 0; // a pause beats an in-flight step: freeze now, don't finish it
+    CVarSetInteger("gDebugPause", 1);
+    if (output != nullptr) {
+        *output += PauseStateJson();
+    }
+    return 0;
+}
+
+// No play-mode guard: resume only clears a flag, and must work anywhere so a pause that
+// outlived its level (or was set by mistake) can always be cleared.
+static int32_t ResumeHandler(std::shared_ptr<Ship::Console> console, const std::vector<std::string>& args,
+                             std::string* output) {
+    sStepFramesRemaining = 0; // resume means run freely, not "finish the step and repause"
+    CVarSetInteger("gDebugPause", 0);
+    if (output != nullptr) {
+        *output += PauseStateJson();
+    }
+    return 0;
+}
+
+static int32_t StepHandler(std::shared_ptr<Ship::Console> console, const std::vector<std::string>& args,
+                           std::string* output) {
+    if (!RequirePlay(output)) {
+        return 1;
+    }
+    // The play-mode guard passes during PLAY_PAUSE (the in-game pause menu, where play
+    // updates don't run) — stepping there would just hang until the menu closes.
+    if (gPlayState != PLAY_UPDATE) {
+        if (output != nullptr) {
+            *output += "requires live gameplay (currently ";
+            *output += PlayStateName(gPlayState);
+            *output += ")";
+        }
+        return 1;
+    }
+    if (sStepFramesRemaining > 0) {
+        if (output != nullptr) {
+            *output += "a step is already in progress";
+        }
+        return 1;
+    }
+    long n = 1;
+    if (args.size() > 1) {
+        char* end = nullptr;
+        n = strtol(args[1].c_str(), &end, 10);
+        if (end == args[1].c_str() || *end != '\0' || n < 1) {
+            if (output != nullptr) {
+                *output += "step count must be a positive integer";
+            }
+            return 1;
+        }
+    }
+    sStepFramesRequested = (int) n;
+    sStepFramesRun = 0;
+    sStepFramesRemaining = (int) n; // arms the listener; set last
+    CVarSetInteger("gDebugPause", 0);
+    // Answer only once the frames have actually elapsed, so a client can `step 30` and
+    // immediately dump post-step state. Completes early (with the partial count) if play
+    // mode ends mid-step — e.g. the level finishes before n frames ran.
+    bool deferred = DebugServer_Defer([](std::string* out) {
+        if (sStepFramesRemaining > 0 && InPlayMode()) {
+            return false;
+        }
+        bool interrupted = sStepFramesRemaining > 0;
+        sStepFramesRemaining = 0; // don't let a leftover count re-arm in the next level
+        if (out != nullptr) {
+            nlohmann::json j;
+            j["requested"] = sStepFramesRequested;
+            j["framesRun"] = sStepFramesRun;
+            j["paused"] = IsDebugPaused();
+            j["frame"] = gGameFrameCount;
+            if (interrupted) {
+                j["note"] = "play mode ended before the step completed";
+            }
+            *out += j.dump();
+        }
+        return true;
+    });
+    if (!deferred && output != nullptr) {
+        // In-game ImGui console: acknowledge now; the listener still steps and re-pauses.
+        nlohmann::json j;
+        j["stepping"] = (int) n;
         *output += j.dump();
     }
     return 0;
@@ -445,10 +582,23 @@ static int32_t ObjectsHandler(std::shared_ptr<Ship::Console> console, const std:
 }
 
 void DebugCommands_Register() {
+    // Runs after PortEnhancements_Init (GameEngine::Create), so the event IDs exist and
+    // HIGH sorts this listener after the NORMAL pause handler on the same event.
+    REGISTER_LISTENER(PlayUpdateEvent, StepOnPlayUpdate, EVENT_PRIORITY_HIGH);
+
     auto console = Ship::Context::GetInstance()->GetConsole();
     console->AddCommand("health", { HealthHandler,
                                     "Debug server readiness: protocol version + current game state. Safe anywhere.",
                                     {} });
+    console->AddCommand("pause", { PauseHandler,
+                                   "Debug-pause the game (shared with the L-trigger pause). Requires play mode.",
+                                   {} });
+    console->AddCommand("resume", { ResumeHandler,
+                                    "Clear the debug pause. Safe anywhere.",
+                                    {} });
+    console->AddCommand("step", { StepHandler,
+                                  "Run exactly n play frames (default 1), then re-pause. Requires live gameplay.",
+                                  { { "n", Ship::ArgumentType::NUMBER, true } } });
     console->AddCommand("player", { PlayerHandler,
                                     "Dump player state as JSON. Requires play mode.",
                                     { { "index", Ship::ArgumentType::NUMBER, true } } });

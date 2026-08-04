@@ -1,7 +1,8 @@
 # Plan: debug control server for the running game
 
-Status: phase 1 (Core) implemented (2026-07-31) — see "Resolved by implementation"
-near the end for the decisions that closed most open questions. Design agreed in
+Status: phase 1 (Core) implemented (2026-07-31); phase 2 in progress — pause/resume/step
+implemented (2026-08-04), see "Resolved by implementation" near the end for the decisions
+that closed most open questions. Design agreed in
 outline with the maintainer 2026-07-29; refined the same day after a code review of
 the libultraship console, threading, and debug-pause machinery, and after a live
 experiment with the native debugger (see "Relationship to the native debugger").
@@ -65,9 +66,9 @@ Rationale for this shape:
   the play-update event (`src/port/mods/PortEnhancements.c:184`), so a "paused" game
   still runs its render loop, ImGui, CVar system, and event bus. The server therefore
   stays responsive while the simulation is frozen. Two caveats found by code review:
-  the same handler force-resets `gDebugPause` to 0 every play frame while
-  `gLToDebugPause` is 0 (`PortEnhancements.c:181`), so a remote pause must set both
-  CVars (or that guard gets reworked); and single-stepping is not CVar-drivable — the
+  the same handler force-reset `gDebugPause` to 0 every play frame while
+  `gLToDebugPause` was 0, so a remote pause had to set both CVars or the guard had to be
+  reworked (it was — see the phase 2 notes below); and single-stepping is not CVar-drivable — the
   existing `gLToFrameAdvance` machinery is driven by a physical L-trigger press, and a
   socket client flipping `gDebugPause` off/on cannot guarantee exactly one frame
   elapses in between. Pause/resume work via CVars from day one; `step [n]` needs to be
@@ -229,6 +230,44 @@ polls readiness, `--repl` for batch use). Decisions that closed the open questio
   because the CVar config file nests on `.`, so a scalar `gDebugServer` could not
   coexist with `gDebugServer.Port`. Runtime-toggleable: the frame tick notices the
   CVar and starts/stops the listener without a restart.
+
+## Resolved by implementation, phase 2: pause / resume / step (2026-08-04)
+
+The design changed from the original sketch ("sugar over the existing CVars") after a
+conceptual review with the maintainer: instead of a second, server-owned pause mechanism,
+there is **one shared pause state — `gDebugPause`** — driven equally by the in-game
+L-trigger shortcut and by the server's `pause`/`resume`/`step` commands. You can pause
+from the server and resume with L in game, or vice versa; `health` reports the one true
+state in its `paused` field. Two findings shaped this:
+
+- **The only game-side change needed was the guard rework.** `OnPlayUpdateEvent`
+  (`PortEnhancements.c`) used to force-clear `gDebugPause` every play frame while the
+  L-shortcut CVar (`gLToDebugPause`) was off, which would have instantly undone a server
+  pause. Its intent — "don't leave the game stuck paused when the user turns the shortcut
+  off" — is preserved by clearing only on the on→off *transition*. Everything else about
+  the existing pause (L toggle, frame advance, the F1 checkboxes) is untouched.
+- **The cues keep sounding while paused**, which is a feature, not a bug: the cue
+  listeners run on `GamePostUpdateEvent` (`fox_game.c`), which fires unconditionally each
+  tick and is not on the cancelled play-update chain. So the maintainer can pause, hear
+  the frozen cue soundscape, and interrogate it at the same time — the exact
+  pause-and-inspect workflow the cue-state query (next phase 2 slice) is for.
+
+`step [n]` (default 1) is a real command with a game-thread frame counter, as anticipated:
+it clears `gDebugPause` and counts play-update events that actually ran via a listener
+registered at `EVENT_PRIORITY_HIGH` — the event system calls listeners in ascending
+priority order, so it runs after the NORMAL pause handler and sees the final cancelled
+flag; when the count hits zero it re-sets `gDebugPause`, which takes effect from the next
+play frame (the n-th frame itself runs). The response is deferred via `DebugServer_Defer`
+until the frames have elapsed, so `step 30` followed immediately by `player` sees
+post-step state; from the ImGui console it answers synchronously with a fire-and-forget
+acknowledgment. Guards and edge cases: `step` requires `PLAY_UPDATE` (the play-mode guard
+alone would let it hang inside the pause menu, `PLAY_PAUSE`, where play updates never
+run); a second `step` while one is in flight is an error; `pause` and `resume` cancel an
+in-flight step (freeze now / run freely beat "finish the count"); if play mode ends
+mid-step (level complete, death) the response completes early with the partial
+`framesRun` and a note. An L-press mid-step (shortcut on) pauses and *holds* the count —
+the listener skips cancelled frames — and a second press lets the step finish. `pause`
+requires play mode; `resume` works anywhere so a stale pause can always be cleared.
 
 ## Open questions for refinement
 
