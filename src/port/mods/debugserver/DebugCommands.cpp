@@ -17,6 +17,7 @@
 
 #include <nlohmann/json.hpp>
 #include <cerrno>
+#include <cmath>
 #include <cstdlib>
 #include <memory>
 #include <string>
@@ -136,6 +137,10 @@ static bool IsDebugPaused() {
     return CVarGetInteger("gDebugPause", 0) != 0;
 }
 
+// Defined in the warp section below; pause/step refuse to fight an in-flight warp, whose
+// listener holds the pause off until the arrival completes.
+static bool WarpInFlight();
+
 static int32_t HealthHandler(std::shared_ptr<Ship::Console> console, const std::vector<std::string>& args,
                              std::string* output) {
     nlohmann::json j;
@@ -240,6 +245,12 @@ static int32_t PauseHandler(std::shared_ptr<Ship::Console> console, const std::v
     if (!RequirePlay(output)) {
         return 1;
     }
+    if (WarpInFlight()) {
+        if (output != nullptr) {
+            *output += "a warp is in progress; it clears the pause until the arrival completes (use warp --paused)";
+        }
+        return 1;
+    }
     StepCancel("cancelled by pause"); // a pause beats an in-flight step: freeze now, don't finish it
     CVarSetInteger("gDebugPause", 1);
     if (output != nullptr) {
@@ -278,6 +289,12 @@ static int32_t StepHandler(std::shared_ptr<Ship::Console> console, const std::ve
     if (StepInFlight()) {
         if (output != nullptr) {
             *output += "a step is already in progress";
+        }
+        return 1;
+    }
+    if (WarpInFlight()) {
+        if (output != nullptr) {
+            *output += "a warp is in progress (warp --paused, then step, to count from the arrival)";
         }
         return 1;
     }
@@ -336,9 +353,12 @@ static int32_t StepHandler(std::shared_ptr<Ship::Console> console, const std::ve
 //
 // `warp <level> [phase]` enters any level from any post-boot state through the game's own
 // transition seam — gNextLevel / gNextLevelPhase / gNextGameState, consumed by
-// Game_SetGameState (fox_game.c) — the same route the map screen, the in-play level
-// transitions, and the MODS_BOOT_STATE hack use. The mission briefing belongs to the map
-// screen's flow, so a warp never shows it. Like `step`, the transition is driven by an
+// Game_SetGameState (fox_game.c) — the same route the in-play level transitions and the
+// MODS_BOOT_STATE hack use. (The map screen assigns gGameState directly instead; the
+// gNextGameState route is a superset of that — it also frees level memory, clears the
+// object arrays, and fades audio, which is what makes it safe from any state.) The
+// mission briefing belongs to the map screen's flow, so a warp never shows it. Like
+// `step`, the transition is driven by an
 // unconditional game-thread listener rather than the socket poll, because a warp started
 // from the ImGui console has no poll: the listener enforces, the poll only observes.
 //
@@ -353,8 +373,10 @@ static int32_t StepHandler(std::shared_ptr<Ship::Console> console, const std::ve
 // Checkpoint" button; `warp ... --at <p> --load <n> [--ground <g>]` feeds a captured
 // tuple back through DebugServer_GetCheckpointOverride, which Player_Setup (fox_play.c)
 // consults instead of the gCheckpoint CVars for that one level start. A checkpoint start
-// implies the intro skip (nonzero saved progress always suppresses the intro, as on a
-// death respawn).
+// forces the intro skip: the game's own gate (Player_Setup) skips the cutscene only when
+// the restored *object-load index* is nonzero — a capture from the first stretch of a
+// level would otherwise still play it, and on Corneria have it overwrite the restored
+// ground surface — so the warp sets noIntro itself whenever checkpoint data is given.
 // --fresh overrides with the untouched level-start defaults, i.e. suppresses a configured
 // gCheckpoint CVar for one start. Naming and storage of captured checkpoints is the
 // client's job (tools/debug_client.py, tools/checkpoints.json).
@@ -416,16 +438,24 @@ static void WarpOnGamePostUpdate(IEvent* event) {
     }
     WarpState& warp = *sWarp;
     if (++warp.ticks > kWarpTimeoutTicks) {
-        warp.note = "warp timed out before the level came up";
+        if (warp.note == nullptr) { // an earlier note is the better diagnostic; completed:false says timeout
+            warp.note = "warp timed out before the level came up";
+        }
         warp.stage = WarpState::DONE;
         return;
+    }
+    // Hold the pause off for the whole transition, not just at kickoff: a `pause` command
+    // slipping in or the in-game L shortcut would cancel the play updates the arrival
+    // needs (see the kickoff comment) and stall the warp to the timeout. --paused still
+    // applies at completion.
+    if ((warp.stage == WarpState::WAIT_STANDBY || warp.stage == WarpState::WAIT_PLAY) && IsDebugPaused()) {
+        CVarSetInteger("gDebugPause", 0);
     }
     switch (warp.stage) {
         case WarpState::WAIT_WARPABLE:
             if (!WarpableNow()) {
                 return;
             }
-            gHitCount = 0; // per-mission counter; Map_PlayLevel zeroes it on the map path
             gNextLevel = warp.level;
             gNextLevelPhase = warp.phase;
             gNextGameState = GSTATE_PLAY;
@@ -486,6 +516,9 @@ extern "C" bool DebugServer_GetCheckpointOverride(int32_t* groundSurface, float*
     }
     if (!sWarp->haveCheckpoint && !sWarp->fresh) {
         return false;
+    }
+    if (sWarp->checkpointConsumed) {
+        return false; // one level start only; a second Player_Setup inside the window is stock
     }
     if (gCurrentLevel != sWarp->level) {
         return false;
@@ -628,6 +661,7 @@ static int32_t WarpHandler(std::shared_ptr<Ship::Console> console, const std::ve
     long ground = -1;
     bool haveAt = false;
     bool haveLoad = false;
+    bool haveGround = false;
     int positional = 0;
     for (size_t i = 1; i < args.size(); i++) {
         const std::string& a = args[i];
@@ -648,7 +682,9 @@ static int32_t WarpHandler(std::shared_ptr<Ship::Console> console, const std::ve
             char* end = nullptr;
             errno = 0;
             float v = strtof(value.c_str(), &end);
-            if (end == value.c_str() || *end != '\0' || errno == ERANGE || !(v >= 0.0f)) {
+            // isfinite: strtof accepts "inf" without ERANGE, and an infinite path
+            // progress poisons the path/camera math with NaN from the first frame.
+            if (end == value.c_str() || *end != '\0' || errno == ERANGE || !std::isfinite(v) || !(v >= 0.0f)) {
                 if (output != nullptr) {
                     *output += "--at value must be a non-negative number: " + value;
                 }
@@ -667,6 +703,7 @@ static int32_t WarpHandler(std::shared_ptr<Ship::Console> console, const std::ve
             if (!ParseWarpLong(args, &i, 0, 100, &ground, output)) {
                 return 1;
             }
+            haveGround = true;
         } else if (a.rfind("--", 0) == 0) {
             if (output != nullptr) {
                 *output += "unknown warp option: " + a;
@@ -713,6 +750,14 @@ static int32_t WarpHandler(std::shared_ptr<Ship::Console> console, const std::ve
         }
         return 1;
     }
+    // The override only applies alongside checkpoint data; a lone --ground would parse
+    // fine and then be silently dropped.
+    if (haveGround && !haveAt) {
+        if (output != nullptr) {
+            *output += "--ground requires --at and --load (all three come from a `checkpoint` capture)";
+        }
+        return 1;
+    }
     warp->haveCheckpoint = haveAt;
     warp->groundSurface = (s32) ground;
     if (warp->fresh && warp->haveCheckpoint) {
@@ -720,6 +765,12 @@ static int32_t WarpHandler(std::shared_ptr<Ship::Console> console, const std::ve
             *output += "--fresh and --at/--load are mutually exclusive";
         }
         return 1;
+    }
+    // A checkpoint start always skips the intro — see the section comment: the game's own
+    // gate would still play it (and clobber the restored Corneria ground surface) when
+    // the restored object-load index is 0.
+    if (warp->haveCheckpoint) {
+        warp->noIntro = true;
     }
 
     StepCancel("cancelled by warp"); // the level the step counted is going away
@@ -773,12 +824,21 @@ static int32_t CheckpointHandler(std::shared_ptr<Ship::Console> console, const s
         }
         return 1;
     }
+    // Same formula as the F1 "Set Checkpoint" button: respawn ~250 units before the
+    // player's current position along the path — clamped to the level start, so a capture
+    // taken in the first 250 path units still replays (warp --at rejects negatives).
+    f32 pathProgress = (-gPlayer[0].pos.z) - 250.0f;
+    if (pathProgress < 0.0f) {
+        pathProgress = 0.0f;
+    }
     nlohmann::json j;
     j["level"] = (s32) gCurrentLevel;
     j["levelName"] = Starship_LevelName(gCurrentLevel);
-    // Same formula as the F1 "Set Checkpoint" button: respawn ~250 units before the
-    // player's current position along the path.
-    j["pathProgress"] = (-gPlayer[0].pos.z) - 250.0f;
+    // The phase distinguishes the warp-zone alternate routes (Meteo, Sector X): they are
+    // on-rails with their own object tables, so a capture there must replay into the same
+    // phase. Stored by the client, replayed as warp's positional phase argument.
+    j["phase"] = (s32) gLevelPhase;
+    j["pathProgress"] = pathProgress;
     j["objectLoadIndex"] = (s32) gObjectLoadIndex;
     j["groundSurface"] = (s32) gGroundSurface;
     j["frame"] = gGameFrameCount;

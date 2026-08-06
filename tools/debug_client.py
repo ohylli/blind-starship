@@ -24,9 +24,12 @@ id; `warp --checkpoint <id>` expands the id into the stored level plus explicit
 --at/--load/--ground arguments before sending, so the server never sees checkpoint names.
 `checkpoint-list` / `checkpoint-delete <id>` manage the file offline. The file is
 plain committed-friendly JSON — a shared vocabulary of documented test spots ("test in
-meteo at big-asteroids"). --repl lines are sent raw, without this expansion.
+meteo at big-asteroids"). --repl lines get the same warp expansion; the
+checkpoint-save/list/delete client commands are one-shot only.
 
-Exit codes: 0 ok, 1 command error, 2 could not connect / connection lost.
+Exit codes: 0 ok, 1 command error — including a warp that answered but did not complete
+(server-side timeout) and a step that ended early, so scripts can trust exit 0 —
+2 could not connect / connection lost.
 
 Server-side quoting: arguments are split on whitespace; double quotes group one token,
 no escape sequences. Arguments containing spaces are re-quoted automatically here.
@@ -94,6 +97,37 @@ def print_response(envelope, raw=False):
     return 1
 
 
+def incomplete_note(tokens, envelope):
+    """A warp that timed out (completed false) or a step that ended early still answers
+    status ok; dig the failure out of the payload so scripts see it in the exit code —
+    launch.ps1 relies on warp's exit 0 meaning "sitting in the level"."""
+    if envelope.get("status") != "ok" or not tokens:
+        return None
+    try:
+        payload = json.loads(envelope.get("output", ""))
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    if tokens[0] == "warp" and payload.get("completed") is False:
+        return "warp did not complete: %s" % payload.get("note", "no reason reported")
+    if tokens[0] == "step" and payload.get("note"):
+        return "step ended early: %s" % payload["note"]
+    return None
+
+
+def run_command(conn, tokens, raw=False):
+    """Send one server command, print the response, return the exit code."""
+    envelope = conn.request(tokens)
+    code = print_response(envelope, raw=raw)
+    if code == 0:
+        note = incomplete_note(tokens, envelope)
+        if note:
+            print(note, file=sys.stderr)
+            code = 1
+    return code
+
+
 def load_checkpoints(path):
     try:
         # utf-8-sig: tolerate the BOM Windows editors (and PowerShell redirects) prepend.
@@ -109,9 +143,13 @@ def load_checkpoints(path):
 
 
 def save_checkpoints(path, checkpoints):
-    with open(path, "w", encoding="utf-8", newline="\n") as f:
+    # Write-then-rename: a crash mid-write (or two clients saving at once) must not
+    # truncate the store — it is gitignored, so there is no history to recover from.
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8", newline="\n") as f:
         json.dump(checkpoints, f, indent=2, sort_keys=True)
         f.write("\n")
+    os.replace(tmp, path)
 
 
 WARP_VALUE_FLAGS = ("--at", "--load", "--ground")
@@ -146,11 +184,20 @@ def expand_warp_command(tokens, checkpoint_file):
         known = ", ".join(sorted(checkpoints)) if checkpoints else "none saved"
         raise ValueError("unknown checkpoint id %r (known: %s)" % (checkpoint_id, known))
     entry = checkpoints[checkpoint_id]
-    out.insert(1, str(entry["level"]))
-    out.extend(["--at", str(entry["pathProgress"]), "--load", str(entry["objectLoadIndex"])])
+    # The file is advertised as hand-editable; a malformed entry should fail like any
+    # other usage error, not as a KeyError traceback.
+    if not isinstance(entry, dict):
+        raise ValueError("checkpoint %r in %s is not a JSON object" % (checkpoint_id, checkpoint_file))
+    try:
+        expanded = [str(entry["level"])]
+        if entry.get("phase"):
+            expanded.append(str(entry["phase"]))
+        expanded += ["--at", str(entry["pathProgress"]), "--load", str(entry["objectLoadIndex"])]
+    except KeyError as e:
+        raise ValueError("checkpoint %r in %s is missing key %s" % (checkpoint_id, checkpoint_file, e))
     if "groundSurface" in entry:
-        out.extend(["--ground", str(entry["groundSurface"])])
-    return out
+        expanded += ["--ground", str(entry["groundSurface"])]
+    return out[:1] + expanded + out[1:]
 
 
 def cmd_checkpoint_save(conn, tokens, checkpoint_file, raw=False):
@@ -185,6 +232,9 @@ def cmd_checkpoint_save(conn, tokens, checkpoint_file, raw=False):
     entry = {
         "level": data["level"],
         "levelName": data["levelName"],
+        # Warp-zone alternate routes (Meteo, Sector X) are on-rails phase 1 with their own
+        # object tables; replaying their captures into phase 0 restores the wrong corridor.
+        "phase": data.get("phase", 0),
         "pathProgress": data["pathProgress"],
         "objectLoadIndex": data["objectLoadIndex"],
         "groundSurface": data["groundSurface"],
@@ -207,6 +257,8 @@ def cmd_checkpoint_list(checkpoint_file):
         e = checkpoints[ident]
         line = "%s: %s, path progress %.1f, load index %s" % (
             ident, e.get("levelName", e.get("level")), e.get("pathProgress", 0.0), e.get("objectLoadIndex", "?"))
+        if e.get("phase"):
+            line += ", phase %s" % e["phase"]
         if e.get("description"):
             line += " - " + e["description"]
         print(line)
@@ -290,10 +342,6 @@ def main():
         return 2
 
     try:
-        # warp waits for the level to come up (and for the post-boot state before that);
-        # a long step waits for its frames. Both can exceed the 10 s default.
-        if command and command[0] in ("warp", "step"):
-            conn.sock.settimeout(120.0)
         if args.repl:
             code = 0
             for line in sys.stdin:
@@ -301,15 +349,27 @@ def main():
                 tokens = line.lstrip(chr(0xFEFF)).split()
                 if not tokens:
                     continue
-                code = print_response(conn.request(tokens), raw=args.raw)
+                try:
+                    if tokens[0] == "warp":
+                        tokens = expand_warp_command(tokens, args.checkpoints_file)
+                except ValueError as e:
+                    print(str(e), file=sys.stderr)
+                    code = 1
+                    continue
+                # Same per-command timeout as the one-shot path: warp waits for the level
+                # to come up, a long step waits for its frames — both can exceed 10 s.
+                conn.sock.settimeout(120.0 if tokens[0] in ("warp", "step") else 10.0)
+                code = run_command(conn, tokens, raw=args.raw)
             return code
+        if command[0] in ("warp", "step"):
+            conn.sock.settimeout(120.0)
         if command[0] == "checkpoint-save":
             try:
                 return cmd_checkpoint_save(conn, command, args.checkpoints_file, raw=args.raw)
             except ValueError as e:
                 print(str(e), file=sys.stderr)
                 return 1
-        return print_response(conn.request(command), raw=args.raw)
+        return run_command(conn, command, raw=args.raw)
     except (ConnectionError, OSError) as e:
         print(str(e), file=sys.stderr)
         return 2

@@ -537,10 +537,20 @@ void func_enmy_80062568(void) {
 
     if (1) {}
     gLevelObjects = SEGMENTED_TO_VIRTUAL(gLevelObjectInits[temp]);
+    // Guards over the original: a saved index below 40 (a checkpoint captured near the
+    // level start, reachable via the F1 Set Checkpoint button or a debug-server warp)
+    // would index before the list; one past the sentinel (a hand-fed --load value) would
+    // read past its end. Object_LoadLevelObjects checks the same sentinel.
     i = gSavedObjectLoadIndex - 40;
+    if (i < 0) {
+        i = 0;
+    }
     objInit = &gLevelObjects[i];
 
     for (; i < gSavedObjectLoadIndex; i++, objInit++) {
+        if (objInit->id <= OBJ_INVALID) {
+            break;
+        }
         Object_Load(objInit, 4000.0f, -4000.0f, 4000.0f, -4000.0f);
     }
 }

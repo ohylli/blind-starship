@@ -294,10 +294,12 @@ round trip. Design decisions:
 
 - **The game's own transition seam, not a bespoke one.** Setting `gNextLevel` /
   `gNextLevelPhase` / `gNextGameState = GSTATE_PLAY` is exactly how `Game_SetGameState`
-  (fox_game.c) is driven by the map screen, the in-play transitions (Venom → Andross),
-  and the `MODS_BOOT_STATE` boot-to-level hack — memory freed, object arrays cleared,
-  `Play_Setup` run. The warp adds only what `Map_PlayLevel` adds (`gHitCount = 0`,
-  `Map_LevelStart_AudioSpecSetup`). The mission briefing belongs to the map screen's
+  (fox_game.c) is driven by the in-play transitions (Venom → Andross) and the
+  `MODS_BOOT_STATE` boot-to-level hack — memory freed, object arrays cleared,
+  `Play_Setup` run. (The map screen takes a shortcut and assigns `gGameState` directly;
+  the `gNextGameState` route is a superset of that, and its cleanup is what makes the
+  warp safe from any state.) The warp adds only the map path's
+  `Map_LevelStart_AudioSpecSetup`. The mission briefing belongs to the map screen's
   flow, so a warp never shows it — no option needed, and independent of `gSkipBriefing`.
 - **Listener-driven stages, poll observes** — the same lesson `step`'s hardening taught:
   a warp from the ImGui console has no socket poll, so an unconditional
@@ -311,23 +313,31 @@ round trip. Design decisions:
   level intro cutscene only when `D_ctx_8017782C` ("play the intro") is set and no saved
   progress is pending; `--no-intro` clears it during the new level's `PLAY_STANDBY`
   frames (at least three: `gNextGameStateTimer` starts at 3), taking the same
-  no-cutscene path a death restart takes. A checkpoint start suppresses the intro by
-  itself, exactly like a mid-level respawn.
+  no-cutscene path a death restart takes. A checkpoint start forces the same skip: the
+  game's own gate keys on the restored *object-load index* being nonzero, so a capture
+  from the first stretch of a level would otherwise still play the cutscene (and on
+  Corneria have it overwrite the restored ground surface).
 - **Player init lives in the first play frame, not in Play_Init** — the trap of this
   slice. `Player_Setup` (intro decision, checkpoint restore, player state) runs from the
   player-state machine *inside the cancellable play update*, so pausing at kickoff would
-  freeze the arrival half-initialized. The warp therefore always clears `gDebugPause`
-  for the transition, completes only when the player has left `PLAYERSTATE_INIT`, and
+  freeze the arrival half-initialized. The warp therefore holds `gDebugPause` clear for
+  the whole transition (a pause or L press landing mid-warp would stall it to the
+  timeout; `pause` and `step` commands are rejected while a warp is in flight),
+  completes only when the player has left `PLAYERSTATE_INIT`, and
   applies `--paused` at that moment: "arrive paused" means exactly one simulated frame,
   the same thing `step 1` means. "Advance N after arrival" is deliberately not a warp
   option — it is `warp --paused` followed by `step N`.
 - **Checkpoints are captured live, resolved by the client, and injected server-side.**
   `checkpoint` returns the (pathProgress, objectLoadIndex, groundSurface) tuple the
-  game's own respawn uses (same formula as the F1 "Set Checkpoint" button; on-rails
-  only, and only in normal flight so a cutscene position cannot be captured). Names live
-  entirely in `tools/checkpoints.json`, managed by `debug_client.py checkpoint-save /
-  checkpoint-list / checkpoint-delete`; `warp --checkpoint <id>` expands client-side
-  into `--at/--load/--ground` (the entry stores its level, so no level argument). The
+  game's own respawn uses (same formula as the F1 "Set Checkpoint" button, clamped to
+  the level start so a capture in the first 250 path units still replays; on-rails
+  only, and only in normal flight so a cutscene position cannot be captured), plus the
+  level phase — the warp-zone alternate routes (Meteo, Sector X) are on-rails phase 1
+  with their own object tables, so a capture there must replay into the same phase.
+  Names live entirely in `tools/checkpoints.json`, managed by `debug_client.py
+  checkpoint-save / checkpoint-list / checkpoint-delete`; `warp --checkpoint <id>`
+  expands client-side into the stored level, phase, and `--at/--load/--ground` (the
+  entry stores its level, so no level argument). The
   server stays stateless: explicit values arrive via `DebugServer_GetCheckpointOverride`,
   which `Player_Setup` consults *instead of* the `gCheckpoint` CVars for that one level
   start (`--fresh` overrides with the untouched defaults, suppressing a configured CVar
@@ -344,7 +354,8 @@ round trip. Design decisions:
   ignored, as they always were.
 - **`launch.ps1 -Level <name> [-Checkpoint <id>] [-NoIntro] [-Paused]`** shells out to
   `debug_client.py warp` after the health handshake; the client blocks until the level
-  is actually up, so exit 0 means "sitting in the level".
+  is actually up and folds a server-side warp timeout (`completed: false` inside a
+  status-ok envelope) into exit 1, so exit 0 means "sitting in the level".
 
 ## Open questions for refinement
 

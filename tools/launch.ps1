@@ -72,6 +72,12 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# Fail before launching anything: the checkpoint stores its own level.
+if ($Level -and $Checkpoint) {
+    Write-Host "-Level and -Checkpoint are mutually exclusive (the checkpoint stores its level)." -ForegroundColor Red
+    exit 1
+}
+
 $repo = Split-Path $PSScriptRoot -Parent
 $exe = Join-Path $repo "build\x64\$Config\Starship.exe"
 if (-not (Test-Path $exe)) {
@@ -197,13 +203,21 @@ if ($Level -or $Checkpoint) {
         Write-Host "Cannot warp: the debug server is not answering." -ForegroundColor Red
         exit 1
     }
-    $warpArgs = @((Join-Path $repo 'tools\debug_client.py'), '--port', "$Port", 'warp')
-    if ($Level) { $warpArgs += $Level }
-    if ($Checkpoint) { $warpArgs += @('--checkpoint', $Checkpoint) }
-    if ($NoIntro) { $warpArgs += '--no-intro' }
-    if ($Paused) { $warpArgs += '--paused' }
-    Write-Host ("Warping: " + ($warpArgs[3..($warpArgs.Count - 1)] -join ' ') + " ...")
-    & python @warpArgs
+    $warpCommand = @('warp')
+    if ($Level) { $warpCommand += $Level }
+    if ($Checkpoint) { $warpCommand += @('--checkpoint', $Checkpoint) }
+    if ($NoIntro) { $warpCommand += '--no-intro' }
+    if ($Paused) { $warpCommand += '--paused' }
+    Write-Host ("Warping: " + ($warpCommand -join ' ') + " ...")
+    $warpArgs = @((Join-Path $repo 'tools\debug_client.py'), '--port', "$Port") + $warpCommand
+    try {
+        & python @warpArgs
+    } catch {
+        # Most likely python itself is missing; under ErrorActionPreference Stop the bare
+        # call would otherwise die as a raw terminating error (with a stale exit code).
+        Write-Host "Warp failed: $($_.Exception.Message)" -ForegroundColor Red
+        exit 1
+    }
     if ($LASTEXITCODE -ne 0) {
         Write-Host "Warp failed (exit code $LASTEXITCODE)." -ForegroundColor Red
         exit 1
