@@ -1034,17 +1034,20 @@ void DrawDebugMenu() {
         });
         }
 
-        if (CVarGetInteger(StringHelper::Sprintf("gCheckpoint.%d.Set", gCurrentLevel).c_str(), 0)) {
+        // "Level%d", not a bare "%d": a numeric key turns the nested config JSON into an
+        // array, which libultraship's CVar loader silently drops on load — the old keys
+        // lost every saved checkpoint across restarts.
+        if (CVarGetInteger(StringHelper::Sprintf("gCheckpoint.Level%d.Set", gCurrentLevel).c_str(), 0)) {
             if (UIWidgets::Button("Clear Checkpoint")) {
-                CVarClear(StringHelper::Sprintf("gCheckpoint.%d.Set", gCurrentLevel).c_str());
+                CVarClear(StringHelper::Sprintf("gCheckpoint.Level%d.Set", gCurrentLevel).c_str());
                 Ship::Context::GetInstance()->GetWindow()->GetGui()->SaveConsoleVariablesNextFrame();
             }
         } else if (gPlayer != NULL && gGameState == GSTATE_PLAY) {
             if (UIWidgets::Button("Set Checkpoint")) {
-                CVarSetInteger(StringHelper::Sprintf("gCheckpoint.%d.Set", gCurrentLevel).c_str(), 1);
-                CVarSetInteger(StringHelper::Sprintf("gCheckpoint.%d.gSavedPathProgress", gCurrentLevel).c_str(), gGroundSurface);
-                CVarSetFloat(StringHelper::Sprintf("gCheckpoint.%d.gSavedPathProgress", gCurrentLevel).c_str(), (-gPlayer->pos.z) - 250.0f);
-                CVarSetInteger(StringHelper::Sprintf("gCheckpoint.%d.gSavedObjectLoadIndex", gCurrentLevel).c_str(), gObjectLoadIndex);
+                CVarSetInteger(StringHelper::Sprintf("gCheckpoint.Level%d.Set", gCurrentLevel).c_str(), 1);
+                CVarSetInteger(StringHelper::Sprintf("gCheckpoint.Level%d.gSavedGroundSurface", gCurrentLevel).c_str(), gGroundSurface);
+                CVarSetFloat(StringHelper::Sprintf("gCheckpoint.Level%d.gSavedPathProgress", gCurrentLevel).c_str(), (-gPlayer->pos.z) - 250.0f);
+                CVarSetInteger(StringHelper::Sprintf("gCheckpoint.Level%d.gSavedObjectLoadIndex", gCurrentLevel).c_str(), gObjectLoadIndex);
                 Ship::Context::GetInstance()->GetWindow()->GetGui()->SaveConsoleVariablesNextFrame();
             }
         }

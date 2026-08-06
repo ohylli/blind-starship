@@ -1,10 +1,11 @@
 // Commands for the debug control server: `health` (readiness handshake), `player` and
-// `objects` (JSON dumps), and the execution controls `pause` / `resume` / `step`, whose
-// frame counting runs on game-thread event listeners registered here alongside the
-// commands. Handlers write compact JSON into the console output string; the server wraps
-// it in its wire envelope, the ImGui console prints it verbatim. JSON because the primary
-// consumer is a script — filtering/diffing/watching happens client-side
-// (docs/debug-server-plan.md).
+// `objects` (JSON dumps), the execution controls `pause` / `resume` / `step`, and the
+// scenario controls `warp` / `checkpoint`. Multi-frame machinery (step's frame counting,
+// warp's staged level transition) runs on game-thread event listeners registered here
+// alongside the commands. Handlers write compact JSON into the console output string; the
+// server wraps it in its wire envelope, the ImGui console prints it verbatim. JSON
+// because the primary consumer is a script — filtering/diffing/watching happens
+// client-side (docs/debug-server-plan.md).
 
 #include "DebugCommands.h"
 #include "DebugServer.h"
@@ -331,6 +332,462 @@ static int32_t StepHandler(std::shared_ptr<Ship::Console> console, const std::ve
     return 0;
 }
 
+// --- warp / checkpoint -------------------------------------------------------------------
+//
+// `warp <level> [phase]` enters any level from any post-boot state through the game's own
+// transition seam — gNextLevel / gNextLevelPhase / gNextGameState, consumed by
+// Game_SetGameState (fox_game.c) — the same route the map screen, the in-play level
+// transitions, and the MODS_BOOT_STATE hack use. The mission briefing belongs to the map
+// screen's flow, so a warp never shows it. Like `step`, the transition is driven by an
+// unconditional game-thread listener rather than the socket poll, because a warp started
+// from the ImGui console has no poll: the listener enforces, the poll only observes.
+//
+// Stages: WAIT_WARPABLE (post-boot state reached) -> kickoff -> WAIT_STANDBY (the new
+// level's PLAY_STANDBY frames — at least three of them, gNextGameStateTimer starts at 3 —
+// where --no-intro clears the play-the-intro flag D_ctx_8017782C, taking the same
+// no-cutscene path a death restart takes) -> WAIT_PLAY (Play_Init done, first play frame
+// reached) -> DONE.
+//
+// Checkpoints: `checkpoint` captures the (pathProgress, objectLoadIndex, groundSurface)
+// tuple the game's own mid-level respawn uses, with the same formula as the F1 "Set
+// Checkpoint" button; `warp ... --at <p> --load <n> [--ground <g>]` feeds a captured
+// tuple back through DebugServer_GetCheckpointOverride, which Player_Setup (fox_play.c)
+// consults instead of the gCheckpoint CVars for that one level start. A checkpoint start
+// implies the intro skip (nonzero saved progress always suppresses the intro, as on a
+// death respawn).
+// --fresh overrides with the untouched level-start defaults, i.e. suppresses a configured
+// gCheckpoint CVar for one start. Naming and storage of captured checkpoints is the
+// client's job (tools/debug_client.py, tools/checkpoints.json).
+//
+// "Advance N frames after arrival, then inspect" is deliberately not a warp option: it is
+// `warp <level> --paused` followed by `step N`.
+
+static constexpr int kWarpTimeoutTicks = 1800; // ~60 s of game ticks; covers a slow boot
+
+struct WarpState {
+    enum Stage { WAIT_WARPABLE, WAIT_STANDBY, WAIT_PLAY, DONE };
+    Stage stage = WAIT_WARPABLE;
+    s32 level = 0;
+    s32 phase = 0;
+    bool noIntro = false;
+    bool paused = false;
+    bool fresh = false;
+    bool haveCheckpoint = false;
+    f32 pathProgress = 0.0f;
+    s32 objectLoadIndex = 0;
+    s32 groundSurface = -1; // -1: keep the level default
+    bool completed = false;
+    bool introFlagCleared = false;
+    bool checkpointConsumed = false;
+    int ticks = 0;
+    const char* note = nullptr;
+};
+static std::shared_ptr<WarpState> sWarp; // game thread only
+
+static bool WarpInFlight() {
+    return sWarp != nullptr && sWarp->stage != WarpState::DONE;
+}
+
+// GSTATE_INIT is deliberately not warpable: its Game_Update case performs the base
+// bootstrap (lives, team shields, forms, volumes) and clobbers gNextGameState, so a warp
+// must wait until it has run and settled into GSTATE_TITLE. The boot states (>=
+// GSTATE_BOOT) simply have not reached that bootstrap yet.
+static bool WarpableNow() {
+    switch (gGameState) {
+        case GSTATE_TITLE:
+        case GSTATE_MENU:
+        case GSTATE_MAP:
+        case GSTATE_PLAY:
+        case GSTATE_GAME_OVER:
+        case GSTATE_ENDING:
+            return true;
+        default:
+            return false;
+    }
+}
+
+// The level-select mod's overlay function; sets the level's SFX channel allocation, which
+// the map screen normally does during the briefing.
+extern "C" void Map_LevelStart_AudioSpecSetup(LevelId level);
+
+static void WarpOnGamePostUpdate(IEvent* event) {
+    if (!WarpInFlight()) {
+        return;
+    }
+    WarpState& warp = *sWarp;
+    if (++warp.ticks > kWarpTimeoutTicks) {
+        warp.note = "warp timed out before the level came up";
+        warp.stage = WarpState::DONE;
+        return;
+    }
+    switch (warp.stage) {
+        case WarpState::WAIT_WARPABLE:
+            if (!WarpableNow()) {
+                return;
+            }
+            gHitCount = 0; // per-mission counter; Map_PlayLevel zeroes it on the map path
+            gNextLevel = warp.level;
+            gNextLevelPhase = warp.phase;
+            gNextGameState = GSTATE_PLAY;
+            Map_LevelStart_AudioSpecSetup((LevelId) warp.level);
+            // Always clear the pause for the transition: the level start needs one live
+            // play frame — Player_Setup (intro decision, checkpoint restore) runs from
+            // the player-state machine inside the cancellable play update, not from
+            // Play_Init — so a standing pause would freeze the arrival half-initialized.
+            // --paused is applied at completion instead (see WAIT_PLAY).
+            CVarSetInteger("gDebugPause", 0);
+            warp.stage = WarpState::WAIT_STANDBY;
+            return;
+        case WarpState::WAIT_STANDBY:
+            if (gGameState != GSTATE_PLAY || gCurrentLevel != warp.level) {
+                return;
+            }
+            if (gPlayState == PLAY_STANDBY) {
+                if (warp.noIntro) {
+                    D_ctx_8017782C = false; // Play_Setup re-set it; Play_Init has not read it yet
+                    warp.introFlagCleared = true;
+                }
+                warp.stage = WarpState::WAIT_PLAY;
+            } else {
+                // Belt and suspenders: the standby window should be unmissable (see the
+                // header comment), but if it ever is, keep going rather than hang.
+                if (warp.noIntro) {
+                    warp.note = "level start window missed; intro not skipped";
+                }
+                warp.stage = WarpState::WAIT_PLAY;
+            }
+            return;
+        case WarpState::WAIT_PLAY:
+            // "The level is up" means the first play update actually ran: gPlayState
+            // reaching PLAY_UPDATE only says Play_Init finished — the player leaves
+            // PLAYERSTATE_INIT when Player_Setup ran inside that first update, which is
+            // where the intro decision and the checkpoint restore live.
+            if (gGameState == GSTATE_PLAY && gCurrentLevel == warp.level && gPlayState > PLAY_INIT &&
+                gPlayer != NULL && gPlayer[0].state != PLAYERSTATE_INIT) {
+                if (warp.paused) {
+                    CVarSetInteger("gDebugPause", 1); // freeze right after the first play frame
+                }
+                warp.completed = true;
+                warp.stage = WarpState::DONE;
+            }
+            return;
+        default:
+            return;
+    }
+}
+
+// Consulted by Player_Setup (fox_play.c) in place of the gCheckpoint CVar read. Active
+// only between kickoff and completion of a warp that asked for an override, and only for
+// the warp's own level, so every other level start behaves as stock.
+extern "C" bool DebugServer_GetCheckpointOverride(int32_t* groundSurface, float* pathProgress,
+                                                  int32_t* objectLoadIndex) {
+    if (sWarp == nullptr || (sWarp->stage != WarpState::WAIT_STANDBY && sWarp->stage != WarpState::WAIT_PLAY)) {
+        return false;
+    }
+    if (!sWarp->haveCheckpoint && !sWarp->fresh) {
+        return false;
+    }
+    if (gCurrentLevel != sWarp->level) {
+        return false;
+    }
+    if (sWarp->haveCheckpoint) {
+        if (sWarp->groundSurface >= 0) {
+            *groundSurface = sWarp->groundSurface;
+        }
+        *pathProgress = sWarp->pathProgress;
+        *objectLoadIndex = sWarp->objectLoadIndex;
+    } // --fresh: leave the Play_Setup defaults untouched
+    sWarp->checkpointConsumed = true;
+    return true;
+}
+
+// Levels warp accepts, with the client-facing names. LEVEL_UNK_15 (a title-scene stub)
+// and LEVEL_VERSUS (needs the whole VS setup path) are deliberately absent.
+struct WarpLevelName {
+    const char* name;
+    s32 level;
+};
+static const WarpLevelName kWarpLevels[] = {
+    { "corneria", LEVEL_CORNERIA },      { "meteo", LEVEL_METEO },     { "sector-x", LEVEL_SECTOR_X },
+    { "area-6", LEVEL_AREA_6 },          { "beta-sb", LEVEL_UNK_4 },   { "sector-y", LEVEL_SECTOR_Y },
+    { "venom-1", LEVEL_VENOM_1 },        { "solar", LEVEL_SOLAR },     { "zoness", LEVEL_ZONESS },
+    { "andross", LEVEL_VENOM_ANDROSS },  { "training", LEVEL_TRAINING }, { "macbeth", LEVEL_MACBETH },
+    { "titania", LEVEL_TITANIA },        { "aquas", LEVEL_AQUAS },     { "fortuna", LEVEL_FORTUNA },
+    { "katina", LEVEL_KATINA },          { "bolse", LEVEL_BOLSE },     { "sector-z", LEVEL_SECTOR_Z },
+    { "venom-2", LEVEL_VENOM_2 },
+};
+
+// Lowercased alphanumerics only, with a leading "level" dropped: "Sector-X", "sector_x",
+// and "LEVEL_SECTOR_X" all normalize to "sectorx".
+static std::string NormalizeLevelName(const std::string& raw) {
+    std::string s;
+    for (char c : raw) {
+        if (std::isalnum(static_cast<unsigned char>(c))) {
+            s += (char) std::tolower(static_cast<unsigned char>(c));
+        }
+    }
+    if (s.rfind("level", 0) == 0) {
+        s.erase(0, 5);
+    }
+    return s;
+}
+
+static bool ResolveWarpLevel(const std::string& token, s32* outLevel) {
+    char* end = nullptr;
+    long v = strtol(token.c_str(), &end, 10);
+    if (end != token.c_str() && *end == '\0') {
+        for (const auto& entry : kWarpLevels) {
+            if (entry.level == (s32) v) {
+                *outLevel = entry.level;
+                return true;
+            }
+        }
+        return false;
+    }
+    std::string wanted = NormalizeLevelName(token);
+    if (wanted.empty()) {
+        return false;
+    }
+    for (const auto& entry : kWarpLevels) {
+        if (NormalizeLevelName(entry.name) == wanted) {
+            *outLevel = entry.level;
+            return true;
+        }
+    }
+    return false;
+}
+
+static std::string WarpLevelNameList() {
+    std::string s;
+    for (const auto& entry : kWarpLevels) {
+        if (!s.empty()) {
+            s += ", ";
+        }
+        s += entry.name;
+    }
+    return s;
+}
+
+static bool ParseWarpLong(const std::vector<std::string>& args, size_t* i, long min, long max, long* out,
+                          std::string* output) {
+    if (*i + 1 >= args.size()) {
+        if (output != nullptr) {
+            *output += args[*i] + " needs a value";
+        }
+        return false;
+    }
+    const std::string& value = args[++*i];
+    char* end = nullptr;
+    errno = 0;
+    long v = strtol(value.c_str(), &end, 10);
+    if (end == value.c_str() || *end != '\0' || errno == ERANGE || v < min || v > max) {
+        if (output != nullptr) {
+            *output += args[*i - 1] + " value out of range: " + value;
+        }
+        return false;
+    }
+    *out = v;
+    return true;
+}
+
+static nlohmann::json WarpResultJson(const WarpState& warp) {
+    nlohmann::json j;
+    j["completed"] = warp.completed;
+    j["level"] = warp.level;
+    j["levelName"] = Starship_LevelName(warp.level);
+    j["phase"] = (s32) gLevelPhase;
+    j["paused"] = IsDebugPaused();
+    j["introSkipped"] = warp.introFlagCleared;
+    if (warp.haveCheckpoint || warp.fresh) {
+        j["checkpointApplied"] = warp.checkpointConsumed;
+    }
+    j["gameStateName"] = GameStateName(gGameState); // mostly for the timeout case
+    j["frame"] = gGameFrameCount;
+    if (warp.note != nullptr) {
+        j["note"] = warp.note;
+    }
+    return j;
+}
+
+static int32_t WarpHandler(std::shared_ptr<Ship::Console> console, const std::vector<std::string>& args,
+                           std::string* output) {
+    if (gVersusMode) {
+        if (output != nullptr) {
+            *output += "warp is not available in VS mode";
+        }
+        return 1;
+    }
+    if (WarpInFlight()) {
+        if (output != nullptr) {
+            *output += "a warp is already in progress";
+        }
+        return 1;
+    }
+
+    auto warp = std::make_shared<WarpState>();
+    long ground = -1;
+    bool haveAt = false;
+    bool haveLoad = false;
+    int positional = 0;
+    for (size_t i = 1; i < args.size(); i++) {
+        const std::string& a = args[i];
+        if (a == "--no-intro") {
+            warp->noIntro = true;
+        } else if (a == "--paused") {
+            warp->paused = true;
+        } else if (a == "--fresh") {
+            warp->fresh = true;
+        } else if (a == "--at") {
+            if (i + 1 >= args.size()) {
+                if (output != nullptr) {
+                    *output += "--at needs a value";
+                }
+                return 1;
+            }
+            const std::string& value = args[++i];
+            char* end = nullptr;
+            errno = 0;
+            float v = strtof(value.c_str(), &end);
+            if (end == value.c_str() || *end != '\0' || errno == ERANGE || !(v >= 0.0f)) {
+                if (output != nullptr) {
+                    *output += "--at value must be a non-negative number: " + value;
+                }
+                return 1;
+            }
+            warp->pathProgress = v;
+            haveAt = true;
+        } else if (a == "--load") {
+            long v = 0;
+            if (!ParseWarpLong(args, &i, 0, 10000, &v, output)) {
+                return 1;
+            }
+            warp->objectLoadIndex = (s32) v;
+            haveLoad = true;
+        } else if (a == "--ground") {
+            if (!ParseWarpLong(args, &i, 0, 100, &ground, output)) {
+                return 1;
+            }
+        } else if (a.rfind("--", 0) == 0) {
+            if (output != nullptr) {
+                *output += "unknown warp option: " + a;
+            }
+            return 1;
+        } else if (positional == 0) {
+            if (!ResolveWarpLevel(a, &warp->level)) {
+                if (output != nullptr) {
+                    *output += "unknown level: " + a + " (one of: " + WarpLevelNameList() + ")";
+                }
+                return 1;
+            }
+            positional++;
+        } else if (positional == 1) {
+            char* end = nullptr;
+            errno = 0;
+            long v = strtol(a.c_str(), &end, 10);
+            if (end == a.c_str() || *end != '\0' || errno == ERANGE || v < 0 || v > 2) {
+                if (output != nullptr) {
+                    *output += "phase must be 0..2: " + a;
+                }
+                return 1;
+            }
+            warp->phase = (s32) v;
+            positional++;
+        } else {
+            if (output != nullptr) {
+                *output += "unexpected argument: " + a;
+            }
+            return 1;
+        }
+    }
+    if (positional == 0) {
+        if (output != nullptr) {
+            *output += "usage: warp <level> [phase] [--no-intro] [--paused] [--fresh] [--at <p> --load <n> "
+                       "[--ground <g>]]; levels: " +
+                       WarpLevelNameList();
+        }
+        return 1;
+    }
+    if (haveAt != haveLoad) {
+        if (output != nullptr) {
+            *output += "--at and --load must be given together (both come from a `checkpoint` capture)";
+        }
+        return 1;
+    }
+    warp->haveCheckpoint = haveAt;
+    warp->groundSurface = (s32) ground;
+    if (warp->fresh && warp->haveCheckpoint) {
+        if (output != nullptr) {
+            *output += "--fresh and --at/--load are mutually exclusive";
+        }
+        return 1;
+    }
+
+    StepCancel("cancelled by warp"); // the level the step counted is going away
+    sWarp = warp;                    // arms the listener
+
+    bool deferred = DebugServer_Defer([warp](std::string* out) {
+        if (warp->stage != WarpState::DONE) {
+            return false;
+        }
+        if (out != nullptr) {
+            *out += WarpResultJson(*warp).dump();
+        }
+        return true;
+    });
+    if (!deferred && output != nullptr) {
+        // In-game ImGui console: acknowledge now; the listener still runs the warp.
+        nlohmann::json j;
+        j["warping"] = Starship_LevelName(warp->level);
+        *output += j.dump();
+    }
+    return 0;
+}
+
+static int32_t CheckpointHandler(std::shared_ptr<Ship::Console> console, const std::vector<std::string>& args,
+                                 std::string* output) {
+    if (!RequirePlay(output)) {
+        return 1;
+    }
+    if (gVersusMode) {
+        if (output != nullptr) {
+            *output += "checkpoint capture is not available in VS mode";
+        }
+        return 1;
+    }
+    // The saved-progress mechanism is on-rails only (Play_Init fast-forwards the object
+    // load index along the corridor path); all-range mid-level state is a different
+    // machine (gAllRangeCheckpoint) not covered here.
+    if (gLevelMode != LEVELMODE_ON_RAILS) {
+        if (output != nullptr) {
+            *output += "checkpoints only exist on on-rails levels (current mode is all-range)";
+        }
+        return 1;
+    }
+    // During intros/U-turns/level complete the position is a cutscene position; a
+    // checkpoint captured there would respawn somewhere the player never flew.
+    if (gPlayer[0].state != PLAYERSTATE_ACTIVE) {
+        if (output != nullptr) {
+            *output += "capture requires normal flight (currently ";
+            *output += PlayerStateName(gPlayer[0].state);
+            *output += ")";
+        }
+        return 1;
+    }
+    nlohmann::json j;
+    j["level"] = (s32) gCurrentLevel;
+    j["levelName"] = Starship_LevelName(gCurrentLevel);
+    // Same formula as the F1 "Set Checkpoint" button: respawn ~250 units before the
+    // player's current position along the path.
+    j["pathProgress"] = (-gPlayer[0].pos.z) - 250.0f;
+    j["objectLoadIndex"] = (s32) gObjectLoadIndex;
+    j["groundSurface"] = (s32) gGroundSurface;
+    j["frame"] = gGameFrameCount;
+    if (output != nullptr) {
+        *output += j.dump();
+    }
+    return 0;
+}
+
 static nlohmann::json DumpPlayer(const Player& p) {
     nlohmann::json j;
     j["num"] = p.num;
@@ -633,6 +1090,7 @@ void DebugCommands_Init() {
     // HIGH sorts the step listener after the NORMAL pause handler on the same event.
     REGISTER_LISTENER(PlayUpdateEvent, StepOnPlayUpdate, EVENT_PRIORITY_HIGH);
     REGISTER_LISTENER(GamePostUpdateEvent, StepOnGamePostUpdate, EVENT_PRIORITY_NORMAL);
+    REGISTER_LISTENER(GamePostUpdateEvent, WarpOnGamePostUpdate, EVENT_PRIORITY_NORMAL);
 
     auto console = Ship::Context::GetInstance()->GetConsole();
     console->AddCommand("health", { HealthHandler,
@@ -647,6 +1105,15 @@ void DebugCommands_Init() {
     console->AddCommand("step", { StepHandler,
                                   "Run exactly n play frames (default 1), then re-pause. Requires live gameplay.",
                                   { { "n", Ship::ArgumentType::NUMBER, true } } });
+    console->AddCommand("warp", { WarpHandler,
+                                  "Enter a level from anywhere: warp <level> [phase] [--no-intro] [--paused] "
+                                  "[--fresh] [--at <p> --load <n> [--ground <g>]].",
+                                  { { "level", Ship::ArgumentType::TEXT, false },
+                                    { "phase", Ship::ArgumentType::NUMBER, true } } });
+    console->AddCommand("checkpoint", { CheckpointHandler,
+                                        "Capture the current on-rails position as warp checkpoint data. "
+                                        "Requires normal flight.",
+                                        {} });
     console->AddCommand("player", { PlayerHandler,
                                     "Dump player state as JSON. Requires play mode.",
                                     { { "index", Ship::ArgumentType::NUMBER, true } } });

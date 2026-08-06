@@ -22,6 +22,7 @@
 #include "assets/ast_area_6.h"
 #include "assets/ast_zoness.h"
 #include "port/hooks/Events.h"
+#include "port/mods/debugserver/DebugCommands.h"
 
 extern float gCurrentScreenWidth;
 extern float gCurrentScreenHeight;
@@ -4708,15 +4709,22 @@ void Player_Setup(Player* playerx) {
     gDisplayedHitCount = gHitCount;
     D_hud_80161730 = 0;
 
-    char buffer[48] = { "\0" };
-    sprintf(buffer, "gCheckpoint.%d.Set", gCurrentLevel);
-    if (CVarGetInteger(buffer, 0)) {
-        sprintf(buffer, "gCheckpoint.%d.gSavedGroundSurface", gCurrentLevel);
-        gSavedGroundSurface = CVarGetInteger(buffer, gSavedGroundSurface);
-        sprintf(buffer, "gCheckpoint.%d.gSavedPathProgress", gCurrentLevel);
-        gSavedPathProgress = CVarGetFloat(buffer, gSavedPathProgress);
-        sprintf(buffer, "gCheckpoint.%d.gSavedObjectLoadIndex", gCurrentLevel);
-        gSavedObjectLoadIndex = CVarGetInteger(buffer, gSavedObjectLoadIndex);
+    // A debug-server warp with explicit checkpoint data (or --fresh) overrides the
+    // gCheckpoint CVars for this one level start; every other start takes the CVar path.
+    // The CVar keys use "Level%d", not a bare "%d": a numeric key makes the nested config
+    // JSON an array, and libultraship's CVar loader silently drops arrays on load
+    // (ConsoleVariable.cpp), which used to lose every saved checkpoint across restarts.
+    if (!DebugServer_GetCheckpointOverride(&gSavedGroundSurface, &gSavedPathProgress, &gSavedObjectLoadIndex)) {
+        char buffer[48] = { "\0" };
+        sprintf(buffer, "gCheckpoint.Level%d.Set", gCurrentLevel);
+        if (CVarGetInteger(buffer, 0)) {
+            sprintf(buffer, "gCheckpoint.Level%d.gSavedGroundSurface", gCurrentLevel);
+            gSavedGroundSurface = CVarGetInteger(buffer, gSavedGroundSurface);
+            sprintf(buffer, "gCheckpoint.Level%d.gSavedPathProgress", gCurrentLevel);
+            gSavedPathProgress = CVarGetFloat(buffer, gSavedPathProgress);
+            sprintf(buffer, "gCheckpoint.Level%d.gSavedObjectLoadIndex", gCurrentLevel);
+            gSavedObjectLoadIndex = CVarGetInteger(buffer, gSavedObjectLoadIndex);
+        }
     }
 
     gMissedZoSearchlight = gSavedZoSearchlightStatus;

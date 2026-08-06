@@ -63,3 +63,4 @@ src/port/mods/EventIdNames.generated.c
 /mods*/
 .claude/
 /level_manifests/
+tools/checkpoints.json

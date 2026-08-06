@@ -52,7 +52,22 @@ param(
     [int]$SettleSeconds = 8,
 
     # Debug server port to poll for the readiness handshake (gDebugServer.Port CVar).
-    [int]$Port = 7764
+    [int]$Port = 7764,
+
+    # Warp straight into a level after the readiness handshake (name or id as the debug
+    # server's warp command accepts, e.g. corneria, meteo, sector-x). Requires the debug
+    # server on, and python for tools/debug_client.py. The warp waits server-side for the
+    # boot sequence to finish, so no extra delay is needed here.
+    [string]$Level,
+
+    # Warp to a named checkpoint from tools/checkpoints.json (see debug_client.py
+    # checkpoint-save). The checkpoint stores its level, so -Level is not needed with it.
+    [string]$Checkpoint,
+
+    # With -Level/-Checkpoint: skip the level intro cutscene / arrive debug-paused at the
+    # first play frame.
+    [switch]$NoIntro,
+    [switch]$Paused
 )
 
 $ErrorActionPreference = 'Stop'
@@ -172,6 +187,27 @@ if ($health) {
     Write-Host ("Debug server ready on port " + $Port + ": " + $health.gameStateName + ", frame " + $health.frame)
 } else {
     Write-Host "Debug server did not answer on port $Port (gDebugServer.Enabled off?). Proceeding on the settle timeout alone." -ForegroundColor Yellow
+}
+
+# Optional warp-on-launch. debug_client.py resolves -Checkpoint names and blocks until the
+# level is actually up (or the warp times out server-side), so when this returns with 0
+# the game is sitting in the level.
+if ($Level -or $Checkpoint) {
+    if (-not $health) {
+        Write-Host "Cannot warp: the debug server is not answering." -ForegroundColor Red
+        exit 1
+    }
+    $warpArgs = @((Join-Path $repo 'tools\debug_client.py'), '--port', "$Port", 'warp')
+    if ($Level) { $warpArgs += $Level }
+    if ($Checkpoint) { $warpArgs += @('--checkpoint', $Checkpoint) }
+    if ($NoIntro) { $warpArgs += '--no-intro' }
+    if ($Paused) { $warpArgs += '--paused' }
+    Write-Host ("Warping: " + ($warpArgs[3..($warpArgs.Count - 1)] -join ' ') + " ...")
+    & python @warpArgs
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "Warp failed (exit code $LASTEXITCODE)." -ForegroundColor Red
+        exit 1
+    }
 }
 
 # Report what came up and who holds the foreground, so an unattended run can tell whether the launch

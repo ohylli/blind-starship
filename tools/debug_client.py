@@ -11,8 +11,20 @@ Usage:
     python tools/debug_client.py health
     python tools/debug_client.py objects actors shots
     python tools/debug_client.py set gDebugPause 1
+    python tools/debug_client.py warp corneria --no-intro --paused
+    python tools/debug_client.py checkpoint-save big-asteroids --desc "asteroid cluster"
+    python tools/debug_client.py warp --checkpoint big-asteroids --paused
+    python tools/debug_client.py checkpoint-list
     python tools/debug_client.py --wait 30            # poll until the game answers
     python tools/debug_client.py --repl               # one command per stdin line
+
+Named checkpoints: `checkpoint-save <id>` captures the current flight position from the
+running game (server command `checkpoint`) into tools/checkpoints.json under the given
+id; `warp --checkpoint <id>` expands the id into the stored level plus explicit
+--at/--load/--ground arguments before sending, so the server never sees checkpoint names.
+`checkpoint-list` / `checkpoint-delete <id>` manage the file offline. The file is
+plain committed-friendly JSON — a shared vocabulary of documented test spots ("test in
+meteo at big-asteroids"). --repl lines are sent raw, without this expansion.
 
 Exit codes: 0 ok, 1 command error, 2 could not connect / connection lost.
 
@@ -28,11 +40,13 @@ Quirks of the stock libultraship set/get commands (documented, not fixed):
 
 import argparse
 import json
+import os
 import socket
 import sys
 import time
 
 DEFAULT_PORT = 7764
+DEFAULT_CHECKPOINT_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "checkpoints.json")
 
 
 class DebugConnection:
@@ -80,6 +94,137 @@ def print_response(envelope, raw=False):
     return 1
 
 
+def load_checkpoints(path):
+    try:
+        # utf-8-sig: tolerate the BOM Windows editors (and PowerShell redirects) prepend.
+        with open(path, "r", encoding="utf-8-sig") as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        return {}
+    except json.JSONDecodeError as e:
+        raise ValueError("checkpoint file %s is not valid JSON: %s" % (path, e))
+    if not isinstance(data, dict):
+        raise ValueError("checkpoint file %s is not a JSON object" % path)
+    return data
+
+
+def save_checkpoints(path, checkpoints):
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
+        json.dump(checkpoints, f, indent=2, sort_keys=True)
+        f.write("\n")
+
+
+WARP_VALUE_FLAGS = ("--at", "--load", "--ground")
+
+
+def expand_warp_command(tokens, checkpoint_file):
+    """Resolve `warp --checkpoint <id>` into the stored level + explicit --at/--load/--ground."""
+    if "--checkpoint" not in tokens:
+        return tokens
+    out = ["warp"]
+    checkpoint_id = None
+    has_level = False
+    i = 1
+    while i < len(tokens):
+        t = tokens[i]
+        if t == "--checkpoint":
+            if i + 1 >= len(tokens):
+                raise ValueError("--checkpoint needs an id")
+            checkpoint_id = tokens[i + 1]
+            i += 2
+            continue
+        if t in WARP_VALUE_FLAGS:
+            raise ValueError("%s conflicts with --checkpoint (the checkpoint provides it)" % t)
+        if not t.startswith("--"):
+            has_level = True
+        out.append(t)
+        i += 1
+    if has_level:
+        raise ValueError("give either a level or --checkpoint, not both (the checkpoint stores its level)")
+    checkpoints = load_checkpoints(checkpoint_file)
+    if checkpoint_id not in checkpoints:
+        known = ", ".join(sorted(checkpoints)) if checkpoints else "none saved"
+        raise ValueError("unknown checkpoint id %r (known: %s)" % (checkpoint_id, known))
+    entry = checkpoints[checkpoint_id]
+    out.insert(1, str(entry["level"]))
+    out.extend(["--at", str(entry["pathProgress"]), "--load", str(entry["objectLoadIndex"])])
+    if "groundSurface" in entry:
+        out.extend(["--ground", str(entry["groundSurface"])])
+    return out
+
+
+def cmd_checkpoint_save(conn, tokens, checkpoint_file, raw=False):
+    ident = None
+    desc = None
+    force = False
+    i = 1
+    while i < len(tokens):
+        t = tokens[i]
+        if t == "--desc":
+            if i + 1 >= len(tokens):
+                raise ValueError("--desc needs a value")
+            desc = tokens[i + 1]
+            i += 2
+        elif t == "--force":
+            force = True
+            i += 1
+        elif not t.startswith("--") and ident is None:
+            ident = t
+            i += 1
+        else:
+            raise ValueError("unexpected argument: %s" % t)
+    if not ident:
+        raise ValueError("usage: checkpoint-save <id> [--desc TEXT] [--force]")
+    checkpoints = load_checkpoints(checkpoint_file)
+    if ident in checkpoints and not force:
+        raise ValueError("checkpoint %r already exists (--force to overwrite)" % ident)
+    envelope = conn.request(["checkpoint"])
+    if envelope.get("status") != "ok":
+        return print_response(envelope, raw=raw)
+    data = json.loads(envelope["output"])
+    entry = {
+        "level": data["level"],
+        "levelName": data["levelName"],
+        "pathProgress": data["pathProgress"],
+        "objectLoadIndex": data["objectLoadIndex"],
+        "groundSurface": data["groundSurface"],
+    }
+    if desc:
+        entry["description"] = desc
+    checkpoints[ident] = entry
+    save_checkpoints(checkpoint_file, checkpoints)
+    print("saved %s: %s, path progress %.1f, load index %d (%s)"
+          % (ident, data["levelName"], data["pathProgress"], data["objectLoadIndex"], checkpoint_file))
+    return 0
+
+
+def cmd_checkpoint_list(checkpoint_file):
+    checkpoints = load_checkpoints(checkpoint_file)
+    if not checkpoints:
+        print("no checkpoints saved in %s" % checkpoint_file)
+        return 0
+    for ident in sorted(checkpoints):
+        e = checkpoints[ident]
+        line = "%s: %s, path progress %.1f, load index %s" % (
+            ident, e.get("levelName", e.get("level")), e.get("pathProgress", 0.0), e.get("objectLoadIndex", "?"))
+        if e.get("description"):
+            line += " - " + e["description"]
+        print(line)
+    return 0
+
+
+def cmd_checkpoint_delete(tokens, checkpoint_file):
+    if len(tokens) != 2 or tokens[1].startswith("--"):
+        raise ValueError("usage: checkpoint-delete <id>")
+    checkpoints = load_checkpoints(checkpoint_file)
+    if tokens[1] not in checkpoints:
+        raise ValueError("unknown checkpoint id %r" % tokens[1])
+    del checkpoints[tokens[1]]
+    save_checkpoints(checkpoint_file, checkpoints)
+    print("deleted %s" % tokens[1])
+    return 0
+
+
 def wait_for_server(host, port, timeout_s):
     """Poll connect + health until the server answers or the timeout passes."""
     deadline = time.monotonic() + timeout_s
@@ -109,7 +254,11 @@ def main():
                         help="poll until the server answers health, then print it")
     parser.add_argument("--repl", action="store_true",
                         help="read command lines from stdin, print one response line each")
-    parser.add_argument("command", nargs="*", help="command and arguments to send")
+    parser.add_argument("--checkpoints-file", default=DEFAULT_CHECKPOINT_FILE, metavar="PATH",
+                        help="named-checkpoint store used by checkpoint-save/list/delete and warp --checkpoint")
+    # REMAINDER so command options like `warp corneria --paused` pass through untouched;
+    # client options (--raw, --wait, ...) must come before the command.
+    parser.add_argument("command", nargs=argparse.REMAINDER, help="command and arguments to send")
     args = parser.parse_args()
 
     if args.wait is not None:
@@ -122,6 +271,18 @@ def main():
     if not args.repl and not args.command:
         parser.error("no command given (or use --wait / --repl)")
 
+    command = list(args.command)
+    try:
+        if command and command[0] == "checkpoint-list":
+            return cmd_checkpoint_list(args.checkpoints_file)
+        if command and command[0] == "checkpoint-delete":
+            return cmd_checkpoint_delete(command, args.checkpoints_file)
+        if command and command[0] == "warp":
+            command = expand_warp_command(command, args.checkpoints_file)
+    except ValueError as e:
+        print(str(e), file=sys.stderr)
+        return 1
+
     try:
         conn = DebugConnection(args.host, args.port)
     except OSError as e:
@@ -129,6 +290,10 @@ def main():
         return 2
 
     try:
+        # warp waits for the level to come up (and for the post-boot state before that);
+        # a long step waits for its frames. Both can exceed the 10 s default.
+        if command and command[0] in ("warp", "step"):
+            conn.sock.settimeout(120.0)
         if args.repl:
             code = 0
             for line in sys.stdin:
@@ -138,7 +303,13 @@ def main():
                     continue
                 code = print_response(conn.request(tokens), raw=args.raw)
             return code
-        return print_response(conn.request(args.command), raw=args.raw)
+        if command[0] == "checkpoint-save":
+            try:
+                return cmd_checkpoint_save(conn, command, args.checkpoints_file, raw=args.raw)
+            except ValueError as e:
+                print(str(e), file=sys.stderr)
+                return 1
+        return print_response(conn.request(command), raw=args.raw)
     except (ConnectionError, OSError) as e:
         print(str(e), file=sys.stderr)
         return 2

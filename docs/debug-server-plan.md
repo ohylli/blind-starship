@@ -1,8 +1,8 @@
 # Plan: debug control server for the running game
 
 Status: phase 1 (Core) implemented (2026-07-31); phase 2 in progress — pause/resume/step
-implemented (2026-08-04), see "Resolved by implementation" near the end for the decisions
-that closed most open questions. Design agreed in
+implemented (2026-08-04), warp + checkpoints implemented (2026-08-06), see "Resolved by
+implementation" near the end for the decisions that closed most open questions. Design agreed in
 outline with the maintainer 2026-07-29; refined the same day after a code review of
 the libultraship console, threading, and debug-pause machinery, and after a live
 experiment with the native debugger (see "Relationship to the native debugger").
@@ -284,10 +284,72 @@ a billions-of-frames run. One field to know about: `frame` in the responses is
 keeps advancing while debug-paused — it timestamps the response; only `framesRun` counts
 elapsed simulation frames.
 
+## Resolved by implementation, phase 2: warp / checkpoint (2026-08-06)
+
+`warp <level> [phase] [--no-intro] [--paused] [--fresh] [--at <p> --load <n> [--ground
+<g>]]` enters any level from any post-boot state, and `checkpoint` captures the current
+on-rails position as reusable warp data. Verified live: warp from mid-boot, from the
+title, and between levels; intro skip; paused arrival + `step`; mid-level checkpoint
+round trip. Design decisions:
+
+- **The game's own transition seam, not a bespoke one.** Setting `gNextLevel` /
+  `gNextLevelPhase` / `gNextGameState = GSTATE_PLAY` is exactly how `Game_SetGameState`
+  (fox_game.c) is driven by the map screen, the in-play transitions (Venom → Andross),
+  and the `MODS_BOOT_STATE` boot-to-level hack — memory freed, object arrays cleared,
+  `Play_Setup` run. The warp adds only what `Map_PlayLevel` adds (`gHitCount = 0`,
+  `Map_LevelStart_AudioSpecSetup`). The mission briefing belongs to the map screen's
+  flow, so a warp never shows it — no option needed, and independent of `gSkipBriefing`.
+- **Listener-driven stages, poll observes** — the same lesson `step`'s hardening taught:
+  a warp from the ImGui console has no socket poll, so an unconditional
+  `GamePostUpdateEvent` listener walks WAIT_WARPABLE (post-boot state reached; a warp
+  issued mid-boot waits server-side, which is what lets `launch.ps1 -Level` fire right
+  after the health handshake) → kickoff → WAIT_STANDBY → WAIT_PLAY → DONE, with a
+  ~60 s timeout answering `completed: false` plus a note. GSTATE_INIT is deliberately
+  not warpable: its Game_Update case performs the base bootstrap and clobbers
+  `gNextGameState`.
+- **The intro decision is one flag with a guaranteed window.** `Player_Setup` plays the
+  level intro cutscene only when `D_ctx_8017782C` ("play the intro") is set and no saved
+  progress is pending; `--no-intro` clears it during the new level's `PLAY_STANDBY`
+  frames (at least three: `gNextGameStateTimer` starts at 3), taking the same
+  no-cutscene path a death restart takes. A checkpoint start suppresses the intro by
+  itself, exactly like a mid-level respawn.
+- **Player init lives in the first play frame, not in Play_Init** — the trap of this
+  slice. `Player_Setup` (intro decision, checkpoint restore, player state) runs from the
+  player-state machine *inside the cancellable play update*, so pausing at kickoff would
+  freeze the arrival half-initialized. The warp therefore always clears `gDebugPause`
+  for the transition, completes only when the player has left `PLAYERSTATE_INIT`, and
+  applies `--paused` at that moment: "arrive paused" means exactly one simulated frame,
+  the same thing `step 1` means. "Advance N after arrival" is deliberately not a warp
+  option — it is `warp --paused` followed by `step N`.
+- **Checkpoints are captured live, resolved by the client, and injected server-side.**
+  `checkpoint` returns the (pathProgress, objectLoadIndex, groundSurface) tuple the
+  game's own respawn uses (same formula as the F1 "Set Checkpoint" button; on-rails
+  only, and only in normal flight so a cutscene position cannot be captured). Names live
+  entirely in `tools/checkpoints.json`, managed by `debug_client.py checkpoint-save /
+  checkpoint-list / checkpoint-delete`; `warp --checkpoint <id>` expands client-side
+  into `--at/--load/--ground` (the entry stores its level, so no level argument). The
+  server stays stateless: explicit values arrive via `DebugServer_GetCheckpointOverride`,
+  which `Player_Setup` consults *instead of* the `gCheckpoint` CVars for that one level
+  start (`--fresh` overrides with the untouched defaults, suppressing a configured CVar
+  checkpoint for one start). The JSON gives tests a shared vocabulary ("test in meteo at
+  big-asteroids"); it is gitignored for now — commit it later if the spot list proves
+  worth sharing.
+- **Two pre-existing checkpoint-persistence bugs found and fixed while wiring this.**
+  The F1 "Set Checkpoint" button wrote the ground surface to the `gSavedPathProgress`
+  key (immediately overwritten by the real progress; `gSavedGroundSurface` never saved),
+  and the `gCheckpoint.%d.*` numeric keys made the nested config JSON an array, which
+  libultraship's CVar loader silently drops on load (`ConsoleVariable.cpp`) — so F1
+  checkpoints never survived a restart. Keys are now `gCheckpoint.Level%d.*` and the
+  ground surface saves under its own name; old array entries in existing configs remain
+  ignored, as they always were.
+- **`launch.ps1 -Level <name> [-Checkpoint <id>] [-NoIntro] [-Paused]`** shells out to
+  `debug_client.py warp` after the health handshake; the client blocks until the level
+  is actually up, so exit 0 means "sitting in the level".
+
 ## Open questions for refinement
 
 - **TTS history query** (phase 2). Where to record announcements — in the TTS
   transport (`src/port/accessibility/`) as a ring buffer, or as a tap on the speak
   call sites?
-- **Launch conveniences.** Skip the ROM picker when `sf64.o2r` exists, and start
-  straight into a level via CVar.
+- **Launch conveniences.** Skip the ROM picker when `sf64.o2r` exists. (Starting
+  straight into a level is now covered by `launch.ps1 -Level`.)
