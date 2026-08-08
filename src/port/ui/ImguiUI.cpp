@@ -397,11 +397,11 @@ void DrawSettingsMenu(){
                 .tooltip = "Speaks menus, screens, and gameplay events through your system screen reader.",
                 .defaultValue = true
             });
-            UIWidgets::CVarCheckbox("Audio cues", "gAccessibilityAudioCues", {
+            UIWidgets::CVarCheckbox("Audio cues", kAudioCuesEnabledCVar, {
                 .tooltip = "Positional audio cues that guide you toward the next ring and the closest lockable enemies.",
                 .defaultValue = true
             });
-            UIWidgets::CVarSliderInt("Enemy locator voices", "gAccessibilityEnemyCueVoices", 1,
+            UIWidgets::CVarSliderInt("Enemy locator voices", kEnemyCueVoicesCVar, 1,
                                      kAccessibilityEnemyCueMaxVoices, kAccessibilityEnemyCueDefaultVoices, {
                 .tooltip = "How many of the closest lockable enemies the enemy locator sounds at once."
             });

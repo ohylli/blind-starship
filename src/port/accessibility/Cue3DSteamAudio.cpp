@@ -871,6 +871,10 @@ extern "C" void Cue3D_Shutdown(void) {
     iplContextRelease(&g.ctx);
 }
 
+extern "C" bool Cue3D_IsActive(void) {
+    return g.active;
+}
+
 extern "C" int Cue3D_GetSampleRate(void) {
     return g.sampleRate;
 }
@@ -1057,6 +1061,9 @@ extern "C" void Cue3D_SetRearEffect(float cutoffHz, float gainDip, float tremolo
 
 extern "C" void Cue3D_Init(void) {}
 extern "C" void Cue3D_Shutdown(void) {}
+extern "C" bool Cue3D_IsActive(void) {
+    return false;
+}
 extern "C" int Cue3D_GetSampleRate(void) {
     return 0;
 }

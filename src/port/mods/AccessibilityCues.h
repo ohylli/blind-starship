@@ -2,8 +2,21 @@
 
 #include <stdint.h>
 
+// The master cue toggle and the enemy-voice count, named here so every reader (the
+// listeners, the F1 widgets in ImguiUI.cpp, the debug server's `cues` dump) shares one
+// spelling.
+inline constexpr const char* kAudioCuesEnabledCVar = "gAccessibilityAudioCues";
+inline constexpr const char* kEnemyCueVoicesCVar = "gAccessibilityEnemyCueVoices";
+
+// Registry ids of the gameplay cues, shared by the registration in AccessibilityCues.cpp
+// and the debug server's policy-section match (DebugCommands.cpp) so a rename cannot
+// silently detach a cue from its policy dump.
+inline constexpr const char* kRingCueId = "Ring";
+inline constexpr const char* kEnemyCueId = "Enemy";
+inline constexpr const char* kAimCueId = "Aim";
+
 // Upper bound on simultaneous enemy-cue voices — sizes the pool registered with the Cue
-// layer and caps the gAccessibilityEnemyCueVoices CVar and its F1 slider (ImguiUI.cpp).
+// layer and caps the kEnemyCueVoicesCVar CVar and its F1 slider (ImguiUI.cpp).
 inline constexpr int kAccessibilityEnemyCueMaxVoices = 5;
 
 // Value the gAccessibilityEnemyCueVoices CVar starts at, shared by the CVar registration
@@ -54,11 +67,13 @@ inline constexpr float kAimCueBoostDefault = 2.0f;
 //
 // A mirror of what each cue listener decided on its most recent GamePostUpdateEvent tick,
 // read by the debug server's `cues` command (it merges this "why" layer with the Cue
-// layer's per-voice "what" from Cue::Snapshot). Every listener exit path writes its
-// section — gated ticks record the gate terms with active=false — and stamps `frame`
-// last, so `frame == gGameFrameCount` at query time means the data is from this tick.
-// Plain scalars only, never an Actor*/Item*: a section read after the level ends must
-// not dangle. frame == -1 means the section has never been written.
+// layer's per-voice "what" from Cue::Snapshot). Each listener resets its section at the
+// top of its tick and fills it in place, so every exit path publishes automatically —
+// gated ticks record the gate terms with active=false. In-place writes are safe because
+// the reader (the debug server's dispatch) runs on the same game thread, between ticks:
+// a partially written section is never observable. `active` uniformly means "the cue was
+// driven this tick". Plain scalars only, never an Actor*/Item*: a section read after the
+// level ends must not dangle. frame == -1 means the section has never been written.
 
 struct AccessibilityCuesRingDebug {
     int32_t frame = -1;
@@ -82,7 +97,8 @@ struct AccessibilityCuesEnemyTargetDebug {
 
 struct AccessibilityCuesEnemyDebug {
     int32_t frame = -1;
-    bool active = false; // the scan ran (even if it found nothing)
+    bool active = false;  // voices were driven this tick (count > 0)
+    bool scanned = false; // the scan ran; scanned && !active means it found nothing
     bool enabled = false, modeOk = false, allRange = false, versus = false, control = false;
     int32_t scanActive = 0, scanCueable = 0, scanKept = 0; // EnemyCueScanStats
     int32_t requestedVoices = 0;        // clamped gAccessibilityEnemyCueVoices used this tick
@@ -93,7 +109,9 @@ struct AccessibilityCuesEnemyDebug {
 struct AccessibilityCuesAimDebug {
     int32_t frame = -1;
     bool active = false;
-    bool enabled = false, aimEnabled = false, modeOk = false, arwing = false; // gate terms
+    // Gate terms. arwing folds in control (the form read needs a live player), so control
+    // is mirrored separately to tell "no control" from "wrong vehicle".
+    bool enabled = false, aimEnabled = false, modeOk = false, control = false, arwing = false;
     bool allRange = false;
     float nx = 0, ny = 0;               // normalized aim signals [-1, 1]
     float minEnemyAngleRad = 0;         // INFINITY when no enemy in scope
@@ -108,6 +126,11 @@ struct AccessibilityCuesDebugState {
 };
 
 const AccessibilityCuesDebugState& AccessibilityCues_DebugState();
+
+// The kEnemyCueVoicesCVar value clamped to [1, kAccessibilityEnemyCueMaxVoices] — the
+// count the enemy listener actually uses. Shared with the debug server's `cues` dump so
+// the clamp policy lives in one place.
+int32_t AccessibilityCues_EnemyCueVoiceCount();
 
 void AccessibilityCues_Init();
 void AccessibilityCues_Exit();

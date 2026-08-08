@@ -24,7 +24,8 @@ static Cue* sEnemyCue = nullptr;
 static Cue* sAimCue = nullptr;
 
 // Last-tick policy mirror for the debug server's `cues` command — see the struct comments
-// in AccessibilityCues.h. Each listener below overwrites its section on every exit path.
+// in AccessibilityCues.h. Each listener below resets its section at the top of its tick
+// and fills it in place through a reference, so every exit path publishes automatically.
 static AccessibilityCuesDebugState sDebugState;
 
 const AccessibilityCuesDebugState& AccessibilityCues_DebugState() {
@@ -32,13 +33,13 @@ const AccessibilityCuesDebugState& AccessibilityCues_DebugState() {
 }
 
 static bool AccessibilityCues_IsEnabled() {
-    return CVarGetInteger("gAccessibilityAudioCues", 1) == 1;
+    return CVarGetInteger(kAudioCuesEnabledCVar, 1) == 1;
 }
 
 // How many of the closest enemies to voice at once. Runtime-tunable (F1 -> Blind
 // Starship) so the by-ear sweet spot can be found without rebuilding.
-static s32 AccessibilityCues_EnemyCueVoiceCount() {
-    s32 count = CVarGetInteger("gAccessibilityEnemyCueVoices", kAccessibilityEnemyCueDefaultVoices);
+int32_t AccessibilityCues_EnemyCueVoiceCount() {
+    s32 count = CVarGetInteger(kEnemyCueVoicesCVar, kAccessibilityEnemyCueDefaultVoices);
     if (count < 1) {
         count = 1;
     } else if (count > kAccessibilityEnemyCueMaxVoices) {
@@ -167,7 +168,8 @@ static Item* AccessibilityCues_FindNextTrainingRing() {
 static void AccessibilityCues_OnRingPostUpdate(IEvent* event) {
     (void) event;
 
-    AccessibilityCuesRingDebug dbg;
+    sDebugState.ring = AccessibilityCuesRingDebug{};
+    AccessibilityCuesRingDebug& dbg = sDebugState.ring;
     // PlayerHasControl also covers the gPlayer null guard: gPlayer is a pointer
     // (sf64context.h:324), zero-initialized at process start and only allocated
     // when a level loads, and this listener fires on GamePostUpdateEvent which
@@ -178,14 +180,12 @@ static void AccessibilityCues_OnRingPostUpdate(IEvent* event) {
     dbg.frame = (int32_t) gGameFrameCount;
     if (!dbg.enabled || !dbg.inTraining || !dbg.control) {
         sRingCue->Stop();
-        sDebugState.ring = dbg;
         return;
     }
 
     Item* target = AccessibilityCues_FindNextTrainingRing();
     if (target == NULL) {
         sRingCue->Stop();
-        sDebugState.ring = dbg;
         return;
     }
 
@@ -202,7 +202,6 @@ static void AccessibilityCues_OnRingPostUpdate(IEvent* event) {
     AccessibilityCues_ComputeCueTarget(dbg.dx, dbg.dy, dbg.dz, dbg.src, &dbg.freq);
     sRingCue->SetTarget(dbg.src[0], dbg.src[1], dbg.src[2], dbg.freq);
     sRingCue->Start();
-    sDebugState.ring = dbg;
 }
 
 // ===== Enemy cue =====
@@ -338,7 +337,8 @@ static void AccessibilityCues_OnEnemyPostUpdate(IEvent* event) {
     // = 0) before any level loads, so the mode check alone doesn't filter the
     // pre-game title/menu ticks; PlayerHasControl (which also null-checks gPlayer)
     // does.
-    AccessibilityCuesEnemyDebug dbg;
+    sDebugState.enemy = AccessibilityCuesEnemyDebug{};
+    AccessibilityCuesEnemyDebug& dbg = sDebugState.enemy;
     dbg.enabled = AccessibilityCues_IsEnabled();
     dbg.allRange = (gLevelMode == LEVELMODE_ALL_RANGE);
     dbg.versus = gVersusMode;
@@ -349,7 +349,6 @@ static void AccessibilityCues_OnEnemyPostUpdate(IEvent* event) {
         ENEMY_CUE_TRACE("[enemy-cue] gated enabled={} mode={} versus={} control={}", dbg.enabled, (int) gLevelMode,
                         gVersusMode, dbg.control);
         sEnemyCue->StopAllVoices();
-        sDebugState.enemy = dbg;
         return;
     }
 
@@ -361,7 +360,8 @@ static void AccessibilityCues_OnEnemyPostUpdate(IEvent* event) {
     EnemyCueTarget targets[kAccessibilityEnemyCueMaxVoices];
     dbg.requestedVoices = AccessibilityCues_EnemyCueVoiceCount();
     s32 count = AccessibilityCues_FindClosestEnemies(player, allRange, targets, dbg.requestedVoices, &stats);
-    dbg.active = true; // the scan ran; count says whether it found anything
+    dbg.scanned = true;
+    dbg.active = (count > 0);
     dbg.scanActive = stats.active;
     dbg.scanCueable = stats.cueable;
     dbg.scanKept = stats.kept;
@@ -371,7 +371,6 @@ static void AccessibilityCues_OnEnemyPostUpdate(IEvent* event) {
         ENEMY_CUE_TRACE("[enemy-cue] no target level={} active={} cueable={} kept={}", (int) gCurrentLevel,
                         stats.active, stats.cueable, stats.kept);
         sEnemyCue->StopAllVoices();
-        sDebugState.enemy = dbg;
         return;
     }
 
@@ -407,7 +406,6 @@ static void AccessibilityCues_OnEnemyPostUpdate(IEvent* event) {
                         stats.cueable, stats.kept, target->bodyDelta.x, target->bodyDelta.y, target->bodyDelta.z,
                         src[0], src[1], src[2], freq);
     }
-    sDebugState.enemy = dbg;
 }
 
 // ===== Aim cue =====
@@ -556,20 +554,20 @@ static void AccessibilityCues_OnAimPostUpdate(IEvent* event) {
     // honor the boost (and track its slider) even when gameplay is gated off.
     sAimCue->SetGainBoost(CVarGetFloat(kAimCueBoostCVar, kAimCueBoostDefault));
 
-    AccessibilityCuesAimDebug dbg;
+    sDebugState.aim = AccessibilityCuesAimDebug{};
+    AccessibilityCuesAimDebug& dbg = sDebugState.aim;
     dbg.enabled = AccessibilityCues_IsEnabled();
     dbg.aimEnabled = (CVarGetInteger(kAimCueEnabledCVar, 1) == 1);
     dbg.allRange = (gLevelMode == LEVELMODE_ALL_RANGE);
     dbg.modeOk = (gLevelMode == LEVELMODE_ON_RAILS) || (dbg.allRange && !gVersusMode);
-    bool control = Accessibility_PlayerHasControl();
+    dbg.control = Accessibility_PlayerHasControl();
     // v1 is Arwing-only: the mappings below read the Arwing's aim fields. Landmaster /
     // Blue-Marine / on-foot need their own mappings (future work). `control` guarantees
     // gPlayer is non-null before the form read.
-    dbg.arwing = control && (gPlayer[0].form == FORM_ARWING);
+    dbg.arwing = dbg.control && (gPlayer[0].form == FORM_ARWING);
     dbg.frame = (int32_t) gGameFrameCount;
     if (!dbg.enabled || !dbg.aimEnabled || !dbg.modeOk || !dbg.arwing) {
         sAimCue->Stop();
-        sDebugState.aim = dbg;
         return;
     }
     bool allRange = dbg.allRange;
@@ -635,7 +633,6 @@ static void AccessibilityCues_OnAimPostUpdate(IEvent* event) {
     dbg.minEnemyAngleRad = minAngle;
     dbg.intervalSec = interval;
     dbg.pitch = target.pitch;
-    sDebugState.aim = dbg;
 }
 
 // ===== Entry points =====
@@ -649,8 +646,8 @@ static void AccessibilityCues_OnCueTick(IEvent* event) {
 }
 
 void AccessibilityCues_Init() {
-    CVarRegisterInteger("gAccessibilityAudioCues", 1);
-    CVarRegisterInteger("gAccessibilityEnemyCueVoices", kAccessibilityEnemyCueDefaultVoices);
+    CVarRegisterInteger(kAudioCuesEnabledCVar, 1);
+    CVarRegisterInteger(kEnemyCueVoicesCVar, kAccessibilityEnemyCueDefaultVoices);
     CVarRegisterInteger("gAccessibilityEnemyCueLog", 0);
     CVarRegisterInteger(kCuePitchForHeightCVar, 1);
     CVarRegisterFloat(kCuePitchScaleCVar, kCuePitchScaleDefault);
@@ -665,16 +662,16 @@ void AccessibilityCues_Init() {
     CVarRegisterFloat(kAimCueGeigerSlowCVar, kAimCueGeigerSlowDefault);
     CVarRegisterFloat(kAimCueBoostCVar, kAimCueBoostDefault);
 
-    sRingCue = CueRegistry_Register("Ring", "Ring guide", "Guides you toward the next training ring.",
+    sRingCue = CueRegistry_Register(kRingCueId, "Ring guide", "Guides you toward the next training ring.",
                                     { .wavPath = "assets/accessibility/ring.wav" });
-    sEnemyCue = CueRegistry_Register("Enemy", "Enemy locator",
+    sEnemyCue = CueRegistry_Register(kEnemyCueId, "Enemy locator",
                                      "Tracks the closest lockable enemies: ahead of your aim on rails, "
                                      "all around you in all-range mode.",
                                      { .wavPath = "assets/accessibility/enemy.wav",
                                        .maxVoices = kAccessibilityEnemyCueMaxVoices });
     // PAN render mode: the pan/pitch ARE the signal, so no HRTF; pinned RESAMPLE pitch: the
     // spectral shifter's latency and transient softening would smear the click's attack.
-    sAimCue = CueRegistry_Register("Aim", "Aim guide",
+    sAimCue = CueRegistry_Register(kAimCueId, "Aim guide",
                                    "A repeating click that tells you where you are aiming: pan for "
                                    "left/right, pitch for up/down; it clicks faster as your aim nears "
                                    "a lockable enemy.",

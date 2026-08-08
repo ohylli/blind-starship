@@ -64,6 +64,12 @@ void Cue3D_Init(void);
 // even if Init never ran or failed.
 void Cue3D_Shutdown(void);
 
+// True once Cue3D_Init has actually opened the OS device and built the spatializer —
+// the runtime "can cues sound at all" probe (the stub backend always says false).
+// Distinct from the compile-time probe (GetUnityGainDistance() > 0): a backend can be
+// compiled in and still fail to open its device.
+bool Cue3D_IsActive(void);
+
 // The backend's negotiated output sample rate, in Hz — the rate Cue3D_LoadPcm
 // expects its PCM to already be at. Determined at Cue3D_Init when the OS device is
 // opened (it may differ from the 48 kHz request); before Init it reports the default

@@ -1174,10 +1174,13 @@ static nlohmann::json Vec3Floats(const float v[3]) {
 
 // A policy section is "fresh" when it was written this game tick. The command drains after
 // the same loop iteration's game tick (push_frame runs game logic before StartFrame), and
-// GamePostUpdateEvent fires unconditionally from Game_Update, so a live game always
-// compares equal. Heuristic, not proof: in PLAY_PAUSE gGameFrameCount freezes
-// (fox_play.c) while the listeners keep rewriting with the frozen value — equality still
-// reads fresh there, and the data genuinely is.
+// every frame that advances gGameFrameCount also fires GamePostUpdateEvent (the event is
+// skipped on gGameStandby frames, but those don't advance the counter either), so a live
+// game always compares equal. That same coupling means `fresh` degenerates to "the section
+// has ever been written": it flags a build whose listeners never registered, not a
+// mid-session stall. In PLAY_PAUSE gGameFrameCount freezes (fox_play.c) while the
+// listeners keep rewriting with the frozen value — equality still reads fresh there, and
+// the data genuinely is.
 static bool CuePolicyFresh(int32_t sectionFrame) {
     return (sectionFrame >= 0) && (sectionFrame == (int32_t) gGameFrameCount);
 }
@@ -1202,12 +1205,15 @@ static nlohmann::json CueEnemyPolicyJson(const AccessibilityCuesEnemyDebug& d) {
     j["frame"] = d.frame;
     j["fresh"] = CuePolicyFresh(d.frame);
     j["active"] = d.active;
+    j["scanned"] = d.scanned;
     j["gates"] = { { "enabled", d.enabled },
                    { "modeOk", d.modeOk },
                    { "allRange", d.allRange },
                    { "versus", d.versus },
                    { "control", d.control } };
-    if (d.active) {
+    // Scan results are reported whenever the scan ran — active only adds that it found
+    // targets, so an empty scan still shows its counters (and an empty targets array).
+    if (d.scanned) {
         j["scan"] = { { "active", d.scanActive }, { "cueable", d.scanCueable }, { "kept", d.scanKept } };
         j["requestedVoices"] = d.requestedVoices;
         auto targets = nlohmann::json::array();
@@ -1235,6 +1241,7 @@ static nlohmann::json CueAimPolicyJson(const AccessibilityCuesAimDebug& d) {
     j["gates"] = { { "enabled", d.enabled },
                    { "aimEnabled", d.aimEnabled },
                    { "modeOk", d.modeOk },
+                   { "control", d.control },
                    { "arwing", d.arwing } };
     j["allRange"] = d.allRange;
     if (d.active) {
@@ -1256,7 +1263,7 @@ static nlohmann::json CueAimPolicyJson(const AccessibilityCuesAimDebug& d) {
 // Names and defaults come from the shared constants in Cue.h / AccessibilityCues.h.
 static nlohmann::json CueSettingsJson() {
     nlohmann::json j;
-    j["audioCues"] = CVarGetInteger("gAccessibilityAudioCues", 1);
+    j["audioCues"] = CVarGetInteger(kAudioCuesEnabledCVar, 1);
     j["aimCue"] = CVarGetInteger(kAimCueEnabledCVar, 1);
     j["gameMasterVolume"] = CVarGetFloat("gGameMasterVolume", 1.0f);
     j["cueMasterVolume"] = CVarGetFloat(kCueMasterVolumeCVar, 1.0f);
@@ -1265,13 +1272,7 @@ static nlohmann::json CueSettingsJson() {
                   { "gainDip", CVarGetFloat(kCueRearGainDipCVar, CUE3D_REAR_GAIN_DIP_DEFAULT) },
                   { "tremoloDepth", CVarGetFloat(kCueRearTremoloDepthCVar, CUE3D_REAR_TREMOLO_DEPTH_DEFAULT) },
                   { "tremoloHz", CVarGetFloat(kCueRearTremoloHzCVar, CUE3D_REAR_TREMOLO_HZ_DEFAULT) } };
-    int enemyVoices = CVarGetInteger("gAccessibilityEnemyCueVoices", kAccessibilityEnemyCueDefaultVoices);
-    if (enemyVoices < 1) {
-        enemyVoices = 1;
-    } else if (enemyVoices > kAccessibilityEnemyCueMaxVoices) {
-        enemyVoices = kAccessibilityEnemyCueMaxVoices;
-    }
-    j["enemyVoices"] = enemyVoices;
+    j["enemyVoices"] = AccessibilityCues_EnemyCueVoiceCount();
     j["pitchForHeight"] = { { "enabled", CVarGetInteger(kCuePitchForHeightCVar, 1) },
                             { "scale", CVarGetFloat(kCuePitchScaleCVar, kCuePitchScaleDefault) },
                             { "rangeOctaves", CVarGetFloat(kCuePitchRangeOctavesCVar, kCuePitchRangeOctavesDefault) } };
@@ -1344,11 +1345,15 @@ static int32_t CuesHandler(std::shared_ptr<Ship::Console> console, const std::ve
     j["frame"] = gGameFrameCount;
     j["paused"] = IsDebugPaused();
     j["playMode"] = InPlayMode();
-    // The stub backend (non-Steam-Audio builds) returns 0 here, the real one a positive
-    // constant — a clean availability probe with no #ifdef. sampleRate reports the
-    // compile-time default until the device actually opens; informational only.
+    // Two distinct probes: compiledIn is the compile-time one (the stub backend returns 0
+    // here, the real one a positive constant), active is the runtime one — the device and
+    // spatializer actually opened, so cues can sound. compiledIn && !active is the "why is
+    // everything silent" answer this dump exists for (device failed to open, or nothing has
+    // called Cue3D_Init yet). sampleRate reports the compile-time default until the device
+    // opens; informational only.
     float unityGain = Cue3D_GetUnityGainDistance();
-    j["backend"] = { { "available", unityGain > 0.0f },
+    j["backend"] = { { "compiledIn", unityGain > 0.0f },
+                     { "active", Cue3D_IsActive() },
                      { "sampleRate", Cue3D_GetSampleRate() },
                      { "unityGainDistance", unityGain } };
     j["settings"] = CueSettingsJson();
@@ -1357,15 +1362,15 @@ static int32_t CuesHandler(std::shared_ptr<Ship::Console> console, const std::ve
     auto cues = nlohmann::json::array();
     for (const Cue* cue : CueRegistry_All()) {
         nlohmann::json c = DumpCue(*cue);
-        // The policy sections belong to the Star Fox consumer mod's cues; matching by id
-        // here keeps the game-agnostic Cue layer free of that knowledge. Other ids (the
-        // hidden bench cue) simply carry no policy.
+        // The policy sections belong to the Star Fox consumer mod's cues; matching by the
+        // shared id constants here keeps the game-agnostic Cue layer free of that
+        // knowledge. Other ids (the hidden bench cue) simply carry no policy.
         std::string id = cue->Id();
-        if (id == "Ring") {
+        if (id == kRingCueId) {
             c["policy"] = CueRingPolicyJson(policy.ring);
-        } else if (id == "Enemy") {
+        } else if (id == kEnemyCueId) {
             c["policy"] = CueEnemyPolicyJson(policy.enemy);
-        } else if (id == "Aim") {
+        } else if (id == kAimCueId) {
             c["policy"] = CueAimPolicyJson(policy.aim);
         }
         cues.push_back(std::move(c));
