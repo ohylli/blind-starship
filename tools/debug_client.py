@@ -4,8 +4,8 @@
 The server listens on 127.0.0.1:7764 (CVars gDebugServer.Enabled / gDebugServer.Port,
 off by default) and speaks a line protocol: one command per request line, one JSON object per
 response line — {"status": "ok", "output": "..."} or {"status": "error", "error": "..."}.
-Dump commands (health, player, objects) put compact JSON *as a string* in "output"; this
-client parses and pretty-prints it (--raw to see the output string verbatim).
+Dump commands (health, player, objects, cues) put compact JSON *as a string* in "output";
+this client parses and pretty-prints it (--raw to see the output string verbatim).
 
 Usage:
     python tools/debug_client.py health

@@ -139,12 +139,23 @@ void Cue::WarnWrongApi(const char* method) {
                 mSpec.loop ? "looping" : "one-shot");
 }
 
-void Cue::PushGain() {
+float Cue::ComputeGain() const {
     // The game's master volume deliberately scales the cues too: the one volume control a
     // blind player already knows about must not silently skip the second audio device
     // (review CUE3D-2). The cue master and per-cue trims layer on top for cue-only balance.
-    float gain = CVarGetFloat("gGameMasterVolume", 1.0f) * CVarGetFloat(kCueMasterVolumeCVar, 1.0f) *
-                 CVarGetFloat(mVolumeCVar.c_str(), 1.0f) * mGainBoost;
+    return CVarGetFloat("gGameMasterVolume", 1.0f) * CVarGetFloat(kCueMasterVolumeCVar, 1.0f) *
+           CVarGetFloat(mVolumeCVar.c_str(), 1.0f) * mGainBoost;
+}
+
+float Cue::HeadroomTrim(int playingCount) {
+    // Headroom for simultaneous copies of the same loop: equal-power 1/sqrt(N), the
+    // standard cheap guard against N near-coherent sources summing hot. A tuning knob —
+    // if two voices by ear feel too quiet relative to one, soften or drop it.
+    return (playingCount > 1) ? 1.0f / sqrtf((float) playingCount) : 1.0f;
+}
+
+void Cue::PushGain() {
+    float gain = ComputeGain();
     if (mPreviewing) {
         // A preview is a single voice at reference loudness — no multi-voice trim, so the
         // slider maps 1:1 to what the player hears.
@@ -160,15 +171,52 @@ void Cue::PushGain() {
     if (playing == 0) {
         return;
     }
-    // Headroom for simultaneous copies of the same loop: equal-power 1/sqrt(N), the
-    // standard cheap guard against N near-coherent sources summing hot. A tuning knob —
-    // if two voices by ear feel too quiet relative to one, soften or drop it.
-    float trim = (playing > 1) ? 1.0f / sqrtf((float) playing) : 1.0f;
+    float trim = HeadroomTrim(playing);
     for (const Voice& voice : mVoices) {
         if (voice.playing) {
             Cue3D_SetGain(voice.source, gain * trim);
         }
     }
+}
+
+CueSnapshot Cue::Snapshot() const {
+    CueSnapshot snap;
+    snap.loop = mSpec.loop;
+    snap.maxVoices = (int) mVoices.size();
+    snap.mode = mSpec.mode;
+    snap.pitchStyle = mSpec.pitchStyle;
+    snap.hiddenFromSettings = mSpec.hiddenFromSettings;
+    snap.previewing = mPreviewing;
+    snap.loadFailed = mLoadFailed;
+    snap.gainBoost = mGainBoost;
+    snap.baseGain = ComputeGain();
+    for (const Voice& voice : mVoices) {
+        if (voice.playing) {
+            snap.playingVoices++;
+        }
+    }
+    float trim = HeadroomTrim(snap.playingVoices);
+    snap.voices.reserve(mVoices.size());
+    for (size_t i = 0; i < mVoices.size(); i++) {
+        const Voice& voice = mVoices[i];
+        CueVoiceSnapshot vs;
+        vs.index = (int) i;
+        vs.playing = voice.playing;
+        vs.loaded = (voice.source != nullptr);
+        vs.keyed = voice.hasKey;
+        vs.key = voice.key;
+        vs.target = voice.target;
+        vs.effectivePitch = voice.target.pitch * kVoiceIdentityPitch[i];
+        if (mPreviewing && i == 0) {
+            // Mirror PushGain's preview branch: voice 0 is sounding at reference loudness,
+            // untrimmed, whatever its (suspended) gameplay bookkeeping says.
+            vs.gain = snap.baseGain;
+        } else if (voice.playing) {
+            vs.gain = snap.baseGain * trim;
+        }
+        snap.voices.push_back(vs);
+    }
+    return snap;
 }
 
 void Cue::SetGainBoost(float boost) {

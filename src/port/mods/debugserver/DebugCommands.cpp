@@ -12,7 +12,10 @@
 
 #include "port/CGameCompat.h"
 #include "port/PlayerAim.h"
+#include "port/accessibility/Cue.h"
+#include "port/accessibility/Cue3D.h"
 #include "port/hooks/Events.h"
+#include "port/mods/AccessibilityCues.h"
 #include "port/mods/ObjectSpawnLog.h"
 
 #include <nlohmann/json.hpp>
@@ -1145,6 +1148,235 @@ static int32_t ObjectsHandler(std::shared_ptr<Ship::Console> console, const std:
     return 0;
 }
 
+// ===== cues: accessibility audio-cue state =====
+
+static const char* CueModeName(Cue3DMode mode) {
+    switch (mode) {
+        case CUE3D_MODE_HRTF:   return "CUE3D_MODE_HRTF";
+        case CUE3D_MODE_PAN:    return "CUE3D_MODE_PAN";
+        case CUE3D_MODE_DIRECT: return "CUE3D_MODE_DIRECT";
+        default:                return "CUE3D_MODE_UNKNOWN";
+    }
+}
+
+static const char* CueSourcePitchStyleName(Cue3DSourcePitchStyle style) {
+    switch (style) {
+        case CUE3D_SOURCE_PITCH_GLOBAL:   return "CUE3D_SOURCE_PITCH_GLOBAL";
+        case CUE3D_SOURCE_PITCH_RESAMPLE: return "CUE3D_SOURCE_PITCH_RESAMPLE";
+        case CUE3D_SOURCE_PITCH_SHIFT:    return "CUE3D_SOURCE_PITCH_SHIFT";
+        default:                          return "CUE3D_SOURCE_PITCH_UNKNOWN";
+    }
+}
+
+static nlohmann::json Vec3Floats(const float v[3]) {
+    return nlohmann::json{ { "x", v[0] }, { "y", v[1] }, { "z", v[2] } };
+}
+
+// A policy section is "fresh" when it was written this game tick. The command drains after
+// the same loop iteration's game tick (push_frame runs game logic before StartFrame), and
+// GamePostUpdateEvent fires unconditionally from Game_Update, so a live game always
+// compares equal. Heuristic, not proof: in PLAY_PAUSE gGameFrameCount freezes
+// (fox_play.c) while the listeners keep rewriting with the frozen value — equality still
+// reads fresh there, and the data genuinely is.
+static bool CuePolicyFresh(int32_t sectionFrame) {
+    return (sectionFrame >= 0) && (sectionFrame == (int32_t) gGameFrameCount);
+}
+
+static nlohmann::json CueRingPolicyJson(const AccessibilityCuesRingDebug& d) {
+    nlohmann::json j;
+    j["frame"] = d.frame;
+    j["fresh"] = CuePolicyFresh(d.frame);
+    j["active"] = d.active;
+    j["gates"] = { { "enabled", d.enabled }, { "inTraining", d.inTraining }, { "control", d.control } };
+    if (d.active) {
+        j["itemIndex"] = d.itemIndex;
+        j["delta"] = { { "x", d.dx }, { "y", d.dy }, { "z", d.dz } };
+        j["src"] = Vec3Floats(d.src);
+        j["freq"] = d.freq;
+    }
+    return j;
+}
+
+static nlohmann::json CueEnemyPolicyJson(const AccessibilityCuesEnemyDebug& d) {
+    nlohmann::json j;
+    j["frame"] = d.frame;
+    j["fresh"] = CuePolicyFresh(d.frame);
+    j["active"] = d.active;
+    j["gates"] = { { "enabled", d.enabled },
+                   { "modeOk", d.modeOk },
+                   { "allRange", d.allRange },
+                   { "versus", d.versus },
+                   { "control", d.control } };
+    if (d.active) {
+        j["scan"] = { { "active", d.scanActive }, { "cueable", d.scanCueable }, { "kept", d.scanKept } };
+        j["requestedVoices"] = d.requestedVoices;
+        auto targets = nlohmann::json::array();
+        for (int32_t i = 0; i < d.count && i < kAccessibilityEnemyCueMaxVoices; i++) {
+            const AccessibilityCuesEnemyTargetDebug& t = d.targets[i];
+            targets.push_back({ { "slot", t.slot },
+                                { "objId", t.objId },
+                                { "eventType", t.eventType },
+                                { "voiceKey", t.voiceKey },
+                                { "distance", t.distance },
+                                { "bodyDelta", Vec3Floats(t.bodyDelta) },
+                                { "src", Vec3Floats(t.src) },
+                                { "freq", t.freq } });
+        }
+        j["targets"] = std::move(targets);
+    }
+    return j;
+}
+
+static nlohmann::json CueAimPolicyJson(const AccessibilityCuesAimDebug& d) {
+    nlohmann::json j;
+    j["frame"] = d.frame;
+    j["fresh"] = CuePolicyFresh(d.frame);
+    j["active"] = d.active;
+    j["gates"] = { { "enabled", d.enabled },
+                   { "aimEnabled", d.aimEnabled },
+                   { "modeOk", d.modeOk },
+                   { "arwing", d.arwing } };
+    j["allRange"] = d.allRange;
+    if (d.active) {
+        j["nx"] = d.nx;
+        j["ny"] = d.ny;
+        // INFINITY = no lockable enemy in scope; JSON has no infinity, so report null.
+        if (std::isfinite(d.minEnemyAngleRad)) {
+            j["minEnemyAngleDeg"] = d.minEnemyAngleRad / M_DTOR;
+        } else {
+            j["minEnemyAngleDeg"] = nullptr;
+        }
+        j["intervalSec"] = d.intervalSec;
+        j["pitch"] = d.pitch;
+    }
+    return j;
+}
+
+// The effective tuning around the cues, so one dump captures the whole configuration.
+// Names and defaults come from the shared constants in Cue.h / AccessibilityCues.h.
+static nlohmann::json CueSettingsJson() {
+    nlohmann::json j;
+    j["audioCues"] = CVarGetInteger("gAccessibilityAudioCues", 1);
+    j["aimCue"] = CVarGetInteger(kAimCueEnabledCVar, 1);
+    j["gameMasterVolume"] = CVarGetFloat("gGameMasterVolume", 1.0f);
+    j["cueMasterVolume"] = CVarGetFloat(kCueMasterVolumeCVar, 1.0f);
+    j["pitchShift"] = CVarGetInteger(kCuePitchShiftCVar, kCuePitchShiftDefault);
+    j["rear"] = { { "cutoffHz", CVarGetFloat(kCueRearCutoffCVar, CUE3D_REAR_CUTOFF_HZ_DEFAULT) },
+                  { "gainDip", CVarGetFloat(kCueRearGainDipCVar, CUE3D_REAR_GAIN_DIP_DEFAULT) },
+                  { "tremoloDepth", CVarGetFloat(kCueRearTremoloDepthCVar, CUE3D_REAR_TREMOLO_DEPTH_DEFAULT) },
+                  { "tremoloHz", CVarGetFloat(kCueRearTremoloHzCVar, CUE3D_REAR_TREMOLO_HZ_DEFAULT) } };
+    int enemyVoices = CVarGetInteger("gAccessibilityEnemyCueVoices", kAccessibilityEnemyCueDefaultVoices);
+    if (enemyVoices < 1) {
+        enemyVoices = 1;
+    } else if (enemyVoices > kAccessibilityEnemyCueMaxVoices) {
+        enemyVoices = kAccessibilityEnemyCueMaxVoices;
+    }
+    j["enemyVoices"] = enemyVoices;
+    j["pitchForHeight"] = { { "enabled", CVarGetInteger(kCuePitchForHeightCVar, 1) },
+                            { "scale", CVarGetFloat(kCuePitchScaleCVar, kCuePitchScaleDefault) },
+                            { "rangeOctaves", CVarGetFloat(kCuePitchRangeOctavesCVar, kCuePitchRangeOctavesDefault) } };
+    j["aim"] = { { "projDist", CVarGetFloat(kAimCueProjDistCVar, kAimCueProjDistDefault) },
+                 { "yawRangeDeg", CVarGetFloat(kAimCueYawRangeCVar, kAimCueYawRangeDefault) },
+                 { "pitchRangeDeg", CVarGetFloat(kAimCuePitchRangeDegCVar, kAimCuePitchRangeDegDefault) },
+                 { "octaves", CVarGetFloat(kAimCueOctavesCVar, kAimCueOctavesDefault) },
+                 { "geigerAngleDeg", CVarGetFloat(kAimCueGeigerAngleCVar, kAimCueGeigerAngleDefault) },
+                 { "geigerFastSec", CVarGetFloat(kAimCueGeigerFastCVar, kAimCueGeigerFastDefault) },
+                 { "geigerSlowSec", CVarGetFloat(kAimCueGeigerSlowCVar, kAimCueGeigerSlowDefault) },
+                 { "boost", CVarGetFloat(kAimCueBoostCVar, kAimCueBoostDefault) } };
+    return j;
+}
+
+static nlohmann::json DumpCue(const Cue& cue) {
+    CueSnapshot snap = cue.Snapshot();
+    nlohmann::json j;
+    j["id"] = cue.Id();
+    j["name"] = cue.Name();
+    j["description"] = cue.Description();
+    j["volumeCVar"] = cue.VolumeCVar();
+    j["volume"] = CVarGetFloat(cue.VolumeCVar(), 1.0f);
+    j["hidden"] = snap.hiddenFromSettings;
+    j["loop"] = snap.loop;
+    j["maxVoices"] = snap.maxVoices;
+    j["mode"] = (s32) snap.mode;
+    j["modeName"] = CueModeName(snap.mode);
+    j["pitchStyle"] = (s32) snap.pitchStyle;
+    j["pitchStyleName"] = CueSourcePitchStyleName(snap.pitchStyle);
+    j["previewing"] = snap.previewing;
+    j["loadFailed"] = snap.loadFailed;
+    j["gainBoost"] = snap.gainBoost;
+    j["baseGain"] = snap.baseGain;
+    j["playingVoices"] = snap.playingVoices;
+    auto voices = nlohmann::json::array();
+    for (const CueVoiceSnapshot& vs : snap.voices) {
+        nlohmann::json v;
+        v["index"] = vs.index;
+        v["playing"] = vs.playing;
+        v["loaded"] = vs.loaded;
+        v["keyed"] = vs.keyed;
+        if (vs.keyed) {
+            v["key"] = vs.key; // matches the enemy policy's voiceKey; values fit in 41 bits
+        } else {
+            v["key"] = nullptr;
+        }
+        v["x"] = vs.target.x;
+        v["y"] = vs.target.y;
+        v["z"] = vs.target.z;
+        v["pitch"] = vs.target.pitch;
+        v["effectivePitch"] = vs.effectivePitch;
+        v["intervalSec"] = vs.target.intervalSec;
+        v["lowPassHz"] = vs.target.lowPassHz;
+        v["gain"] = vs.gain;
+        voices.push_back(std::move(v));
+    }
+    j["voices"] = std::move(voices);
+    return j;
+}
+
+// No RequirePlay: everything here is a value copy — the Cue registry objects are
+// process-lifetime, and the policy mirror holds plain scalars (never entity pointers) —
+// so the dump is also useful at the title screen (volumes, loadFailed, backend) and in
+// PLAY_PAUSE (voices stopped, gates.control false). While debug-paused the cue listeners
+// keep running on the uncancelled GamePostUpdateEvent, so this reports the live frozen
+// soundscape — the pause-and-inspect workflow the command exists for.
+static int32_t CuesHandler(std::shared_ptr<Ship::Console> console, const std::vector<std::string>& args,
+                           std::string* output) {
+    nlohmann::json j;
+    j["frame"] = gGameFrameCount;
+    j["paused"] = IsDebugPaused();
+    j["playMode"] = InPlayMode();
+    // The stub backend (non-Steam-Audio builds) returns 0 here, the real one a positive
+    // constant — a clean availability probe with no #ifdef. sampleRate reports the
+    // compile-time default until the device actually opens; informational only.
+    float unityGain = Cue3D_GetUnityGainDistance();
+    j["backend"] = { { "available", unityGain > 0.0f },
+                     { "sampleRate", Cue3D_GetSampleRate() },
+                     { "unityGainDistance", unityGain } };
+    j["settings"] = CueSettingsJson();
+
+    const AccessibilityCuesDebugState& policy = AccessibilityCues_DebugState();
+    auto cues = nlohmann::json::array();
+    for (const Cue* cue : CueRegistry_All()) {
+        nlohmann::json c = DumpCue(*cue);
+        // The policy sections belong to the Star Fox consumer mod's cues; matching by id
+        // here keeps the game-agnostic Cue layer free of that knowledge. Other ids (the
+        // hidden bench cue) simply carry no policy.
+        std::string id = cue->Id();
+        if (id == "Ring") {
+            c["policy"] = CueRingPolicyJson(policy.ring);
+        } else if (id == "Enemy") {
+            c["policy"] = CueEnemyPolicyJson(policy.enemy);
+        } else if (id == "Aim") {
+            c["policy"] = CueAimPolicyJson(policy.aim);
+        }
+        cues.push_back(std::move(c));
+    }
+    j["cues"] = std::move(cues);
+    if (output != nullptr) {
+        *output += j.dump();
+    }
+    return 0;
+}
+
 void DebugCommands_Init() {
     // Runs after PortEnhancements_Init (GameEngine::Create), so the event IDs exist and
     // HIGH sorts the step listener after the NORMAL pause handler on the same event.
@@ -1181,4 +1413,8 @@ void DebugCommands_Init() {
                                      "Dump live object arrays as JSON. Requires play mode.",
                                      { { "actors|bosses|items|effects|sprites|scenery|scenery360|shots",
                                          Ship::ArgumentType::TEXT, true } } });
+    console->AddCommand("cues", { CuesHandler,
+                                  "Dump accessibility audio-cue state (registry, voices, policy targets) as JSON. "
+                                  "Safe anywhere.",
+                                  {} });
 }

@@ -1,7 +1,8 @@
 # Plan: debug control server for the running game
 
 Status: phase 1 (Core) implemented (2026-07-31); phase 2 in progress — pause/resume/step
-implemented (2026-08-04), warp + checkpoints implemented (2026-08-06), see "Resolved by
+implemented (2026-08-04), warp + checkpoints implemented (2026-08-06), cue-state query
+(`cues`) implemented (2026-08-08), see "Resolved by
 implementation" near the end for the decisions that closed most open questions. Design agreed in
 outline with the maintainer 2026-07-29; refined the same day after a code review of
 the libultraship console, threading, and debug-pause machinery, and after a live
@@ -356,6 +357,24 @@ round trip. Design decisions:
   `debug_client.py warp` after the health handshake; the client blocks until the level
   is actually up and folds a server-side warp timeout (`completed: false` inside a
   status-ok envelope) into exit 1, so exit 0 means "sitting in the level".
+
+## Resolved by implementation, phase 2: cue-state query (2026-08-08)
+
+`cues` dumps the accessibility audio-cue system as JSON: backend availability, the
+effective tuning CVars, and per cue the registry identity plus two merged layers — the
+*what* (per-voice position/pitch/interval/gain from a new value-copy `Cue::Snapshot()`
+accessor; the Cue3D seam stays push-only and is never read) and the *why* (a `policy`
+section per gameplay cue from a last-tick mirror in `AccessibilityCues.cpp`, where each
+listener now records what it decided on every exit path: gate terms when it stopped the
+cue, and targets — for the enemy cue the decoded slot/objId/eventType identity, distance,
+and the voice key — when it drove it). A client joins `voices[].key` against
+`policy.targets[].voiceKey`, and slot/eventType against the `objects actors` dump. No
+play-mode guard: everything is a value copy (the policy mirror deliberately stores
+scalars, never entity pointers), so the command is also useful at the title screen and in
+PLAY_PAUSE; per-section `frame` stamps plus a `fresh` flag tell a client whether a
+section was written this tick. While debug-paused the listeners keep running on the
+uncancelled GamePostUpdateEvent, so the dump reports the live frozen soundscape — the
+pause-and-inspect workflow this command was the point of.
 
 ## Open questions for refinement
 

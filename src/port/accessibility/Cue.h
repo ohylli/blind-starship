@@ -98,6 +98,36 @@ struct CueTarget {
     float lowPassHz = 0.0f;   // per-source muffle, see Cue3D_SetLowPass; 0 = off
 };
 
+// Read-only state snapshots for debug tooling (the debug server's `cues` command). Value
+// copies of the Cue layer's own game-thread bookkeeping — never a readback from the Cue3D
+// backend, which stays push-only. Caveat: while a preview is running, the voice fields
+// describe the SUSPENDED gameplay state (the preview drives voice 0's source directly at
+// unity distance), so previewing=true means "what you hear is not what you read here".
+struct CueVoiceSnapshot {
+    int index = 0;
+    bool playing = false;  // Cue-layer bookkeeping; advisory for one-shots between ticks
+    bool loaded = false;   // backend source exists (lazy load has run and succeeded)
+    bool keyed = false;    // acquired via TargetVoice, subject to the refresh-or-stop reap
+    uint64_t key = 0;      // meaningful only when keyed
+    CueTarget target;      // last pushed position/pitch/interval/low-pass
+    float effectivePitch = 1.0f; // target.pitch x the voice slot's identity pitch, as pushed
+    float gain = 0.0f;           // baseGain x headroom trim while playing; 0 when silent
+};
+
+struct CueSnapshot {
+    bool loop = true;
+    int maxVoices = 1;
+    Cue3DMode mode = CUE3D_MODE_HRTF;
+    Cue3DSourcePitchStyle pitchStyle = CUE3D_SOURCE_PITCH_GLOBAL;
+    bool hiddenFromSettings = false;
+    bool previewing = false;
+    bool loadFailed = false;
+    float gainBoost = 1.0f;
+    float baseGain = 0.0f; // game master x cue master x per-cue volume x gainBoost
+    int playingVoices = 0;
+    std::vector<CueVoiceSnapshot> voices; // size == maxVoices, in slot order
+};
+
 class Cue {
   public:
     // --- Identity, for the settings UI / glossary ---
@@ -175,6 +205,10 @@ class Cue {
     // preview's loudness stays honest. Safe to push every tick from a CVar.
     void SetGainBoost(float boost);
 
+    // Value-copy state dump for debug tooling — see the CueSnapshot comment above for what
+    // it does and does not describe. Main-thread-only, like everything else here.
+    CueSnapshot Snapshot() const;
+
   private:
     friend Cue* CueRegistry_Register(const char* id, const char* name, const char* description, const CueSpec& spec);
     friend void CueRegistry_Tick();
@@ -194,6 +228,11 @@ class Cue {
     };
 
     Cue(const char* id, const char* name, const char* description, const CueSpec& spec);
+
+    // The gain formula and the multi-voice headroom trim, shared by PushGain() and
+    // Snapshot() so the reported gain can never drift from the pushed gain.
+    float ComputeGain() const;
+    static float HeadroomTrim(int playingCount);
 
     bool EnsureVoiceLoaded(Voice& voice);
     Voice* AcquireVoice(uint64_t key);

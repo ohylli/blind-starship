@@ -23,6 +23,14 @@ static Cue* sRingCue = nullptr;
 static Cue* sEnemyCue = nullptr;
 static Cue* sAimCue = nullptr;
 
+// Last-tick policy mirror for the debug server's `cues` command — see the struct comments
+// in AccessibilityCues.h. Each listener below overwrites its section on every exit path.
+static AccessibilityCuesDebugState sDebugState;
+
+const AccessibilityCuesDebugState& AccessibilityCues_DebugState() {
+    return sDebugState;
+}
+
 static bool AccessibilityCues_IsEnabled() {
     return CVarGetInteger("gAccessibilityAudioCues", 1) == 1;
 }
@@ -121,16 +129,6 @@ static void AccessibilityCues_ComputeCueTarget(f32 dx, f32 dy, f32 dz, f32 outSr
     *outFreq = AccessibilityCues_ComputeFreqModFromY(outSrc[1]);
 }
 
-// Point a single-voice cue at a listener-relative offset and start it if it isn't
-// sounding yet.
-static void AccessibilityCues_DriveCue(Cue* cue, f32 dx, f32 dy, f32 dz) {
-    f32 src[3];
-    f32 freq;
-    AccessibilityCues_ComputeCueTarget(dx, dy, dz, src, &freq);
-    cue->SetTarget(src[0], src[1], src[2], freq);
-    cue->Start();
-}
-
 // ===== Ring cue =====
 
 static Item* AccessibilityCues_FindNextTrainingRing() {
@@ -169,18 +167,25 @@ static Item* AccessibilityCues_FindNextTrainingRing() {
 static void AccessibilityCues_OnRingPostUpdate(IEvent* event) {
     (void) event;
 
+    AccessibilityCuesRingDebug dbg;
     // PlayerHasControl also covers the gPlayer null guard: gPlayer is a pointer
     // (sf64context.h:324), zero-initialized at process start and only allocated
     // when a level loads, and this listener fires on GamePostUpdateEvent which
     // can tick before that.
-    if (!AccessibilityCues_IsEnabled() || gCurrentLevel != LEVEL_TRAINING || !Accessibility_PlayerHasControl()) {
+    dbg.enabled = AccessibilityCues_IsEnabled();
+    dbg.inTraining = (gCurrentLevel == LEVEL_TRAINING);
+    dbg.control = Accessibility_PlayerHasControl();
+    dbg.frame = (int32_t) gGameFrameCount;
+    if (!dbg.enabled || !dbg.inTraining || !dbg.control) {
         sRingCue->Stop();
+        sDebugState.ring = dbg;
         return;
     }
 
     Item* target = AccessibilityCues_FindNextTrainingRing();
     if (target == NULL) {
         sRingCue->Stop();
+        sDebugState.ring = dbg;
         return;
     }
 
@@ -189,8 +194,15 @@ static void AccessibilityCues_OnRingPostUpdate(IEvent* event) {
     // camera from the Arwing's lateral drift; a ring "in front of the camera"
     // can be off to the player's right. See docs/audio-system.md section 6.
     Player* player = &gPlayer[0];
-    AccessibilityCues_DriveCue(sRingCue, target->obj.pos.x - player->pos.x, target->obj.pos.y - player->pos.y,
-                               -(target->obj.pos.z - player->trueZpos));
+    dbg.active = true;
+    dbg.itemIndex = (int32_t) (target - gItems);
+    dbg.dx = target->obj.pos.x - player->pos.x;
+    dbg.dy = target->obj.pos.y - player->pos.y;
+    dbg.dz = -(target->obj.pos.z - player->trueZpos);
+    AccessibilityCues_ComputeCueTarget(dbg.dx, dbg.dy, dbg.dz, dbg.src, &dbg.freq);
+    sRingCue->SetTarget(dbg.src[0], dbg.src[1], dbg.src[2], dbg.freq);
+    sRingCue->Start();
+    sDebugState.ring = dbg;
 }
 
 // ===== Enemy cue =====
@@ -326,29 +338,40 @@ static void AccessibilityCues_OnEnemyPostUpdate(IEvent* event) {
     // = 0) before any level loads, so the mode check alone doesn't filter the
     // pre-game title/menu ticks; PlayerHasControl (which also null-checks gPlayer)
     // does.
-    bool enabled = AccessibilityCues_IsEnabled();
-    bool allRange = (gLevelMode == LEVELMODE_ALL_RANGE);
-    bool modeOk = (gLevelMode == LEVELMODE_ON_RAILS) || (allRange && !gVersusMode);
-    bool control = Accessibility_PlayerHasControl();
-    if (!enabled || !modeOk || !control) {
-        ENEMY_CUE_TRACE("[enemy-cue] gated enabled={} mode={} versus={} control={}", enabled, (int) gLevelMode,
-                        gVersusMode, control);
+    AccessibilityCuesEnemyDebug dbg;
+    dbg.enabled = AccessibilityCues_IsEnabled();
+    dbg.allRange = (gLevelMode == LEVELMODE_ALL_RANGE);
+    dbg.versus = gVersusMode;
+    dbg.modeOk = (gLevelMode == LEVELMODE_ON_RAILS) || (dbg.allRange && !gVersusMode);
+    dbg.control = Accessibility_PlayerHasControl();
+    dbg.frame = (int32_t) gGameFrameCount;
+    if (!dbg.enabled || !dbg.modeOk || !dbg.control) {
+        ENEMY_CUE_TRACE("[enemy-cue] gated enabled={} mode={} versus={} control={}", dbg.enabled, (int) gLevelMode,
+                        gVersusMode, dbg.control);
         sEnemyCue->StopAllVoices();
+        sDebugState.enemy = dbg;
         return;
     }
 
     Player* player = &gPlayer[0];
     AccessibilityCues_BuildWorldToBodyMatrix(player);
 
+    bool allRange = dbg.allRange;
     EnemyCueScanStats stats;
     EnemyCueTarget targets[kAccessibilityEnemyCueMaxVoices];
-    s32 count = AccessibilityCues_FindClosestEnemies(player, allRange, targets,
-                                                     AccessibilityCues_EnemyCueVoiceCount(), &stats);
+    dbg.requestedVoices = AccessibilityCues_EnemyCueVoiceCount();
+    s32 count = AccessibilityCues_FindClosestEnemies(player, allRange, targets, dbg.requestedVoices, &stats);
+    dbg.active = true; // the scan ran; count says whether it found anything
+    dbg.scanActive = stats.active;
+    dbg.scanCueable = stats.cueable;
+    dbg.scanKept = stats.kept;
+    dbg.count = count;
 
     if (count == 0) {
         ENEMY_CUE_TRACE("[enemy-cue] no target level={} active={} cueable={} kept={}", (int) gCurrentLevel,
                         stats.active, stats.cueable, stats.kept);
         sEnemyCue->StopAllVoices();
+        sDebugState.enemy = dbg;
         return;
     }
 
@@ -359,7 +382,22 @@ static void AccessibilityCues_OnEnemyPostUpdate(IEvent* event) {
         f32 src[3];
         f32 freq;
         AccessibilityCues_ComputeCueTarget(target->bodyDelta.x, target->bodyDelta.y, -target->bodyDelta.z, src, &freq);
-        sEnemyCue->TargetVoice(AccessibilityCues_EnemyVoiceKey(target), src[0], src[1], src[2], freq);
+        uint64_t key = AccessibilityCues_EnemyVoiceKey(target);
+        sEnemyCue->TargetVoice(key, src[0], src[1], src[2], freq);
+
+        AccessibilityCuesEnemyTargetDebug& tdbg = dbg.targets[i];
+        tdbg.slot = target->slot;
+        tdbg.objId = (int32_t) target->actor->obj.id;
+        tdbg.eventType = (int32_t) target->actor->eventType;
+        tdbg.voiceKey = key;
+        tdbg.distance = sqrtf(target->distSq);
+        tdbg.bodyDelta[0] = target->bodyDelta.x;
+        tdbg.bodyDelta[1] = target->bodyDelta.y;
+        tdbg.bodyDelta[2] = target->bodyDelta.z;
+        tdbg.src[0] = src[0];
+        tdbg.src[1] = src[1];
+        tdbg.src[2] = src[2];
+        tdbg.freq = freq;
 
         // src/freq are the voice's post-clamp target — what was actually pushed this tick.
         // Voices this listener stops driving are reaped by CueRegistry_Tick.
@@ -369,6 +407,7 @@ static void AccessibilityCues_OnEnemyPostUpdate(IEvent* event) {
                         stats.cueable, stats.kept, target->bodyDelta.x, target->bodyDelta.y, target->bodyDelta.z,
                         src[0], src[1], src[2], freq);
     }
+    sDebugState.enemy = dbg;
 }
 
 // ===== Aim cue =====
@@ -517,17 +556,23 @@ static void AccessibilityCues_OnAimPostUpdate(IEvent* event) {
     // honor the boost (and track its slider) even when gameplay is gated off.
     sAimCue->SetGainBoost(CVarGetFloat(kAimCueBoostCVar, kAimCueBoostDefault));
 
-    bool allRange = (gLevelMode == LEVELMODE_ALL_RANGE);
-    bool modeOk = (gLevelMode == LEVELMODE_ON_RAILS) || (allRange && !gVersusMode);
+    AccessibilityCuesAimDebug dbg;
+    dbg.enabled = AccessibilityCues_IsEnabled();
+    dbg.aimEnabled = (CVarGetInteger(kAimCueEnabledCVar, 1) == 1);
+    dbg.allRange = (gLevelMode == LEVELMODE_ALL_RANGE);
+    dbg.modeOk = (gLevelMode == LEVELMODE_ON_RAILS) || (dbg.allRange && !gVersusMode);
     bool control = Accessibility_PlayerHasControl();
     // v1 is Arwing-only: the mappings below read the Arwing's aim fields. Landmaster /
     // Blue-Marine / on-foot need their own mappings (future work). `control` guarantees
     // gPlayer is non-null before the form read.
-    bool arwing = control && (gPlayer[0].form == FORM_ARWING);
-    if (!AccessibilityCues_IsEnabled() || CVarGetInteger(kAimCueEnabledCVar, 1) != 1 || !modeOk || !arwing) {
+    dbg.arwing = control && (gPlayer[0].form == FORM_ARWING);
+    dbg.frame = (int32_t) gGameFrameCount;
+    if (!dbg.enabled || !dbg.aimEnabled || !dbg.modeOk || !dbg.arwing) {
         sAimCue->Stop();
+        sDebugState.aim = dbg;
         return;
     }
+    bool allRange = dbg.allRange;
     Player* player = &gPlayer[0];
 
     // Normalized aim signals, both [-1, 1]: nx -> pan (positive = right), ny -> pitch
@@ -564,7 +609,8 @@ static void AccessibilityCues_OnAimPostUpdate(IEvent* event) {
     }
 
     AccessibilityCues_BuildWorldToBodyMatrix(player);
-    f32 interval = AccessibilityCues_AimInterval(AccessibilityCues_MinEnemyAimAngle(player, allRange));
+    f32 minAngle = AccessibilityCues_MinEnemyAimAngle(player, allRange);
+    f32 interval = AccessibilityCues_AimInterval(minAngle);
 
     // Place the source on the unity-gain arc: PAN mode derives its pan purely from the
     // horizontal direction (x over the x/z length), so radius * (nx, 0, sqrt(1 - nx^2))
@@ -582,6 +628,14 @@ static void AccessibilityCues_OnAimPostUpdate(IEvent* event) {
     target.intervalSec = interval;
     sAimCue->SetTarget(target);
     sAimCue->Start();
+
+    dbg.active = true;
+    dbg.nx = nx;
+    dbg.ny = ny;
+    dbg.minEnemyAngleRad = minAngle;
+    dbg.intervalSec = interval;
+    dbg.pitch = target.pitch;
+    sDebugState.aim = dbg;
 }
 
 // ===== Entry points =====
