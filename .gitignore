@@ -61,6 +61,8 @@ properties.h
 src/port/mods/ObjectIdNames.generated.c
 src/port/mods/EventIdNames.generated.c
 /mods*/
-.claude/
+# .claude is local session state, except skills, which are shared with the repo.
+.claude/*
+!.claude/skills/
 /level_manifests/
 tools/checkpoints.json
