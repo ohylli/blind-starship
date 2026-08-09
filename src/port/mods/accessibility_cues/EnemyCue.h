@@ -11,6 +11,10 @@ inline constexpr const char* kEnemyCueId = "Enemy";
 // ImguiUI.cpp, the debug server's `cues` dump) shares one spelling.
 inline constexpr const char* kEnemyCueVoicesCVar = "gAccessibilityEnemyCueVoices";
 
+// The enemy-cue trace-log toggle CVar, shared by the listener and the F1 checkbox in
+// ImguiUI.cpp for the same one-spelling reason.
+inline constexpr const char* kEnemyCueLogCVar = "gAccessibilityEnemyCueLog";
+
 // Upper bound on simultaneous enemy-cue voices — sizes the pool registered with the Cue
 // layer and caps the kEnemyCueVoicesCVar CVar and its F1 slider (ImguiUI.cpp).
 inline constexpr int kAccessibilityEnemyCueMaxVoices = 5;

@@ -1070,7 +1070,7 @@ void DrawDebugMenu() {
                 .tooltip = "Logs one trace line per object spawn (used to tune Minimal training). Also requires Log Level = trace.",
                 .defaultValue = false
             });
-            UIWidgets::CVarCheckbox("Enemy audio cue logging", "gAccessibilityEnemyCueLog", {
+            UIWidgets::CVarCheckbox("Enemy audio cue logging", kEnemyCueLogCVar, {
                 .tooltip = "Verbose per-frame trace of enemy-cue targeting and backend state.",
                 .defaultValue = false
             });

@@ -2,6 +2,19 @@
 
 #include "port/PlayerAim.h"
 
+// The cues run on-rails and in solo all-range; Versus shares LEVELMODE_ALL_RANGE but
+// is untested multiplayer territory, so gVersusMode gates it out. gLevelMode defaults
+// to a "ready-looking" zero value at process start (LEVELMODE_ON_RAILS = 0) before any
+// level loads, so this check alone doesn't filter the pre-game title/menu ticks;
+// callers pair it with Accessibility_PlayerHasControl (which also null-checks gPlayer).
+bool CueScan_ModeInScope(bool* outAllRange) {
+    bool allRange = (gLevelMode == LEVELMODE_ALL_RANGE);
+    if (outAllRange != nullptr) {
+        *outAllRange = allRange;
+    }
+    return (gLevelMode == LEVELMODE_ON_RAILS) || (allRange && !gVersusMode);
+}
+
 // Lock-on predicate. Matches PlayerShot_FindLockTarget (fox_beam.c:1741):
 // status == OBJ_ACTIVE && info.targetOffset != 0. No `id != OBJ_ACTOR_EVENT`
 // here — the on-rails levels spawn essentially all gameplay enemies as

@@ -5,6 +5,7 @@
 #include <math.h>
 #include <vector>
 
+#include "port/CGameCompat.h"
 #include "port/PlayerAim.h"
 #include "port/hooks/Events.h"
 #include "port/accessibility/Cue.h"
@@ -140,8 +141,7 @@ static void AimCue_OnPostUpdate(IEvent* event) {
     AimCueDebug& dbg = sDebugState;
     dbg.enabled = CueCommon_IsEnabled();
     dbg.aimEnabled = (CVarGetInteger(kAimCueEnabledCVar, 1) == 1);
-    dbg.allRange = (gLevelMode == LEVELMODE_ALL_RANGE);
-    dbg.modeOk = (gLevelMode == LEVELMODE_ON_RAILS) || (dbg.allRange && !gVersusMode);
+    dbg.modeOk = CueScan_ModeInScope(&dbg.allRange);
     dbg.control = Accessibility_PlayerHasControl();
     // v1 is Arwing-only: the mappings below read the Arwing's aim fields. Landmaster /
     // Blue-Marine / on-foot need their own mappings (future work). `control` guarantees

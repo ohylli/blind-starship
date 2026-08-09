@@ -4,8 +4,9 @@
 // registry the settings/glossary UI can enumerate. This layer is game-agnostic — it knows
 // about sound files, volume CVars, and 3D positions, but nothing about Star Fox. The
 // game-side policy (which cues exist, what they track, when they start/stop) lives in the
-// consumer mod (src/port/mods/AccessibilityCues.cpp), which registers cues at init and
-// drives them from its event listeners.
+// consumer mod's per-cue files (src/port/mods/accessibility_cues/, coordinated by
+// src/port/mods/AccessibilityCues.cpp), which register cues at init and drive them from
+// their event listeners.
 //
 // A Cue is a DEFINITION plus a pool of VOICES. The definition is what the player sees:
 // identity, sound file, the ONE volume CVar, the glossary entry, the preview. A voice is

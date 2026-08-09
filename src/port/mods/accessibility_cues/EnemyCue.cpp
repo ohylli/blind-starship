@@ -4,6 +4,7 @@
 
 #include <math.h>
 
+#include "port/CGameCompat.h"
 #include "port/hooks/Events.h"
 #include "port/accessibility/Cue.h"
 #include "port/mods/Accessibility.h"
@@ -39,7 +40,7 @@ int32_t EnemyCue_VoiceCount() {
 // (gDeveloperTools.LogLevel) must also be at "trace" to actually appear in
 // the log. Pattern matches gObjectSpawnLog. Use ENEMY_CUE_TRACE(...) below.
 static bool EnemyCue_IsLogEnabled() {
-    return CVarGetInteger("gAccessibilityEnemyCueLog", 0) == 1;
+    return CVarGetInteger(kEnemyCueLogCVar, 0) == 1;
 }
 
 #define ENEMY_CUE_TRACE(...)              \
@@ -102,18 +103,11 @@ static s32 EnemyCue_FindClosest(Player* player, bool allRange, EnemyCueTarget* o
 static void EnemyCue_OnPostUpdate(IEvent* event) {
     (void) event;
 
-    // The cue runs on-rails and in solo all-range; Versus shares LEVELMODE_ALL_RANGE
-    // but is untested multiplayer territory, so gVersusMode gates it out. gLevelMode
-    // defaults to a "ready-looking" zero value at process start (LEVELMODE_ON_RAILS
-    // = 0) before any level loads, so the mode check alone doesn't filter the
-    // pre-game title/menu ticks; PlayerHasControl (which also null-checks gPlayer)
-    // does.
     sDebugState = EnemyCueDebug{};
     EnemyCueDebug& dbg = sDebugState;
     dbg.enabled = CueCommon_IsEnabled();
-    dbg.allRange = (gLevelMode == LEVELMODE_ALL_RANGE);
     dbg.versus = gVersusMode;
-    dbg.modeOk = (gLevelMode == LEVELMODE_ON_RAILS) || (dbg.allRange && !gVersusMode);
+    dbg.modeOk = CueScan_ModeInScope(&dbg.allRange);
     dbg.control = Accessibility_PlayerHasControl();
     dbg.frame = (int32_t) gGameFrameCount;
     if (!dbg.enabled || !dbg.modeOk || !dbg.control) {
@@ -181,7 +175,7 @@ static void EnemyCue_OnPostUpdate(IEvent* event) {
 
 void EnemyCue_Register() {
     CVarRegisterInteger(kEnemyCueVoicesCVar, kAccessibilityEnemyCueDefaultVoices);
-    CVarRegisterInteger("gAccessibilityEnemyCueLog", 0);
+    CVarRegisterInteger(kEnemyCueLogCVar, 0);
 
     sEnemyCue = CueRegistry_Register(kEnemyCueId, "Enemy locator",
                                      "Tracks the closest lockable enemies: ahead of your aim on rails, "

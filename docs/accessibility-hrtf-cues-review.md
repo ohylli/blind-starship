@@ -319,8 +319,8 @@ suggested ordering; it is not a commitment.
   coherent enough to keep.
 - **Team priority:** tuning / future (Tier P3); needs a blind-player listening test
   before it is locked as the default.
-- **Location:** `AccessibilityCues_ComputeFreqModFromY` (`AccessibilityCues.cpp:116-124`);
-  applied via `Cue3D_SetPitch`.
+- **Location:** `CueCommon_ComputeFreqModFromY` (now in
+  `src/port/mods/accessibility_cues/CueCommon.cpp`); applied via `Cue3D_SetPitch`.
 - **Finding (DSP position):** the synthetic pitch cue and HRTF elevation are **not
   contradictory** — generic `IPL_HRTFTYPE_DEFAULT` elevation is genuinely weak, so for
   most of the approach pitch is the only elevation signal (no conflict); they coexist

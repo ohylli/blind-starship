@@ -27,6 +27,12 @@ struct CueScanStats {
     s32 kept;    // also passed the mode's direction/range filters
 };
 
+// Whether the current level mode is in scope for the cues at all: on-rails, or solo
+// (non-Versus) all-range. Writes the all-range flag through outAllRange (may be null).
+// See the definition for why Versus is excluded and why callers must still gate on
+// player control.
+bool CueScan_ModeInScope(bool* outAllRange);
+
 // Lock-on predicate; matches PlayerShot_FindLockTarget (fox_beam.c). See the definition
 // for why there is deliberately no id filter.
 bool CueScan_IsCueableEnemy(Actor* actor);
