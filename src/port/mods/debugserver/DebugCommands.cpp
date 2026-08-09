@@ -15,7 +15,10 @@
 #include "port/accessibility/Cue.h"
 #include "port/accessibility/Cue3D.h"
 #include "port/hooks/Events.h"
-#include "port/mods/AccessibilityCues.h"
+#include "port/mods/accessibility_cues/CueCommon.h"
+#include "port/mods/accessibility_cues/RingCue.h"
+#include "port/mods/accessibility_cues/EnemyCue.h"
+#include "port/mods/accessibility_cues/AimCue.h"
 #include "port/mods/ObjectSpawnLog.h"
 
 #include <nlohmann/json.hpp>
@@ -1185,7 +1188,7 @@ static bool CuePolicyFresh(int32_t sectionFrame) {
     return (sectionFrame >= 0) && (sectionFrame == (int32_t) gGameFrameCount);
 }
 
-static nlohmann::json CueRingPolicyJson(const AccessibilityCuesRingDebug& d) {
+static nlohmann::json CueRingPolicyJson(const RingCueDebug& d) {
     nlohmann::json j;
     j["frame"] = d.frame;
     j["fresh"] = CuePolicyFresh(d.frame);
@@ -1200,7 +1203,7 @@ static nlohmann::json CueRingPolicyJson(const AccessibilityCuesRingDebug& d) {
     return j;
 }
 
-static nlohmann::json CueEnemyPolicyJson(const AccessibilityCuesEnemyDebug& d) {
+static nlohmann::json CueEnemyPolicyJson(const EnemyCueDebug& d) {
     nlohmann::json j;
     j["frame"] = d.frame;
     j["fresh"] = CuePolicyFresh(d.frame);
@@ -1218,7 +1221,7 @@ static nlohmann::json CueEnemyPolicyJson(const AccessibilityCuesEnemyDebug& d) {
         j["requestedVoices"] = d.requestedVoices;
         auto targets = nlohmann::json::array();
         for (int32_t i = 0; i < d.count && i < kAccessibilityEnemyCueMaxVoices; i++) {
-            const AccessibilityCuesEnemyTargetDebug& t = d.targets[i];
+            const EnemyCueTargetDebug& t = d.targets[i];
             targets.push_back({ { "slot", t.slot },
                                 { "objId", t.objId },
                                 { "eventType", t.eventType },
@@ -1233,7 +1236,7 @@ static nlohmann::json CueEnemyPolicyJson(const AccessibilityCuesEnemyDebug& d) {
     return j;
 }
 
-static nlohmann::json CueAimPolicyJson(const AccessibilityCuesAimDebug& d) {
+static nlohmann::json CueAimPolicyJson(const AimCueDebug& d) {
     nlohmann::json j;
     j["frame"] = d.frame;
     j["fresh"] = CuePolicyFresh(d.frame);
@@ -1260,7 +1263,7 @@ static nlohmann::json CueAimPolicyJson(const AccessibilityCuesAimDebug& d) {
 }
 
 // The effective tuning around the cues, so one dump captures the whole configuration.
-// Names and defaults come from the shared constants in Cue.h / AccessibilityCues.h.
+// Names and defaults come from the shared constants in Cue.h / accessibility_cues/.
 static nlohmann::json CueSettingsJson() {
     nlohmann::json j;
     j["audioCues"] = CVarGetInteger(kAudioCuesEnabledCVar, 1);
@@ -1272,7 +1275,7 @@ static nlohmann::json CueSettingsJson() {
                   { "gainDip", CVarGetFloat(kCueRearGainDipCVar, CUE3D_REAR_GAIN_DIP_DEFAULT) },
                   { "tremoloDepth", CVarGetFloat(kCueRearTremoloDepthCVar, CUE3D_REAR_TREMOLO_DEPTH_DEFAULT) },
                   { "tremoloHz", CVarGetFloat(kCueRearTremoloHzCVar, CUE3D_REAR_TREMOLO_HZ_DEFAULT) } };
-    j["enemyVoices"] = AccessibilityCues_EnemyCueVoiceCount();
+    j["enemyVoices"] = EnemyCue_VoiceCount();
     j["pitchForHeight"] = { { "enabled", CVarGetInteger(kCuePitchForHeightCVar, 1) },
                             { "scale", CVarGetFloat(kCuePitchScaleCVar, kCuePitchScaleDefault) },
                             { "rangeOctaves", CVarGetFloat(kCuePitchRangeOctavesCVar, kCuePitchRangeOctavesDefault) } };
@@ -1358,7 +1361,6 @@ static int32_t CuesHandler(std::shared_ptr<Ship::Console> console, const std::ve
                      { "unityGainDistance", unityGain } };
     j["settings"] = CueSettingsJson();
 
-    const AccessibilityCuesDebugState& policy = AccessibilityCues_DebugState();
     auto cues = nlohmann::json::array();
     for (const Cue* cue : CueRegistry_All()) {
         nlohmann::json c = DumpCue(*cue);
@@ -1367,11 +1369,11 @@ static int32_t CuesHandler(std::shared_ptr<Ship::Console> console, const std::ve
         // knowledge. Other ids (the hidden bench cue) simply carry no policy.
         std::string id = cue->Id();
         if (id == kRingCueId) {
-            c["policy"] = CueRingPolicyJson(policy.ring);
+            c["policy"] = CueRingPolicyJson(RingCue_DebugState());
         } else if (id == kEnemyCueId) {
-            c["policy"] = CueEnemyPolicyJson(policy.enemy);
+            c["policy"] = CueEnemyPolicyJson(EnemyCue_DebugState());
         } else if (id == kAimCueId) {
-            c["policy"] = CueAimPolicyJson(policy.aim);
+            c["policy"] = CueAimPolicyJson(AimCue_DebugState());
         }
         cues.push_back(std::move(c));
     }

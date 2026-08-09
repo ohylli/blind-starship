@@ -20,8 +20,9 @@ comments:
   seam: one named cue owns its sound (lazy load + failure latch), its per-cue
   volume CVar, the three-factor gain, a preview mode, and a registry the settings
   UI enumerates. This sits between the consumer mod and the seam.
-- `src/port/mods/AccessibilityCues.cpp` — the Star Fox side: registers the two
-  cues (ring + enemy) and decides, per game tick, what each one targets.
+- `src/port/mods/accessibility_cues/` — the Star Fox side, one file per cue over
+  shared helpers, coordinated by `src/port/mods/AccessibilityCues.cpp`: registers
+  the cues and decides, per game tick, what each one targets.
 - `docs/accessibility-cues-tuning.md` — the tunable knobs.
 
 ## What was chosen and why
@@ -61,9 +62,10 @@ Fox policy rather than a copy of the whole backend dance:
   push, and a preview mode. A small registry (`CueRegistry_Register` / `_All` /
   `_TickPreviews` / `_UnloadAll`) lets the settings UI enumerate every cue. This
   layer knows about sounds, volumes, and 3D positions, but nothing about Star Fox.
-- **The consumer mod** (`AccessibilityCues.cpp`) — the Star Fox side. Registers
-  the two cues ("Ring guide", "Enemy locator") and drives them from its
-  `GamePostUpdateEvent` listeners, deciding each tick what each cue targets.
+- **The consumer mod** (`src/port/mods/accessibility_cues/`) — the Star Fox side.
+  Registers the cues ("Ring guide", "Enemy locator", "Aim guide"), one file per
+  cue, and drives them from their `GamePostUpdateEvent` listeners, deciding each
+  tick what each cue targets.
 
 ### The SF64-engine path is gone
 

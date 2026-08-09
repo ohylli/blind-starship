@@ -5,12 +5,12 @@ The cues render through the Steam Audio HRTF backend (see
 path — it was removed, along with the `gAccessibilityCue3D` toggle. The pieces are:
 
 - **The `Cue` layer** (`src/port/accessibility/Cue.{h,cpp}`) — game-agnostic: each cue owns its sound file, its per-cue volume CVar, the three-factor gain, and a preview mode. A registry lets the settings UI enumerate cues.
-- **The consumer mod** (`src/port/mods/AccessibilityCues.{cpp,h}`) — the Star Fox side, housing three cues sharing the `gAccessibilityAudioCues` CVar:
+- **The consumer mod** (`src/port/mods/accessibility_cues/`, one file pair per cue plus the shared `CueCommon`/`CueScan` helpers, coordinated by `src/port/mods/AccessibilityCues.{cpp,h}`) — the Star Fox side, housing three cues sharing the `gAccessibilityAudioCues` CVar:
   - **Ring cue** — tracks the next Training ring ahead of the Arwing (scoped to `LEVEL_TRAINING`).
   - **Enemy cue** — tracks the closest cueable enemies relative to the Arwing's aim: ahead of the aim line on on-rails levels, the full sphere (including behind you) in solo all-range mode. Coordinate frame is body-frame (rotated by the player's yaw + pitch) rather than world-frame; see `docs/accessibility-enemy-cue.md` for the derivation.
   - **Aim cue ("Aim guide")** — the inverse concern of the other two: a repeated synthesized click encoding the *aim itself* (stereo pan = left/right, pitch = up/down), sped up geiger-counter-style as the aim line nears a lockable enemy. Has its own additional toggle (`gAccessibilityAimCue`) because a continuous click is the most fatiguing cue to leave on. See "Aim cue" below for all its knobs.
 
-Direction is now the HRTF backend's job (true left/right and front/back). The mod still drives pitch from altitude via `AccessibilityCues_ComputeFreqModFromY`, layered on top of the HRTF (the generic HRTF's own elevation cue is weak — see `docs/accessibility-hrtf-cues.md`). Distance drives volume through the backend's inverse-distance model. Most knobs below apply to either cue; function names are prefixed `Ring` or `Enemy` to disambiguate.
+Direction is now the HRTF backend's job (true left/right and front/back). The mod still drives pitch from altitude via `CueCommon_ComputeFreqModFromY`, layered on top of the HRTF (the generic HRTF's own elevation cue is weak — see `docs/accessibility-hrtf-cues.md`). Distance drives volume through the backend's inverse-distance model. Most knobs below apply to either cue; function names are prefixed `Ring` or `Enemy` to disambiguate.
 
 For background on *why* the cues are shaped this way (player-relative coordinate frame, Y→pitch instead of Y→pan), see `docs/audio-system.md` and `docs/game-world.md`.
 
@@ -20,7 +20,7 @@ For background on *why* the cues are shaped this way (player-relative coordinate
 
 ### The sound file
 
-The ring and enemy cues load a WAV from `assets/accessibility/` (`ring.wav`, `enemy.wav`), named in `AccessibilityCues_Init` where the cues are registered; the aim cue synthesizes its click instead (see "Aim cue" below). Swap the file to change a WAV cue's sound. Favor sounds with clearly different timbres between the two cues, so both can fire simultaneously on Training without blending into one sound. Unlike the old SF64-SFX path, there are no bank/flag/range constraints — the HRTF backend plays an arbitrary mono WAV; distance, direction, and pitch are all applied by the backend or the mod, not baked into the sound.
+The ring and enemy cues load a WAV from `assets/accessibility/` (`ring.wav`, `enemy.wav`), named in `RingCue_Register` / `EnemyCue_Register` where the cues are registered; the aim cue synthesizes its click instead (see "Aim cue" below). Swap the file to change a WAV cue's sound. Favor sounds with clearly different timbres between the two cues, so both can fire simultaneously on Training without blending into one sound. Unlike the old SF64-SFX path, there are no bank/flag/range constraints — the HRTF backend plays an arbitrary mono WAV; distance, direction, and pitch are all applied by the backend or the mod, not baked into the sound.
 
 ### Ring cue distance falloff
 
@@ -39,25 +39,25 @@ Elevation caveat: this is a *pure* inverse-distance model — it uses the full 3
 
 ### Y→pitch on/off, range, and sensitivity
 
-The whole altitude→pitch layer is now a runtime toggle plus two sliders under **F1 → Developer → Blind Starship** (`AccessibilityCues_ComputeFreqModFromY` reads them live each tick, so no rebuild):
+The whole altitude→pitch layer is now a runtime toggle plus two sliders under **F1 → Developer → Blind Starship** (`CueCommon_ComputeFreqModFromY` reads them live each tick, so no rebuild):
 
 - **Height-to-pitch cue** — `gAccessibilityCuePitchForHeight` (default on). Off = the cue keeps its native pitch and altitude is conveyed only by the (weak) HRTF elevation.
 - **Pitch height sensitivity** — `gAccessibilityCuePitchScale` (default 1000, the old divisor). "How many world units of altitude difference equals one octave." Smaller = more aggressive pitch swing for small altitude changes.
 - **Pitch range** — `gAccessibilityCuePitchRangeOctaves` (default 1.0, the old ±1 octave clamp). Bounds how extreme the pitch ever gets. Larger (e.g. 2) gives a wider expressive range at the cost of stretching the sample badly at the extremes.
 - **Spectral pitch shifter** — `gAccessibilityCuePitchShift` (default on). Selects *how* the backend realizes the pitch multiplier (`Cue3D_SetPitchStyle`). On = spectral shifter (Signalsmith Stretch): each sound keeps its length and character and only the pitch moves, at the cost of ~0.1 s latency on the cue *content* (onsets, pitch changes — pulse cadence and spatial position are unaffected) and more CPU per source. Off = classic playback-rate change: artifact- and latency-free, but higher also means faster and thinner (the "chipmunk" effect). Applies to every cue and to the bench's pitch slider, independent of the height-to-pitch toggle above. Both styles are deliberately kept while the choice settles by ear; expect a collapse to one style eventually.
 
-Both defaults reproduce the original hard-coded mapping exactly. The CVar names and defaults live in `AccessibilityCues.h`.
+Both defaults reproduce the original hard-coded mapping exactly. The CVar names and defaults live in `accessibility_cues/CueCommon.h`.
 
-For the enemy cue, "altitude" is altitude relative to the Arwing's aim, not world-up — body-frame Y, computed in `AccessibilityCues_BuildWorldToBodyMatrix` + `Matrix_MultVec3fNoTranslate`. So the ring cue and enemy cue interpret "above" differently when the Arwing is pitched.
+For the enemy cue, "altitude" is altitude relative to the Arwing's aim, not world-up — body-frame Y, computed in `CueScan_BuildWorldToBodyMatrix` + `Matrix_MultVec3fNoTranslate`. So the ring cue and enemy cue interpret "above" differently when the Arwing is pitched.
 
 ### Y→pitch direction
 
-Also in `AccessibilityCues_ComputeFreqModFromY`: `octaves = y / scale`. Negate this to flip the mapping (lower pitch = higher altitude). Currently higher pitch = above. The change applies to both cues simultaneously. (This one is still a code change, not a slider.)
+Also in `CueCommon_ComputeFreqModFromY`: `octaves = y / scale`. Negate this to flip the mapping (lower pitch = higher altitude). Currently higher pitch = above. The change applies to both cues simultaneously. (This one is still a code change, not a slider.)
 
 ### "Drop the cue when behind the player"
 
-- Ring cue, `AccessibilityCues_FindNextTrainingRing`: `if (dz >= 0.0f) continue;` filters by world Z relative to `player->trueZpos`. As written, the moment a ring is at or behind the Arwing it stops contributing. Could be relaxed to `dz >= someThreshold` if you want a brief tail as you pass through — but in practice the distance falloff already fades the trailing ring, and the next ring becomes the target on the very next tick.
-- Enemy cue, `AccessibilityCues_FindClosestEnemies`: the behind-the-aim drop (`bodyDelta.z >= 0`, body-frame Z — behind the *aim line*, not behind world position) is **on-rails only**. In all-range the full sphere cues, since threats come from behind there and the HRTF renders the rear hemisphere. The HRTF alone proved too weak for front/back by ear, so the backend now exaggerates it — see "Rear effects" below.
+- Ring cue, `RingCue_FindNextTrainingRing`: `if (dz >= 0.0f) continue;` filters by world Z relative to `player->trueZpos`. As written, the moment a ring is at or behind the Arwing it stops contributing. Could be relaxed to `dz >= someThreshold` if you want a brief tail as you pass through — but in practice the distance falloff already fades the trailing ring, and the next ring becomes the target on the very next tick.
+- Enemy cue, `CueScan_ForEachCueableEnemy` (the scan shared with the aim cue's geiger angle): the behind-the-aim drop (`bodyDelta.z >= 0`, body-frame Z — behind the *aim line*, not behind world position) is **on-rails only**. In all-range the full sphere cues, since threats come from behind there and the HRTF renders the rear hemisphere. The HRTF alone proved too weak for front/back by ear, so the backend now exaggerates it — see "Rear effects" below.
 
 ### Rear effects (front/back exaggeration)
 
@@ -73,7 +73,7 @@ Ring cue and the F1 previews are unaffected in practice — both only ever rende
 
 ### All-range range limit
 
-`kEnemyCueAllRangeMaxDist` (default 10000, near the top of `AccessibilityCues.cpp`) — enemy-cue-only, all-range-only. On-rails needs no cutoff because the engine only keeps nearby objects loaded, but all-range loads the whole arena (radius 8000–20000+ units depending on level), and past the ±5000 clamp box every target sounds the same faint volume — so without a limit, far dogfighters drone constantly. Smaller = quieter arenas where silence means "nothing in range"; larger = hear (the direction of) distant fights sooner. Rebuild-to-tune; promote to a CVar + F1 slider if it needs live adjustment.
+`kEnemyCueAllRangeMaxDist` (default 10000, in `accessibility_cues/CueScan.h`) — enemy-cue-only, all-range-only. On-rails needs no cutoff because the engine only keeps nearby objects loaded, but all-range loads the whole arena (radius 8000–20000+ units depending on level), and past the ±5000 clamp box every target sounds the same faint volume — so without a limit, far dogfighters drone constantly. Smaller = quieter arenas where silence means "nothing in range"; larger = hear (the direction of) distant fights sooner. Rebuild-to-tune; promote to a CVar + F1 slider if it needs live adjustment.
 
 ### Cue volume
 
@@ -81,25 +81,25 @@ Volume is a per-cue CVar, not a file static. The effective per-source gain is `g
 
 ### Which levels the cues fire in
 
-- Ring cue, `AccessibilityCues_OnRingPostUpdate`: `if (... gCurrentLevel != LEVEL_TRAINING) ...`. Hard-scoped to Training because that's where rings live; broadening would also mean re-picking what to target outside Training.
-- Enemy cue, `AccessibilityCues_OnEnemyPostUpdate`: fires on every on-rails level and in solo all-range (`gLevelMode == LEVELMODE_ALL_RANGE && !gVersusMode`) — including mid-level transitions (Corneria/Sector Y bosses, Andross, Training's battle phase), which just flip `gLevelMode`. Multiplayer Versus shares the all-range mode flag but is gated out as untested.
+- Ring cue, `RingCue_OnPostUpdate`: `if (... gCurrentLevel != LEVEL_TRAINING) ...`. Hard-scoped to Training because that's where rings live; broadening would also mean re-picking what to target outside Training.
+- Enemy cue, `EnemyCue_OnPostUpdate`: fires on every on-rails level and in solo all-range (`gLevelMode == LEVELMODE_ALL_RANGE && !gVersusMode`) — including mid-level transitions (Corneria/Sector Y bosses, Andross, Training's battle phase), which just flip `gLevelMode`. Multiplayer Versus shares the all-range mode flag but is gated out as untested.
 
 ### What counts as a target
 
-- Ring cue, `AccessibilityCues_FindNextTrainingRing`: status `OBJ_ACTIVE`, id `OBJ_ITEM_TRAINING_RING`, `state == 0`. The state filter is the subtle one — state 1 means the ring is in its fly-to-player animation after collection, and excluding it prevents the cue from chasing the collection animation. If you ever want a faint background cue for *all* visible rings plus a louder cue for the nearest, this function is where that splits.
-- Enemy cue, `AccessibilityCues_IsCueableEnemy`: matches the engine's missile lock-on (`PlayerShot_FindLockTarget` in `fox_beam.c:1741`) — `status == OBJ_ACTIVE`, `info.targetOffset != 0.0f`. On-rails enemies all spawn as `OBJ_ACTOR_EVENT` and resolve into real targets only after `EVOP_INIT_ACTOR` rewrites `info.targetOffset` from the per-event table; filtering by id would reject them. To extend coverage (bosses, hazards, non-lockable damage-dealers like `OBJ_ACTOR_CO_RADAR`), add an explicit allow-list here. See `docs/accessibility-enemy-cue.md` § "Enemy detection criteria" for the catalogue of intentional misses.
+- Ring cue, `RingCue_FindNextTrainingRing`: status `OBJ_ACTIVE`, id `OBJ_ITEM_TRAINING_RING`, `state == 0`. The state filter is the subtle one — state 1 means the ring is in its fly-to-player animation after collection, and excluding it prevents the cue from chasing the collection animation. If you ever want a faint background cue for *all* visible rings plus a louder cue for the nearest, this function is where that splits.
+- Enemy cue, `CueScan_IsCueableEnemy`: matches the engine's missile lock-on (`PlayerShot_FindLockTarget` in `fox_beam.c:1741`) — `status == OBJ_ACTIVE`, `info.targetOffset != 0.0f`. On-rails enemies all spawn as `OBJ_ACTOR_EVENT` and resolve into real targets only after `EVOP_INIT_ACTOR` rewrites `info.targetOffset` from the per-event table; filtering by id would reject them. To extend coverage (bosses, hazards, non-lockable damage-dealers like `OBJ_ACTOR_CO_RADAR`), add an explicit allow-list here. See `docs/accessibility-enemy-cue.md` § "Enemy detection criteria" for the catalogue of intentional misses.
 
 ### How many enemies sound at once
 
 The enemy cue voices the N closest lockable enemies simultaneously, each on its own HRTF voice with sticky enemy→voice assignment (an enemy keeps its voice as long as it stays in the top N, so targets don't swap voices frame-to-frame). The knobs:
 
-- **`gAccessibilityEnemyCueVoices`** — how many targets to voice. Clamped to 1–`kAccessibilityEnemyCueMaxVoices`, and starts at `kAccessibilityEnemyCueDefaultVoices`; both live in `AccessibilityCues.h`. Runtime-tunable: F1 → Blind Starship → "Enemy locator voices". Set to 1 for the original single-target behavior.
+- **`gAccessibilityEnemyCueVoices`** — how many targets to voice. Clamped to 1–`kAccessibilityEnemyCueMaxVoices`, and starts at `kAccessibilityEnemyCueDefaultVoices`; both live in `accessibility_cues/EnemyCue.h`. Runtime-tunable: F1 → Blind Starship → "Enemy locator voices". Set to 1 for the original single-target behavior.
 - **Multi-voice headroom trim**, `Cue::PushGain` (`Cue.cpp`) — with N voices playing, each is trimmed by 1/√N so near-identical loops don't sum hot. If two voices feel too quiet next to one, soften or drop this.
 - **Per-voice identity pitch**, `kVoiceIdentityPitch` (`Cue.cpp`) — a per-voice-slot pitch multiplier for telling simultaneous copies of the same loop apart. All 1.0 (off) today, deliberately: pitch already carries the elevation signal, so a detune would read as a false above/below. If spatial separation alone proves insufficient by ear, prefer per-voice timbre (WAV variants) before touching this.
 
 ### Aim cue
 
-The aim cue is deliberately *not* an HRTF cue: it renders in `CUE3D_MODE_PAN` (plain constant-power stereo) at the backend's unity-gain distance, so pan, pitch, and repeat rate are pure functions of the aim with no distance falloff and no rear effect. It also pins the playback-rate pitch style per-source (`CueSpec::pitchStyle = CUE3D_SOURCE_PITCH_RESAMPLE`) regardless of the global spectral-shifter A/B — the shifter's ~0.1 s latency and transient softening would smear the click attack that *is* the signal. Its sound is synthesized (`AccessibilityCues_GenerateAimClick`), not a WAV: ~12 ms of silence then a ~20 ms damped-sine tick. The lead-in silence is load-bearing — the backend fades every pulse restart in over ~5 ms, and without the lead-in that ramp eats the click's attack (~6 dB of loudness); the tick must also finish inside the fastest repeat interval. Retune the timbre by editing the constants in the generator (rebuild-to-tune on purpose — the *mapping* knobs below are the ones that need by-ear iteration).
+The aim cue is deliberately *not* an HRTF cue: it renders in `CUE3D_MODE_PAN` (plain constant-power stereo) at the backend's unity-gain distance, so pan, pitch, and repeat rate are pure functions of the aim with no distance falloff and no rear effect. It also pins the playback-rate pitch style per-source (`CueSpec::pitchStyle = CUE3D_SOURCE_PITCH_RESAMPLE`) regardless of the global spectral-shifter A/B — the shifter's ~0.1 s latency and transient softening would smear the click attack that *is* the signal. Its sound is synthesized (`AimCue_GenerateClick`), not a WAV: ~12 ms of silence then a ~20 ms damped-sine tick. The lead-in silence is load-bearing — the backend fades every pulse restart in over ~5 ms, and without the lead-in that ramp eats the click's attack (~6 dB of loudness); the tick must also finish inside the fastest repeat interval. Retune the timbre by editing the constants in the generator (rebuild-to-tune on purpose — the *mapping* knobs below are the ones that need by-ear iteration).
 
 What pan and pitch encode differs by mode:
 
@@ -112,11 +112,11 @@ Shared knobs, all live CVars with sliders under **F1 → Developer → Blind Sta
 - **Geiger mapping** — `gAccessibilityAimCueGeigerAngleDeg` (default 30°), `gAccessibilityAimCueGeigerSlowSec` (default 0.8), `gAccessibilityAimCueGeigerFastSec` (default 0.06): the smallest angle between the aim line and any cueable enemy (same predicate and scoping as the enemy cue, including the all-range range limit) maps linearly from the slow interval at/beyond the max angle — and when no enemy is in scope — down to the fast interval dead on target.
 - **Click loudness** — `gAccessibilityAimCueBoost` (default 2.0): a gain boost applied *under* the volume sliders via `Cue::SetGainBoost`, because a short click reads perceptually quieter than the sustained ring/enemy loops at the same sample level and the per-cue volume slider (0–100%) has no headroom above its default. Applies to the settings-menu preview too, so the preview stays honest.
 
-Scope: every on-rails level and solo all-range, **Arwing only** (`player->form == FORM_ARWING`) — the mappings read Arwing aim fields; Landmaster/Blue-Marine need their own mappings (future work). Sign conventions are derived, not guessed: the stick is negated into `rot` (`fox_play.c`), so `rot.y < 0` means "aiming right" and a positive total pitch angle means "aiming up" — if a direction ever reads flipped by ear, the sign notes in `AccessibilityCues_OnAimPostUpdate` say which term to flip.
+Scope: every on-rails level and solo all-range, **Arwing only** (`player->form == FORM_ARWING`) — the mappings read Arwing aim fields; Landmaster/Blue-Marine need their own mappings (future work). Sign conventions are derived, not guessed: the stick is negated into `rot` (`fox_play.c`), so `rot.y < 0` means "aiming right" and a positive total pitch angle means "aiming up" — if a direction ever reads flipped by ear, the sign notes in `AimCue_OnPostUpdate` say which term to flip.
 
 ### CVar default
 
-`CVarRegisterInteger("gAccessibilityAudioCues", 1)` in `AccessibilityCues_Init`. Default-on for now; flip the second arg to `0` to make it opt-in. The CVar is toggleable at runtime from the console — the listener early-returns and kills any active cue when it's off, so no restart needed.
+`CVarRegisterInteger("gAccessibilityAudioCues", 1)` in `CueCommon_RegisterCVars` (called from `AccessibilityCues_Init`). Default-on for now; flip the second arg to `0` to make it opt-in. The CVar is toggleable at runtime from the console — the listener early-returns and kills any active cue when it's off, so no restart needed.
 
 ---
 

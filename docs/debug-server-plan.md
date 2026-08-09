@@ -364,7 +364,7 @@ round trip. Design decisions:
 effective tuning CVars, and per cue the registry identity plus two merged layers — the
 *what* (per-voice position/pitch/interval/gain from a new value-copy `Cue::Snapshot()`
 accessor; the Cue3D seam stays push-only and is never read) and the *why* (a `policy`
-section per gameplay cue from a last-tick mirror in `AccessibilityCues.cpp`, where each
+section per gameplay cue from a last-tick mirror in `accessibility_cues/` (one per cue file), where each
 listener now records what it decided on every exit path: gate terms when it stopped the
 cue, and targets — for the enemy cue the decoded slot/objId/eventType identity, distance,
 and the voice key — when it drove it). A client joins `voices[].key` against

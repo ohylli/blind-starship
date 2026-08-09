@@ -12,7 +12,9 @@
 #include <Fast3D/interpreter.h>
 #include "port/Engine.h"
 #include "port/mods/accessibility_screens/ImGuiMenu.h"
-#include "port/mods/AccessibilityCues.h"
+#include "port/mods/accessibility_cues/CueCommon.h"
+#include "port/mods/accessibility_cues/EnemyCue.h"
+#include "port/mods/accessibility_cues/AimCue.h"
 #include "port/accessibility/Cue.h"
 #include "port/accessibility/CueBench.h"
 #include "port/notification/notification.h"
@@ -1166,7 +1168,7 @@ void DrawDebugMenu() {
                     .format = "%.0f deg",
                     .step = 5.0f,
                 });
-                // Floor at the click buffer's ~32 ms length (AccessibilityCues_GenerateAimClick,
+                // Floor at the click buffer's ~32 ms length (AimCue_GenerateClick,
                 // lead-in + tick): a shorter interval would truncate each click at the restart,
                 // and pitched-down clicks stretch further still.
                 UIWidgets::CVarSliderFloat("Geiger fast interval", kAimCueGeigerFastCVar, 0.04f, 0.3f,
