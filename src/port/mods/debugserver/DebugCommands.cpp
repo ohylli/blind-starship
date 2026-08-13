@@ -19,6 +19,8 @@
 #include "port/mods/accessibility_cues/RingCue.h"
 #include "port/mods/accessibility_cues/EnemyCue.h"
 #include "port/mods/accessibility_cues/AimCue.h"
+#include "port/mods/accessibility_cues/ObstacleAheadCue.h"
+#include "port/mods/accessibility_cues/ObstacleScan.h"
 #include "port/mods/ObjectSpawnLog.h"
 
 #include <nlohmann/json.hpp>
@@ -1262,12 +1264,49 @@ static nlohmann::json CueAimPolicyJson(const AimCueDebug& d) {
     return j;
 }
 
+static nlohmann::json CueObstacleArrayJson(int32_t array) {
+    return nlohmann::json{ { "index", array }, { "name", ObstacleScan_ArrayName((ObstacleArray) array) } };
+}
+
+static nlohmann::json CueObstacleAheadPolicyJson(const ObstacleAheadCueDebug& d) {
+    nlohmann::json j;
+    j["frame"] = d.frame;
+    j["fresh"] = CuePolicyFresh(d.frame);
+    j["active"] = d.active;
+    j["scanned"] = d.scanned;
+    j["gates"] = { { "enabled", d.enabled },
+                   { "obstacleEnabled", d.obstacleEnabled },
+                   { "onRails", d.onRails },
+                   { "control", d.control } };
+    // Scan results are reported whenever the scan ran — an empty scan still shows its
+    // counters, which is the "why is it silent" answer (see CueEnemyPolicyJson).
+    if (d.scanned) {
+        j["scan"] = { { "active", d.scanActive }, { "obstacles", d.scanObstacles }, { "boxes", d.scanBoxes } };
+        j["onCourse"] = d.onCourse;
+        j["warnDist"] = d.warnDist;
+        j["margin"] = d.margin;
+    }
+    if (d.active) {
+        j["target"] = { { "array", CueObstacleArrayJson(d.target.array) },
+                        { "slot", d.target.slot },
+                        { "objId", d.target.objId },
+                        { "record", d.target.record },
+                        { "gapZ", d.target.gapZ },
+                        { "clear", { { "x", d.target.clearX }, { "y", d.target.clearY } } },
+                        { "delta", { { "x", d.target.dx }, { "y", d.target.dy } } },
+                        { "half", { { "x", d.target.halfX }, { "y", d.target.halfY }, { "z", d.target.halfZ } } } };
+        j["intervalSec"] = d.intervalSec;
+    }
+    return j;
+}
+
 // The effective tuning around the cues, so one dump captures the whole configuration.
 // Names and defaults come from the shared constants in Cue.h / accessibility_cues/.
 static nlohmann::json CueSettingsJson() {
     nlohmann::json j;
     j["audioCues"] = CVarGetInteger(kAudioCuesEnabledCVar, 1);
     j["aimCue"] = CVarGetInteger(kAimCueEnabledCVar, 1);
+    j["obstacleCue"] = CVarGetInteger(kObstacleCueEnabledCVar, 1);
     j["gameMasterVolume"] = CVarGetFloat("gGameMasterVolume", 1.0f);
     j["cueMasterVolume"] = CVarGetFloat(kCueMasterVolumeCVar, 1.0f);
     j["pitchShift"] = CVarGetInteger(kCuePitchShiftCVar, kCuePitchShiftDefault);
@@ -1287,6 +1326,11 @@ static nlohmann::json CueSettingsJson() {
                  { "geigerFastSec", CVarGetFloat(kAimCueGeigerFastCVar, kAimCueGeigerFastDefault) },
                  { "geigerSlowSec", CVarGetFloat(kAimCueGeigerSlowCVar, kAimCueGeigerSlowDefault) },
                  { "boost", CVarGetFloat(kAimCueBoostCVar, kAimCueBoostDefault) } };
+    j["obstacle"] = { { "warnDist", CVarGetFloat(kObstacleCueWarnDistCVar, kObstacleCueWarnDistDefault) },
+                      { "slowSec", CVarGetFloat(kObstacleCueSlowCVar, kObstacleCueSlowDefault) },
+                      { "fastSec", CVarGetFloat(kObstacleCueFastCVar, kObstacleCueFastDefault) },
+                      { "marginXY", CVarGetFloat(kObstacleCueMarginCVar, kObstacleCueMarginDefault) },
+                      { "boost", CVarGetFloat(kObstacleCueBoostCVar, kObstacleCueBoostDefault) } };
     return j;
 }
 
@@ -1374,6 +1418,8 @@ static int32_t CuesHandler(std::shared_ptr<Ship::Console> console, const std::ve
             c["policy"] = CueEnemyPolicyJson(EnemyCue_DebugState());
         } else if (id == kAimCueId) {
             c["policy"] = CueAimPolicyJson(AimCue_DebugState());
+        } else if (id == kObstacleAheadCueId) {
+            c["policy"] = CueObstacleAheadPolicyJson(ObstacleAheadCue_DebugState());
         }
         cues.push_back(std::move(c));
     }

@@ -376,6 +376,12 @@ section was written this tick. While debug-paused the listeners keep running on 
 uncancelled GamePostUpdateEvent, so the dump reports the live frozen soundscape — the
 pause-and-inspect workflow this command was the point of.
 
+Additions since: the obstacle-ahead cue (2026-08-11) reports its policy the same way —
+gates, scan counters (`active`/`obstacles`/`boxes` plus `onCourse`), the effective
+warn-distance/margin knobs, and when active the winning hitbox record (source array +
+slot/objId/record, `gapZ` to the near face, per-axis `clear`/`delta`/`half`) and the
+pushed `intervalSec`. Purely additive to the wire shape, so no protocol bump.
+
 ## Open questions for refinement
 
 - **TTS history query** (phase 2). Where to record announcements — in the TTS

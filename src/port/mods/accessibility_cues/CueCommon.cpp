@@ -65,6 +65,33 @@ void CueCommon_ComputeCueTarget(float dx, float dy, float dz, float outSrc[3], f
     *outFreq = CueCommon_ComputeFreqModFromY(outSrc[1]);
 }
 
+// See the header for the two constraints (lead-in vs the backend's restart fade, buffer
+// length vs the fastest interval). With harmonicMix == 0 this reproduces the original
+// aim-click math bit for bit.
+std::vector<float> CueCommon_GenerateDampedTone(int sampleRate, float leadInSec, float toneSec, float toneHz,
+                                                float harmonicMix, float decayPerSec, float amplitude,
+                                                float tailSec) {
+    constexpr f32 kTwoPi = 6.2831853f;
+    int lead = (int) (leadInSec * (f32) sampleRate);
+    int frames = (int) (toneSec * (f32) sampleRate);
+    if (frames < 2) {
+        frames = 2;
+    }
+    int tail = (int) (tailSec * (f32) sampleRate);
+    std::vector<float> pcm((size_t) (lead + frames), 0.0f);
+    for (int i = 0; i < frames; i++) {
+        f32 t = (f32) i / (f32) sampleRate;
+        f32 env = expf(-decayPerSec * t);
+        int remaining = frames - 1 - i;
+        if (remaining < tail) {
+            env *= 0.5f * (1.0f - cosf(0.5f * kTwoPi * (f32) remaining / (f32) tail));
+        }
+        f32 wave = sinf(kTwoPi * toneHz * t) + harmonicMix * sinf(kTwoPi * 2.0f * toneHz * t);
+        pcm[(size_t) (lead + i)] = amplitude * env * wave / (1.0f + harmonicMix);
+    }
+    return pcm;
+}
+
 // The divisors upstream of the normalized signals are engine-owned (pathWidth/pathHeight)
 // or guarded CVars, but a zero divisor's ±inf still lands on a sane extreme here instead
 // of riding into the pan/pitch math.

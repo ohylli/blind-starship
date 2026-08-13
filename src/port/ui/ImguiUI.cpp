@@ -15,6 +15,7 @@
 #include "port/mods/accessibility_cues/CueCommon.h"
 #include "port/mods/accessibility_cues/EnemyCue.h"
 #include "port/mods/accessibility_cues/AimCue.h"
+#include "port/mods/accessibility_cues/ObstacleAheadCue.h"
 #include "port/accessibility/Cue.h"
 #include "port/accessibility/CueBench.h"
 #include "port/notification/notification.h"
@@ -400,7 +401,8 @@ void DrawSettingsMenu(){
                 .defaultValue = true
             });
             UIWidgets::CVarCheckbox("Audio cues", kAudioCuesEnabledCVar, {
-                .tooltip = "Positional audio cues that guide you toward the next ring and the closest lockable enemies.",
+                .tooltip = "Positional audio cues that guide you toward the next ring and the closest lockable "
+                           "enemies, and warn about obstacles ahead.",
                 .defaultValue = true
             });
             UIWidgets::CVarSliderInt("Enemy locator voices", kEnemyCueVoicesCVar, 1,
@@ -410,6 +412,12 @@ void DrawSettingsMenu(){
             UIWidgets::CVarCheckbox("Aim guide", kAimCueEnabledCVar, {
                 .tooltip = "A repeating click that tells you where you are aiming: pan for left/right, pitch for "
                            "up/down; it clicks faster as your aim nears a lockable enemy. Arwing only.",
+                .defaultValue = true
+            });
+            UIWidgets::CVarCheckbox("Obstacle warning", kObstacleCueEnabledCVar, {
+                .tooltip = "A low buzz that beats faster as you close on something solid dead ahead that you "
+                           "cannot shoot down. On-rails levels. Note: Minimal training removes Training's "
+                           "obstacles, so this cue stays silent there.",
                 .defaultValue = true
             });
             if (UIWidgets::BeginMenu("Cue volumes")) {
@@ -1188,6 +1196,54 @@ void DrawDebugMenu() {
                 UIWidgets::CVarSliderFloat("Click loudness", kAimCueBoostCVar, 0.5f, 4.0f, kAimCueBoostDefault, {
                     .tooltip = "Loudness boost for the aim click relative to the other cues - a short click "
                                "reads quieter than a sustained loop at the same level. Applied under the "
+                               "volume sliders.",
+                    .flags = ImGuiSliderFlags_AlwaysClamp,
+                    .format = "%.2fx",
+                    .step = 0.25f,
+                });
+                ImGui::EndMenu();
+            }
+            if (UIWidgets::BeginMenu("Obstacle warning")) {
+                // Obstacle-cue tuning (docs/accessibility-cues-tuning.md). Every knob is a
+                // CVar the listener re-reads each tick, so all of it is live. AlwaysClamp on
+                // all: the enter-to-type path accepts out-of-range values, and several of
+                // these feed the interval math or a division.
+                UIWidgets::CVarSliderFloat("Warning distance", kObstacleCueWarnDistCVar, 500.0f, 3000.0f,
+                                           kObstacleCueWarnDistDefault, {
+                    .tooltip = "How far ahead (world units) an on-course obstacle starts buzzing. Values near "
+                               "3000 buy little: the engine has not streamed farther objects in yet.",
+                    .flags = ImGuiSliderFlags_AlwaysClamp,
+                    .format = "%.0f",
+                    .step = 100.0f,
+                });
+                UIWidgets::CVarSliderFloat("Slow interval", kObstacleCueSlowCVar, 0.2f, 1.5f,
+                                           kObstacleCueSlowDefault, {
+                    .tooltip = "Buzz repeat interval at the warning distance.",
+                    .flags = ImGuiSliderFlags_AlwaysClamp,
+                    .format = "%.2f s",
+                    .step = 0.05f,
+                });
+                // Floor at kObstacleCueMinIntervalSec, the buzz buffer's length budget
+                // (ObstacleAheadCue_GenerateBuzz): a shorter interval would truncate each
+                // pulse at the restart.
+                UIWidgets::CVarSliderFloat("Fast interval", kObstacleCueFastCVar, kObstacleCueMinIntervalSec, 0.4f,
+                                           kObstacleCueFastDefault, {
+                    .tooltip = "Buzz repeat interval at the moment of contact.",
+                    .flags = ImGuiSliderFlags_AlwaysClamp,
+                    .format = "%.2f s",
+                    .step = 0.01f,
+                });
+                UIWidgets::CVarSliderFloat("Safety margin", kObstacleCueMarginCVar, 0.0f, 500.0f,
+                                           kObstacleCueMarginDefault, {
+                    .tooltip = "How far outside an obstacle's width and height still counts as a collision "
+                               "course. Higher warns about near misses; lower only warns about direct hits.",
+                    .flags = ImGuiSliderFlags_AlwaysClamp,
+                    .format = "%.0f",
+                    .step = 25.0f,
+                });
+                UIWidgets::CVarSliderFloat("Buzz loudness", kObstacleCueBoostCVar, 0.5f, 4.0f,
+                                           kObstacleCueBoostDefault, {
+                    .tooltip = "Loudness boost for the buzz relative to the other cues, applied under the "
                                "volume sliders.",
                     .flags = ImGuiSliderFlags_AlwaysClamp,
                     .format = "%.2fx",

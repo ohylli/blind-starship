@@ -11,7 +11,7 @@
 // Training (see ScopeActive); covers both the on-rails phase and the
 // all-range phase.
 //
-// WHAT IT REMOVES:
+// WHAT IT REMOVES (the shared Object_IsObstacle set, ObjectQuery.h):
 //   - Collidable scenery and bosses (e.g. OBJ_SCENERY_TR_BUILDING).
 //   - The all-range phase's buildings — the same OBJ_SCENERY_TR_BUILDING id,
 //     but spawned by Training_Setup360 (fox_tr360.c) from a second object
@@ -64,31 +64,12 @@ static bool AccessibilityTrainingMinimal_ShouldFilter(ObjectEventType type, void
     if (!AccessibilityTrainingMinimal_ScopeActive()) {
         return false;
     }
-    if ((type != OBJECT_TYPE_ACTOR) && (type != OBJECT_TYPE_SCENERY) && (type != OBJECT_TYPE_SCENERY360) &&
-        (type != OBJECT_TYPE_BOSS)) {
-        return false;
-    }
-    if (!Object_HasCollidableHitbox(type, object)) {
-        return false;
-    }
-    // For actors (regular or OBJ_ACTOR_EVENT), distinguish enemies from
-    // environmental obstacles by info.targetOffset: enemies have a non-zero
-    // lock-on offset (same predicate the engine uses for missile lock-on in
-    // PlayerShot_FindLockTarget, fox_beam.c, and the predicate the upcoming
-    // enemy audio cue uses — see docs/accessibility-enemy-cue.md). Obstacles
-    // like EVID_TR_BARRIER (the training barrier) have targetOffset == 0.0f
-    // even though they have a collidable hitbox; those are exactly what we
-    // want to strip. For OBJ_ACTOR_EVENT actors info.targetOffset is the
-    // default 0.0f until the script runs EVOP_INIT_ACTOR (which also installs
-    // the real hitbox — see the second-tick note in Object_HasCollidableHitbox),
-    // so the hitbox and targetOffset land together and the check is consistent.
-    if (type == OBJECT_TYPE_ACTOR) {
-        Actor* a = (Actor*) object;
-        if (a->info.targetOffset != 0.0f) {
-            return false;
-        }
-    }
-    return true;
+    // Classification (collidable hitbox, not lockable) is the shared obstacle predicate,
+    // also consumed by the obstacle-ahead cue — the enemy-vs-obstacle rationale
+    // (targetOffset, the actor-event second-tick install) lives with it in ObjectQuery.h.
+    // The predicate deliberately has no status check, which is what lets this caller run
+    // it on ObjectInitEvent (status still OBJ_INIT).
+    return Object_IsObstacle(type, object);
 }
 
 // Free the slot before cancelling: cancellation skips the engine's OBJ_INIT

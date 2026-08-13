@@ -3,10 +3,12 @@
 // Shared policy helpers for the Star Fox cue listeners. The cues themselves (sound file,
 // volume CVar, preview, lazy loading, voice pools) live in the game-agnostic Cue class
 // over the Cue3D HRTF seam; the files in this directory are the Star Fox side — one file
-// per cue (RingCue, EnemyCue, AimCue), each registering its cue and deciding, per game
-// tick, what it targets, coordinated by ../AccessibilityCues.cpp. This header holds what
-// the cue files share: the master toggle, the height->pitch mapping and its knobs, and
-// small scalar helpers. The game-coupled shared enemy scan lives in CueScan.h. The old
+// per cue (RingCue, EnemyCue, AimCue, ObstacleAheadCue), each registering its cue and
+// deciding, per game tick, what it targets, coordinated by ../AccessibilityCues.cpp.
+// This header holds what the cue files share: the master toggle, the height->pitch
+// mapping and its knobs, the damped-tone generator, and small scalar helpers. The
+// game-coupled shared scans live in CueScan.h (enemies) and ObstacleScan.h (obstacle
+// hitbox boxes). The old
 // SF64-audio-engine cue path was removed once the HRTF backend proved out: the game
 // engine's camera-relative panning and per-frame SFX lifetime made it a dead end for
 // continuous navigation cues (see docs/accessibility-hrtf-cues.md), so game SFX are
@@ -31,6 +33,8 @@
 // means "the cue was driven this tick". Plain scalars only, never an Actor*/Item*: a
 // section read after the level ends must not dangle. frame == -1 means the section has
 // never been written.
+
+#include <vector>
 
 // The master cue toggle, named here so every reader (the listeners, the F1 widgets in
 // ImguiUI.cpp, the debug server's `cues` dump) shares one spelling.
@@ -65,3 +69,21 @@ void CueCommon_ComputeCueTarget(float dx, float dy, float dz, float outSrc[3], f
 
 // Clamp a normalized signal to [-1, 1]; NaN pins to center (0).
 float CueCommon_ClampUnit(float v);
+
+// Shared generator for the synthesized pulse cues (the aim click, the obstacle buzz):
+// leadInSec of silence, then toneSec of a damped sine at toneHz (plus an optional second
+// harmonic at harmonicMix, normalized so the peak stays at amplitude), with a
+// raised-cosine tail of tailSec. Mono float PCM at sampleRate, for CueSpec::generator.
+//
+// Two constraints every caller inherits (they used to live duplicated in each cue's
+// generator, and a fix to either must not fork again):
+//   - The lead-in is load-bearing: the backend fades each interval restart in from
+//     silence over ~5 ms, and these sounds carry their energy in the first few
+//     milliseconds — without the lead-in the ramp eats the attack (~6 dB). It also
+//     delays every pulse by that constant, inaudible for a cadence signal. (Under the
+//     RESAMPLE pitch style the lead-in scales with pitch.)
+//   - The whole buffer (leadInSec + toneSec) must finish inside the fastest interval the
+//     cue's sliders allow, or pulses truncate at the restart; the tail pins the buffer
+//     to zero so the restart's rewind cannot click.
+std::vector<float> CueCommon_GenerateDampedTone(int sampleRate, float leadInSec, float toneSec, float toneHz,
+                                                float harmonicMix, float decayPerSec, float amplitude, float tailSec);

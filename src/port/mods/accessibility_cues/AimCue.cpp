@@ -31,41 +31,22 @@ const AimCueDebug& AimCue_DebugState() {
     return sDebugState;
 }
 
-// Synthesized click: ~12 ms of silence, then a ~20 ms damped-sine tick, at the backend rate.
-// The lead-in exists because the backend fades each interval restart in from silence over
-// ~5 ms (the click guard) and the tick's energy sits entirely in its first few milliseconds —
-// without the lead-in the ramp eats the attack (~6 dB of loudness). The silence lets the ramp
-// open before the transient hits; it also delays every pulse by a constant 12 ms, inaudible
-// for a cadence signal. (The RESAMPLE pitch path scales the lead-in with pitch — at +1 octave
-// it halves to 6 ms, so the extremes give back a little of that loudness; the gain-boost knob
-// below covers the rest.) The whole buffer must finish inside the fastest geiger interval
-// (slider floor in ImguiUI.cpp) so pulses never truncate; the raised-cosine tail pins the
-// buffer to zero so the interval restart's rewind cannot click.
+// Synthesized click: ~12 ms of silence, then a ~20 ms damped-sine tick, via the shared
+// generator (CueCommon_GenerateDampedTone, which owns the lead-in and tail rationale).
+// Aim-specific notes: the RESAMPLE pitch path scales the lead-in with pitch — at +1
+// octave it halves to 6 ms, so the extremes give back a little loudness the gain-boost
+// knob covers — and the buffer must finish inside the fastest geiger interval; the
+// slider floor in ImguiUI.cpp budgets for pitched-DOWN clicks stretching longer, which
+// is why there is no compile-time assert here (unlike the fixed-pitch obstacle buzz).
 static std::vector<float> AimCue_GenerateClick(int sampleRate) {
-    constexpr f32 kTwoPi = 6.2831853f;
     constexpr f32 kLeadInSec = 0.012f;
     constexpr f32 kTickSec = 0.02f;
     constexpr f32 kToneHz = 1500.0f;
     constexpr f32 kDecayPerSec = 150.0f;
     constexpr f32 kAmplitude = 0.95f;
     constexpr f32 kTailSec = 0.003f;
-    int lead = (int) (kLeadInSec * (f32) sampleRate);
-    int frames = (int) (kTickSec * (f32) sampleRate);
-    if (frames < 2) {
-        frames = 2;
-    }
-    int tail = (int) (kTailSec * (f32) sampleRate);
-    std::vector<float> pcm((size_t) (lead + frames), 0.0f);
-    for (int i = 0; i < frames; i++) {
-        f32 t = (f32) i / (f32) sampleRate;
-        f32 env = expf(-kDecayPerSec * t);
-        int remaining = frames - 1 - i;
-        if (remaining < tail) {
-            env *= 0.5f * (1.0f - cosf(0.5f * kTwoPi * (f32) remaining / (f32) tail));
-        }
-        pcm[(size_t) (lead + i)] = kAmplitude * env * sinf(kTwoPi * kToneHz * t);
-    }
-    return pcm;
+    return CueCommon_GenerateDampedTone(sampleRate, kLeadInSec, kTickSec, kToneHz, 0.0f, kDecayPerSec, kAmplitude,
+                                        kTailSec);
 }
 
 // Normalized vertical aim [-1, 1] -> playback rate 2^(n * octaves). Deliberately separate

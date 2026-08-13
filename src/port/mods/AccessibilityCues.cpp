@@ -4,6 +4,7 @@
 #include "accessibility_cues/RingCue.h"
 #include "accessibility_cues/EnemyCue.h"
 #include "accessibility_cues/AimCue.h"
+#include "accessibility_cues/ObstacleAheadCue.h"
 
 #include "port/CGameCompat.h" // Events.h pulls the C game headers; the shim must come first
 #include "port/hooks/Events.h"
@@ -22,6 +23,7 @@ void AccessibilityCues_Init() {
     RingCue_Register();
     EnemyCue_Register();
     AimCue_Register();
+    ObstacleAheadCue_Register();
 
     // Registered after the per-cue listeners (same event, same priority, so registration
     // order is execution order), matching the pre-split layout: the reap then acts on the
