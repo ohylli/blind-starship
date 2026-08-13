@@ -1208,10 +1208,11 @@ void DrawDebugMenu() {
                 // CVar the listener re-reads each tick, so all of it is live. AlwaysClamp on
                 // all: the enter-to-type path accepts out-of-range values, and several of
                 // these feed the interval math or a division.
-                UIWidgets::CVarSliderFloat("Warning distance", kObstacleCueWarnDistCVar, 500.0f, 3000.0f,
+                UIWidgets::CVarSliderFloat("Warning distance", kObstacleCueWarnDistCVar, 500.0f, 6000.0f,
                                            kObstacleCueWarnDistDefault, {
-                    .tooltip = "How far ahead (world units) an on-course obstacle starts buzzing. Values near "
-                               "3000 buy little: the engine has not streamed farther objects in yet.",
+                    .tooltip = "How far ahead (world units) an on-course obstacle starts buzzing. Obstacles "
+                               "stream in 3000 or more units out depending on the level, so above 3000 some "
+                               "obstacles start buzzing mid-ramp the moment they appear.",
                     .flags = ImGuiSliderFlags_AlwaysClamp,
                     .format = "%.0f",
                     .step = 100.0f,

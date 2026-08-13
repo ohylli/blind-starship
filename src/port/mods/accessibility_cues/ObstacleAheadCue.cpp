@@ -29,7 +29,7 @@ const ObstacleAheadCueDebug& ObstacleAheadCue_DebugState() {
     return sDebugState;
 }
 
-// Synthesized low buzz: ~8 ms of silence, then a ~50 ms damped 300 Hz tone with a touch
+// Synthesized low buzz: ~8 ms of silence, then a ~30 ms damped 300 Hz tone with a touch
 // of second harmonic, via the shared generator (CueCommon_GenerateDampedTone, which owns
 // the lead-in and tail rationale). 300 Hz against the aim cue's 1500 Hz keeps the two
 // unmistakable even when both pulse fast; the harmonic keeps the buzz audible on small
@@ -37,7 +37,7 @@ const ObstacleAheadCueDebug& ObstacleAheadCue_DebugState() {
 // pins it inside the fast-interval slider's floor with no RESAMPLE stretch to budget.
 static std::vector<float> ObstacleAheadCue_GenerateBuzz(int sampleRate) {
     constexpr f32 kLeadInSec = 0.008f;
-    constexpr f32 kToneSec = 0.05f;
+    constexpr f32 kToneSec = 0.03f;
     constexpr f32 kToneHz = 300.0f;
     constexpr f32 kHarmonicMix = 0.35f;
     constexpr f32 kDecayPerSec = 45.0f;

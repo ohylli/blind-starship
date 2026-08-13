@@ -31,19 +31,27 @@ inline constexpr const char* kObstacleCueMarginCVar = "gAccessibilityObstacleCue
 inline constexpr const char* kObstacleCueBoostCVar = "gAccessibilityObstacleCueBoost"; // loudness vs the other cues
 
 // Warn-start gap to the obstacle's near Z face. On rails the streaming loop spawns an
-// object when the path reaches its trigger, roughly 3000 units ahead (Scenery_Load,
-// fox_enmy.c), so warn distances near or beyond that are dishonest — the obstacle does
-// not exist yet and the buzz starts mid-ramp when it streams in. 2000 is ~1.7 s of
-// flight at cruise speed.
-inline constexpr float kObstacleCueWarnDistDefault = 2000.0f;
-inline constexpr float kObstacleCueSlowDefault = 0.6f;
-inline constexpr float kObstacleCueFastDefault = 0.07f;
+// object at a per-object distance ahead: Object_LoadLevelObjects (fox_enmy.c) fires at
+// the object's zPos1 trigger, and the Load functions place it 3000 - zPos2 world units
+// ahead of the player. zPos2 = 0 gives exactly 3000, and some levels (Bolse, Fortuna,
+// Sector Z, Venom 2) use that for their whole roster; most obstacles elsewhere carry a
+// negative zPos2 and exist 4000-9000+ out when the player is 3000 away (median ~7000
+// on Corneria/Training/Venom 1, per the level manifests). A small tail spawns closer
+// (Zoness at 1500, Macbeth's falling boulders, terrain-emergers like Titania's
+// crawlers) and onsets mid-ramp at ANY warn distance. 3000 is thus the largest value
+// honest on every level; the default deliberately sits above it (~3.4 s at cruise
+// speed) because reaction time won by ear beat ramp purity — on the zPos2 = 0 levels
+// the buzz starts partway up the ramp the moment the object streams in. The F1 slider
+// allows up to 6000 for the levels that spawn farther.
+inline constexpr float kObstacleCueWarnDistDefault = 4000.0f;
+inline constexpr float kObstacleCueSlowDefault = 0.8f;
+inline constexpr float kObstacleCueFastDefault = 0.04f;
 // Floor for the fast-interval slider AND the length budget of the synthesized buzz:
 // the whole buffer must finish inside the fastest interval or every pulse truncates at
 // the restart. A static_assert in ObstacleAheadCue_GenerateBuzz enforces the budget at
 // compile time, so retuning the timbre longer without moving this fails the build
 // instead of clicking by ear.
-inline constexpr float kObstacleCueMinIntervalSec = 0.07f;
+inline constexpr float kObstacleCueMinIntervalSec = 0.04f;
 // Lateral/vertical slack added around the hitbox footprint before asking "am I on a
 // collision course". Covers the Arwing's span (the test uses the ship's center point;
 // the engine collides four body/wing points, wings at roughly +/- 40 units) plus the
