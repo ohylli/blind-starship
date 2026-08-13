@@ -163,7 +163,14 @@ struct Recording {
     Path root_path;
 };
 
+// Recording is active only while the frame allows it AND no skip bracket is open.
+// ShouldInterpolateFrame(false/true) brackets nest (e.g. Object_SetMatrix's billboard skip
+// runs inside Display_Update's big-camera-jump skip), so the flag must be a depth counter:
+// a plain bool let an inner (true) re-enable recording mid-skip, which made a
+// RecordCloseChild run without its matching open and pop the root of current_path.
 bool is_recording;
+bool frame_enabled;
+int skip_depth;
 vector<Path*> current_path;
 uint32_t camera_epoch;
 uint32_t previous_camera_epoch;
@@ -416,7 +423,12 @@ bool camera_interpolation = true;
 
 void FrameInterpolation_ShouldInterpolateFrame(bool shouldInterpolate) {
     // camera_interpolation = shouldInterpolate;
-    is_recording = shouldInterpolate;
+    if (!shouldInterpolate) {
+        skip_depth++;
+    } else if (skip_depth > 0) {
+        skip_depth--;
+    }
+    is_recording = frame_enabled && skip_depth == 0;
 }
 
 void FrameInterpolation_StartRecord(void) {
@@ -424,6 +436,8 @@ void FrameInterpolation_StartRecord(void) {
     current_recording = {};
     current_path.clear();
     current_path.push_back(&current_recording.root_path);
+    skip_depth = 0; // heal any skip bracket left open last frame
+    frame_enabled = false;
     if (!camera_interpolation) {
         // default to interpolating
         camera_interpolation = true;
@@ -431,12 +445,14 @@ void FrameInterpolation_StartRecord(void) {
         return;
     }
     if (GameEngine::GetInterpolationFPS() != 20) {
-        is_recording = true;
+        frame_enabled = true;
     }
+    is_recording = frame_enabled;
 }
 
 void FrameInterpolation_StopRecord(void) {
     previous_camera_epoch = camera_epoch;
+    frame_enabled = false;
     is_recording = false;
 }
 
@@ -453,6 +469,10 @@ void FrameInterpolation_RecordCloseChild(void) {
     if (!is_recording)
         return;
     // append(Op::CloseChild);
+    if (current_path.size() <= 1) {
+        // Unmatched close (its open ran while recording was off) — never pop the root.
+        return;
+    }
     if (has_inv_actor_mtx && current_path.size() == inv_actor_mtx_path_index) {
         has_inv_actor_mtx = false;
     }
