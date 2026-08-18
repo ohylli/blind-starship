@@ -49,8 +49,12 @@ static std::vector<float> ObstacleAheadCue_GenerateBuzz(int sampleRate) {
                                         kAmplitude, kTailSec);
 }
 
-// Near-face gap -> pulse interval, linear: slow at/beyond the warning distance, fast at
-// contact (gap 0). NaN-guarded in the usual !(x > lo) style (see
+// Near-face gap -> pulse interval, geometric: slow at/beyond the warning distance, fast
+// at contact (gap 0), interpolated in the log domain so the pulse *rate* climbs by
+// equal-sounding tempo steps per unit of distance closed. A linear-in-interval ramp
+// packed nearly all audible urgency into the last half second of the approach (rate is
+// 1/interval, so it crawled early and exploded at contact); the geometric ramp spreads
+// it across the whole warning distance. NaN-guarded in the usual !(x > lo) style (see
 // CueCommon_ComputeFreqModFromY for the rationale); warnDist is sanitized by the caller.
 static f32 ObstacleAheadCue_Interval(f32 gap, f32 warnDist) {
     f32 slow = CVarGetFloat(kObstacleCueSlowCVar, kObstacleCueSlowDefault);
@@ -68,7 +72,7 @@ static f32 ObstacleAheadCue_Interval(f32 gap, f32 warnDist) {
     if (t > 1.0f) {
         t = 1.0f;
     }
-    return fast + (slow - fast) * t;
+    return fast * powf(slow / fast, t);
 }
 
 static void ObstacleAheadCue_OnPostUpdate(IEvent* event) {

@@ -52,8 +52,10 @@ A record is *on course* when all of:
    margin covers the Arwing's physical span (the engine collides four body/wing points,
    wings ~±40 units; the test uses the center point) plus reaction slack.
 
-The nearest on-course record wins and its gap maps linearly to the pulse interval (slow
-at the warning distance, fast at contact). Per-**record**, not per-object: a compound
+The nearest on-course record wins and its gap maps geometrically (log-domain
+interpolation) to the pulse interval (slow at the warning distance, fast at contact), so
+the pulse rate climbs by equal-sounding tempo steps as the gap closes instead of
+saving nearly all of its rise for the last half second. Per-**record**, not per-object: a compound
 hitbox like a pillar–lintel–pillar gate stays silent when the player is lined up with
 the gap — that is correct, not a bug.
 
