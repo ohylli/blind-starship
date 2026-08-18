@@ -4,11 +4,11 @@
 // Object_IsObstacle predicate — collidable hitbox, not lockable — minus the cue-side
 // exclusions below) and their solid hitbox records as world-space boxes with the
 // player-relative geometry every consumer needs already derived. The obstacle-ahead cue
-// is the first consumer; the planned all-range extension and the directional obstacle
-// cues (left/right, above/below) are the reason the geometry is yielded raw — no
-// thresholding, no margin, no direction naming happens here. Every filter beyond "is a
-// warn-worthy obstacle with a solid box" is the caller's policy. Game-coupled by design,
-// like CueScan.h.
+// (its rails footprint test and its all-range ray test) is the first consumer; the
+// planned directional obstacle cues (left/right, above/below) are the reason the
+// geometry is yielded raw — no thresholding, no margin, no direction naming happens
+// here. Every filter beyond "is a warn-worthy obstacle with a solid box" is the
+// caller's policy. Game-coupled by design, like CueScan.h.
 //
 // Cue-side exclusions on top of the predicate (policy shared by the future obstacle
 // cues, deliberately NOT in Object_IsObstacle, whose other consumer is
@@ -56,8 +56,9 @@ struct ObstacleBox {
     s32 slot;     // index in that array
     s32 objId;    // obj.id
     s32 record;   // hitbox record index, 0-based (the engine's hit index is this + 1)
-    Vec3f center; // obj.pos + the record's offsets; with `half`, the full box — what the
-                  // all-range course test will ray-cast against (unused on rails)
+    Vec3f center; // obj.pos + the record's offsets; with `half`, the full box in world
+                  // space. Consumed here to derive dx/dy/dz; kept public for debug joins
+                  // and the planned directional cues — no course test reads it today.
     Vec3f half;   // record half-extents, non-negative
     f32 dx, dy;   // center minus player (pos.x / pos.y); the directional cues' signal
     f32 dz;       // center minus player trueZpos — with dx/dy the full 3D center delta
@@ -153,10 +154,16 @@ template <typename Fn> void ObstacleScan_ForEachBox(Player* player, ObstacleScan
     for (s32 i = 0; i < ARRAY_COUNT(gActors); i++) {
         ObstacleScanDetail::EmitBoxes(OBJECT_TYPE_ACTOR, &gActors[i], OBSTACLE_ARRAY_ACTOR, i, player, stats, fn);
     }
-    // The mode gate is load-bearing, not just the null check: the arena allocator frees
-    // the gScenery360 block on level transitions without nulling the pointer, so after
-    // an all-range level it DANGLES — it may only be dereferenced while gLevelMode says
-    // the allocation in fox_play.c is live.
+    // The mode gate is load-bearing, not just the null check — but not because the
+    // pointer dangles: Memory_FreeAll is a bump-pointer reset over a static buffer
+    // (sys_memory.c), so gScenery360 always points at mapped memory. The hazard is that
+    // after an all-range level ends the block is REUSED by later allocations, and
+    // info.hitbox is a pointer field that would then be dereferenced with arbitrary
+    // bits — no null or bounds check can catch that. The safe invariant is to walk the
+    // array only while the engine itself walks it under this same mode gate
+    // (fox_enmy.c:888). That formulation also covers Venom-Andross, which skips the
+    // allocation and reuses a prior level's block in place after re-zeroing its
+    // statuses (fox_play.c:7128).
     if ((gLevelMode == LEVELMODE_ALL_RANGE) && (gScenery360 != nullptr)) {
         for (s32 i = 0; i < kScenery360Count; i++) {
             ObstacleScanDetail::EmitBoxes(OBJECT_TYPE_SCENERY360, &gScenery360[i], OBSTACLE_ARRAY_SCENERY360, i,

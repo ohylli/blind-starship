@@ -19,11 +19,12 @@
 // footprint; in all-range the course is a ray cast along the aim heading through the
 // same boxes (the slab test below). Rendered CUE3D_MODE_DIRECT (dead center, no
 // spatialization, no distance attenuation): a warning is not a navigation target — it
-// must not occupy the spatial channel the ring/enemy cues use, and "how soon" is the only actionable
-// dimension for something you steer away from. The pulse interval is deliberately the
-// ONLY signal: loudness and pitch stay constant so "faster" is unambiguously "closer".
-// The planned directional siblings (obstacle left/right, above/below) will carry the
-// "which way to dodge" half. Design record: docs/accessibility-obstacle-cue.md.
+// must not occupy the spatial channel the ring/enemy cues use, and "how soon" is the
+// only actionable dimension for something you steer away from. The pulse interval is
+// deliberately the ONLY signal: loudness and pitch stay constant so "faster" is
+// unambiguously "closer". The planned directional siblings (obstacle left/right,
+// above/below) will carry the "which way to dodge" half. Design record:
+// docs/accessibility-obstacle-cue.md.
 static Cue* sObstacleCue = nullptr;
 
 static ObstacleAheadCueDebug sDebugState;
@@ -91,8 +92,10 @@ static f32 ObstacleAheadCue_RayGap(const ObstacleBox& box, const Vec3f& fwd, f32
     const f32 f[3] = { fwd.x, fwd.y, fwd.z };
     f32 tNear = -INFINITY; // fwd is unit-length, so at least one axis divides and both
     f32 tFar = INFINITY;   // bounds end up finite
+    // fwd is unit-length, so this is a direction-cosine floor, not a distance.
+    constexpr f32 kRayParallelEps = 1e-6f;
     for (int axis = 0; axis < 3; axis++) {
-        if (fabsf(f[axis]) < 1e-6f) {
+        if (fabsf(f[axis]) < kRayParallelEps) {
             if (fabsf(d[axis]) > h[axis]) {
                 return -1.0f; // parallel to this slab pair and outside it
             }
@@ -157,22 +160,19 @@ static void ObstacleAheadCue_OnPostUpdate(IEvent* event) {
 
     Player* player = &gPlayer[0];
 
-    // All-range flies by aim heading, so its course is a ray along the aim-forward unit
-    // vector (PlayerAim.h's verified composition, degrees). The forms whose heading
-    // composes differently (Landmaster, on-foot — see PlayerAim.h) never appear in solo
-    // all-range, Versus being out of scope above; stop rather than guess if one ever
-    // does, leaving scanned == false as the `cues` dump's tell.
+    // All-range flies by aim heading, so its course is a ray along Player_AimForward
+    // (PlayerAim.h owns the composition). The forms whose heading composes differently
+    // (Landmaster, on-foot — see PlayerAim.h) never appear in solo all-range, Versus
+    // being out of scope above; stop rather than guess if one ever does, with
+    // gates.aimValid as the `cues` dump's tell.
     Vec3f fwd = { 0.0f, 0.0f, 0.0f };
     if (allRange) {
         if (!Player_AimAnglesValid(*player)) {
+            dbg.aimValid = false;
             sObstacleCue->Stop();
             return;
         }
-        f32 yaw = Player_AimYaw(*player) * M_DTOR;
-        f32 pitch = Player_AimPitch(*player) * M_DTOR;
-        fwd.x = -sinf(yaw) * cosf(pitch);
-        fwd.y = sinf(pitch);
-        fwd.z = -cosf(yaw) * cosf(pitch);
+        fwd = Player_AimForward(*player);
         dbg.fwdX = fwd.x;
         dbg.fwdY = fwd.y;
         dbg.fwdZ = fwd.z;

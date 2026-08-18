@@ -1277,7 +1277,8 @@ static nlohmann::json CueObstacleAheadPolicyJson(const ObstacleAheadCueDebug& d)
     j["gates"] = { { "enabled", d.enabled },
                    { "obstacleEnabled", d.obstacleEnabled },
                    { "modeOk", d.modeOk },
-                   { "control", d.control } };
+                   { "control", d.control },
+                   { "aimValid", d.aimValid } };
     j["allRange"] = d.allRange;
     // Scan results are reported whenever the scan ran — an empty scan still shows its
     // counters, which is the "why is it silent" answer (see CueEnemyPolicyJson).

@@ -35,6 +35,8 @@
 
 #include "port/CGameCompat.h"
 
+#include <math.h>
+
 inline bool Player_AimAnglesValid(const Player& p) {
     return (p.form == FORM_ARWING) || (p.form == FORM_BLUE_MARINE);
 }
@@ -45,6 +47,16 @@ inline f32 Player_AimYaw(const Player& p) {
 
 inline f32 Player_AimPitch(const Player& p) {
     return p.xRot_120 + p.rot.x + p.aerobaticPitch;
+}
+
+// The spherical form above, realized: the aim heading as a world-space unit vector.
+// This is the single owner of the composition — consumers (the obstacle cue's ray test,
+// the planned directional cues) call this instead of open-coding the sines, so the
+// verified signs can never drift. Gate on Player_AimAnglesValid first.
+inline Vec3f Player_AimForward(const Player& p) {
+    f32 yaw = Player_AimYaw(p) * M_DTOR;
+    f32 pitch = Player_AimPitch(p) * M_DTOR;
+    return { -sinf(yaw) * cosf(pitch), sinf(pitch), -cosf(yaw) * cosf(pitch) };
 }
 
 inline f32 Player_FaceYaw(const Player& p) {

@@ -57,8 +57,8 @@ The test is per mode. **On rails** a record is *on course* when all of:
    wings ~±40 units; the test uses the center point) plus reaction slack.
 
 **In all-range** the ship flies in any direction, so the fixed −Z course is replaced by
-a ray cast along the aim heading: the forward unit vector from `Player_AimYaw` /
-`Player_AimPitch` (`src/port/PlayerAim.h`, the composition verified live against
+a ray cast along the aim heading: the forward unit vector from `Player_AimForward`
+(`src/port/PlayerAim.h`, the composition verified live against
 velocity — `player->rot` alone is *not* a heading there), intersected with each box via
 a standard ray-vs-AABB slab test with the box expanded by the same margin on all three
 axes (in all-range "lateral" is not axis-aligned; the extra margin on the ray axis is
@@ -193,9 +193,11 @@ Each of these is a deliberate v1 decision with a known attach point, not an over
   The `cues` dump reports the heading (`forward`) and the winning ray gap (`target.gap`)
   precisely so the slab test can be recomputed offline from one dump. Missions also
   script control away mid-fight (`gates.control` flips false) — poll around it.
-- The debug server's `cues` command reports the full decision: gates, scan counters
-  (`active`/`obstacles`/`boxes`, plus `onCourse` after the course filter), the effective
-  knobs, and the winning record (array/slot/objId/record, `gapZ`, per-axis
+- The debug server's `cues` command reports the full decision: gates (`modeOk` and
+  the all-range form gate `aimValid` among them), the top-level `allRange` flag, scan
+  counters (`active`/`obstacles`/`boxes`, plus `onCourse` after the course filter), the
+  effective knobs, the unit `forward` heading (all-range only), and the winning record
+  (array/slot/objId/record, the course `gap` plus the raw `gapZ`, per-axis
   clearance/delta/half-extents, the pushed `intervalSec`). Join `target.slot` against
   `objects scenery` to cross-check positions.
 - The F1 volume-slider Preview plays the buzz as a seamless drone (previews force

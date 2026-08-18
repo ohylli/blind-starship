@@ -82,6 +82,10 @@ struct ObstacleAheadCueDebug {
     bool scanned = false; // the scan ran; scanned && !active means nothing on course
     bool enabled = false, obstacleEnabled = false, control = false;
     bool modeOk = false, allRange = false; // CueScan_ModeInScope result + mode flag
+    bool aimValid = true; // the all-range form gate (Player_AimAnglesValid). Defaults
+                          // true — on rails and when an earlier gate already stopped the
+                          // tick it is never evaluated — so false always means "the
+                          // heading gate is what silenced the cue"
     int32_t scanActive = 0, scanObstacles = 0, scanBoxes = 0; // ObstacleScanStats
     int32_t onCourse = 0;           // boxes that passed the course test this tick
     float warnDist = 0, margin = 0; // effective (post-guard) knob values used this tick
