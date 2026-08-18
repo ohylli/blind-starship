@@ -1,7 +1,7 @@
 #pragma once
 
 // Registers the debug server's commands (health, pause/resume/step, warp, checkpoint,
-// player, objects) with the Ship::Console registry, plus the game-thread event listeners
+// player, objects, input) with the Ship::Console registry, plus the game-thread event listeners
 // that drive `step`'s frame counting and `warp`'s staged level transition. Called from
 // GameEngine::Create on every platform — including Switch, where the socket transport is
 // compiled out — so the in-game ImGui console can use the commands even when the server
@@ -11,7 +11,15 @@
 #include <stdint.h>
 
 #ifdef __cplusplus
+#include <string>
+
 void DebugCommands_Init();
+
+// Shared play-mode precondition, used by the commands here and by DebugInput.cpp:
+// InPlayMode says gameplay state (gPlayer and friends) is safe to touch; RequirePlay
+// additionally writes the standard error message when it is not.
+bool DebugCommands_InPlayMode();
+bool DebugCommands_RequirePlay(std::string* output);
 
 extern "C" {
 #endif

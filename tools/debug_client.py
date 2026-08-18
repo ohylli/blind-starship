@@ -15,6 +15,8 @@ Usage:
     python tools/debug_client.py checkpoint-save big-asteroids --desc "asteroid cluster"
     python tools/debug_client.py warp --checkpoint big-asteroids --paused
     python tools/debug_client.py checkpoint-list
+    python tools/debug_client.py input stick -60 0 30 # full-left bank for 30 play frames
+    python tools/debug_client.py input hold a b       # hold buttons until `input clear`
     python tools/debug_client.py --wait 30            # poll until the game answers
     python tools/debug_client.py --repl               # one command per stdin line
 

@@ -387,6 +387,48 @@ and reports the unit `forward` heading the ray test cast along (all-range only).
 Breaking only in the `gates.onRails` rename, which nothing shipped consumed; otherwise
 additive, so no protocol bump.
 
+## Resolved by implementation, phase 3: input injection (2026-08-18)
+
+`input` injects synthetic controller input (DebugInput.cpp), so a client can fly the ship
+— the missing ingredient for scripted cue-tuning scenarios: `warp --checkpoint x --paused`,
+aim with `input stick`, advance with `step`, inspect with `cues`. Subcommands: `stick <x>
+<y> [frames]` (post-dead-zone game units, -60..60; the injector adds the 16-unit bias
+back), `hold <button...> [frames]`, `press <button...>` (one-frame tap), `clear`, `status`.
+Durations are *play* frames, so holds compose exactly with `step` and survive a pause.
+
+Decisions of record:
+
+- **Injection point is the game's own pad double buffer** (`sNextController`, already
+  external in sf64thread.h — the sfxjukebox extern pattern wasn't even needed), merged on
+  GamePostUpdateEvent so the next tick's `Controller_UpdateInput` consumes it. Everything
+  downstream — press edges, dead zone, `gInputHold`/`gInputPress` — is computed by the
+  game's own code, so injected input is indistinguishable from a real pad, works with no
+  controller connected, and needed zero game-side or libultraship changes. Rejected
+  alternatives: SDL synthetic events (focus/timing nondeterminism), ControlDeck changes
+  (submodule), writing `gControllerHold` directly (would re-implement edge/dead-zone
+  logic).
+- **Frame counts are exact.** A channel counts down only on non-cancelled play frames
+  whose consumed pad actually contained the injection (the `primed` flags), and the frame
+  that hits zero deactivates the channel before that tick's merge — no off-by-one, no
+  bleed. `input stick -60 0 30` + `step 30` is exactly 30 frames of full-left bank.
+- **Presses bypass the pad.** Press edges recompute every engine tick, so a pad-held
+  button armed while paused would fire its edge on a paused tick and the stepped frame
+  would see only "held". `press` instead forces the press+hold bits into
+  `gControllerPress`/`gControllerHold` on the next non-cancelled play frame, after
+  `Controller_UpdateInput` computed them and before the play body reads them (listeners
+  run before the CALL_CANCELLABLE_EVENT body; HIGH priority like step, to see the final
+  cancelled flag). Press-then-hold actions (charge shot) are `press a` + `hold a N` armed
+  together.
+- **Arming requires live gameplay** (step's gate): in PLAY_PAUSE an injected stick would
+  steer the pause menu. `clear`/`status` work from anywhere. Injection auto-clears when
+  play mode ends (death, level clear, warp kickoff), like step's cleanup — a stale stick
+  hold would otherwise navigate the next menu. While `gControllerLock` holds input across
+  a transition, the injector respects it (skips the merge, pauses the countdown) rather
+  than fighting it.
+- **Scope**: single channel set for `gMainController` (player 1); VS/multi-pad injection
+  deliberately out. Screenshots (the other half of the old phase-3 outline) remain
+  unimplemented.
+
 ## Open questions for refinement
 
 - **TTS history query** (phase 2). Where to record announcements — in the TTS

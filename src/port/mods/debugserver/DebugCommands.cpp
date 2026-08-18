@@ -2,12 +2,14 @@
 // `objects` (JSON dumps), the execution controls `pause` / `resume` / `step`, and the
 // scenario controls `warp` / `checkpoint`. Multi-frame machinery (step's frame counting,
 // warp's staged level transition) runs on game-thread event listeners registered here
-// alongside the commands. Handlers write compact JSON into the console output string; the
+// alongside the commands; the `input` injection command lives in DebugInput.cpp,
+// registered from DebugCommands_Init. Handlers write compact JSON into the console output string; the
 // server wraps it in its wire envelope, the ImGui console prints it verbatim. JSON
 // because the primary consumer is a script — filtering/diffing/watching happens
 // client-side (docs/debug-server-plan.md).
 
 #include "DebugCommands.h"
+#include "DebugInput.h"
 #include "DebugServer.h"
 
 #include "port/CGameCompat.h"
@@ -139,6 +141,14 @@ static bool RequirePlay(std::string* output) {
         *output += ")";
     }
     return false;
+}
+
+bool DebugCommands_InPlayMode() {
+    return InPlayMode();
+}
+
+bool DebugCommands_RequirePlay(std::string* output) {
+    return RequirePlay(output);
 }
 
 static bool IsDebugPaused() {
@@ -1476,4 +1486,5 @@ void DebugCommands_Init() {
                                   "Dump accessibility audio-cue state (registry, voices, policy targets) as JSON. "
                                   "Safe anywhere.",
                                   {} });
+    DebugInput_Register();
 }
