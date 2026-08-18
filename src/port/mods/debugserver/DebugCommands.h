@@ -15,11 +15,13 @@
 
 void DebugCommands_Init();
 
-// Shared play-mode precondition, used by the commands here and by DebugInput.cpp:
+// Shared play-mode preconditions, used by the commands here and by DebugInput.cpp:
 // InPlayMode says gameplay state (gPlayer and friends) is safe to touch; RequirePlay
-// additionally writes the standard error message when it is not.
+// additionally writes the standard error message when it is not; RequireLiveGameplay
+// further rejects PLAY_PAUSE (the in-game pause menu), where play frames don't run.
 bool DebugCommands_InPlayMode();
 bool DebugCommands_RequirePlay(std::string* output);
+bool DebugCommands_RequireLiveGameplay(std::string* output);
 
 extern "C" {
 #endif

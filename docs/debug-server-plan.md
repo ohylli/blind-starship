@@ -418,13 +418,19 @@ Decisions of record:
   `Controller_UpdateInput` computed them and before the play body reads them (listeners
   run before the CALL_CANCELLABLE_EVENT body; HIGH priority like step, to see the final
   cancelled flag). Press-then-hold actions (charge shot) are `press a` + `hold a N` armed
-  together.
+  together — a paused/`step` workflow: free-running, the two arming commands are a drain
+  apart and the composition reads as press, one-frame release, press again; there `hold`
+  alone already produces a clean pad edge. Re-arming `press` before it fires accumulates
+  (both fire on the next play frame); re-arming `stick`/`hold` replaces.
 - **Arming requires live gameplay** (step's gate): in PLAY_PAUSE an injected stick would
   steer the pause menu. `clear`/`status` work from anywhere. Injection auto-clears when
   play mode ends (death, level clear, warp kickoff), like step's cleanup — a stale stick
-  hold would otherwise navigate the next menu. While `gControllerLock` holds input across
-  a transition, the injector respects it (skips the merge, pauses the countdown) rather
-  than fighting it.
+  hold would otherwise navigate the next menu. An already-armed injection instead *stands
+  down without disarming* whenever the game expects the pad untouched: while
+  `gControllerLock` holds input across a transition (presses included), and in
+  PLAY_PAUSE — a hold re-merged there could never form the press edge the unpause check
+  needs (an injected `hold start` would wedge the pause menu shut). The countdown pauses
+  with it and resumes once a live frame consumes the injection again.
 - **Scope**: single channel set for `gMainController` (player 1); VS/multi-pad injection
   deliberately out. Screenshots (the other half of the old phase-3 outline) remain
   unimplemented.

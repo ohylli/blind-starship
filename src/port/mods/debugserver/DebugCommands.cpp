@@ -151,6 +151,23 @@ bool DebugCommands_RequirePlay(std::string* output) {
     return RequirePlay(output);
 }
 
+// The play-mode guard passes during PLAY_PAUSE (the in-game pause menu, where play
+// updates don't run); commands that need play frames to advance also require PLAY_UPDATE.
+bool DebugCommands_RequireLiveGameplay(std::string* output) {
+    if (!RequirePlay(output)) {
+        return false;
+    }
+    if (gPlayState != PLAY_UPDATE) {
+        if (output != nullptr) {
+            *output += "requires live gameplay (currently ";
+            *output += PlayStateName(gPlayState);
+            *output += ")";
+        }
+        return false;
+    }
+    return true;
+}
+
 static bool IsDebugPaused() {
     return CVarGetInteger("gDebugPause", 0) != 0;
 }
@@ -291,17 +308,8 @@ static int32_t ResumeHandler(std::shared_ptr<Ship::Console> console, const std::
 
 static int32_t StepHandler(std::shared_ptr<Ship::Console> console, const std::vector<std::string>& args,
                            std::string* output) {
-    if (!RequirePlay(output)) {
-        return 1;
-    }
-    // The play-mode guard passes during PLAY_PAUSE (the in-game pause menu, where play
-    // updates don't run) — stepping there would just hang until the menu closes.
-    if (gPlayState != PLAY_UPDATE) {
-        if (output != nullptr) {
-            *output += "requires live gameplay (currently ";
-            *output += PlayStateName(gPlayState);
-            *output += ")";
-        }
+    // Stepping in the pause menu would just hang until the menu closes.
+    if (!DebugCommands_RequireLiveGameplay(output)) {
         return 1;
     }
     if (StepInFlight()) {

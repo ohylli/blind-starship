@@ -29,7 +29,9 @@
 // *non-cancelled* play frame, after UpdateInput computed them and before the play body
 // reads them (event listeners run before the CALL_CANCELLABLE_EVENT body). Actions gated
 // on press-then-hold (e.g. the charge shot) are the composition `input press a` +
-// `input hold a <frames>` armed together.
+// `input hold a <frames>` armed together — a paused/`step` workflow. Free-running, the
+// two arming commands land a frame apart and the gap reads as a one-frame release; there
+// `hold` alone already produces a clean pad edge, so `press` is only needed while paused.
 
 #include "DebugInput.h"
 #include "DebugCommands.h"
@@ -188,10 +190,12 @@ static void InputOnGamePostUpdate(IEvent* event) {
         sInput = InputState{};
         return;
     }
-    // Transition frames: Controller_ReadData zeroed the pad instead of reading it and the
-    // game expects it to stay zeroed, so hold the injection (and its countdown — an
-    // unconsumed pad must not count) rather than fight the lock.
-    if (gControllerLock != 0) {
+    // Stand down without disarming — and keep the countdown honest (an unconsumed pad
+    // must not count) — whenever the game expects the pad untouched: transition frames,
+    // where Controller_ReadData zeroed the pad instead of reading it (gControllerLock),
+    // and the in-game pause menu, where an injected stick would steer the menu and a
+    // re-merged button could never form the press edge the unpause check needs.
+    if (gControllerLock != 0 || gPlayState != PLAY_UPDATE) {
         sInput.stickPrimed = false;
         sInput.holdPrimed = false;
         return;
@@ -214,7 +218,9 @@ static void InputOnPlayUpdate(IEvent* event) {
     if (event->cancelled) {
         return; // debug-paused frame: nothing was consumed, presses stay armed
     }
-    if (sInput.pressButtons != 0) {
+    // Same stand-down as the merge: while gControllerLock holds input across a
+    // transition the game expects zeroed input, so a press stays armed instead of firing.
+    if (sInput.pressButtons != 0 && gControllerLock == 0) {
         gControllerPress[gMainController].button |= sInput.pressButtons;
         gControllerHold[gMainController].button |= sInput.pressButtons;
         sInput.pressButtons = 0;
@@ -242,6 +248,22 @@ static bool ParseButtonArgs(const std::vector<std::string>& args, size_t first, 
         }
         if (allowFrames && i + 1 == args.size() && ParseLongToken(args[i], 1, kMaxInputFrames, &frames)) {
             break;
+        }
+        // Route numeric tokens to a frame-count diagnosis — "unknown button: 0" would
+        // send the author hunting for a button-name problem.
+        char* end = nullptr;
+        (void) strtol(args[i].c_str(), &end, 10);
+        if (end != args[i].c_str() && *end == '\0') {
+            if (output != nullptr) {
+                if (!allowFrames) {
+                    *output += "press takes no frame count (one-frame tap; use: input press <button...>)";
+                } else if (i + 1 != args.size()) {
+                    *output += "frame count must be the last argument";
+                } else {
+                    *output += "frame count must be an integer between 1 and " + std::to_string(kMaxInputFrames);
+                }
+            }
+            return false;
         }
         if (output != nullptr) {
             *output += "unknown button: " + args[i] + " (valid: " + ButtonNameList() + ")";
@@ -277,15 +299,17 @@ static int32_t InputHandler(std::shared_ptr<Ship::Console> console, const std::v
         }
         return 0;
     }
-    if (!DebugCommands_RequirePlay(output)) {
+    // Reject a mistyped subcommand before the play gates — that diagnosis needs no game
+    // state.
+    if (sub != "stick" && sub != "hold" && sub != "press") {
+        if (output != nullptr) {
+            *output += "unknown subcommand: " + sub + " (stick, hold, press, clear, status)";
+        }
         return 1;
     }
     // Same live-gameplay gate as step: during PLAY_PAUSE (the in-game pause menu) play
     // frames don't run, and an armed stick would steer the menu instead of the ship.
-    if (gPlayState != PLAY_UPDATE) {
-        if (output != nullptr) {
-            *output += "requires live gameplay";
-        }
+    if (!DebugCommands_RequireLiveGameplay(output)) {
         return 1;
     }
     if (sub == "stick") {
@@ -326,18 +350,15 @@ static int32_t InputHandler(std::shared_ptr<Ship::Console> console, const std::v
         sInput.holdButtons = mask;
         sInput.holdRemaining = (int) frames;
         sInput.holdPrimed = false;
-    } else if (sub == "press") {
+    } else { // press
         u16 mask;
         long frames;
         if (!ParseButtonArgs(args, 2, false, &mask, &frames, output)) {
             return 1;
         }
-        sInput.pressButtons = mask;
-    } else {
-        if (output != nullptr) {
-            *output += "unknown subcommand: " + sub + " (stick, hold, press, clear, status)";
-        }
-        return 1;
+        // Accumulate: a second press armed in the same paused stretch must not silently
+        // drop the first — both fire on the next play frame. `input clear` disarms.
+        sInput.pressButtons |= mask;
     }
     if (output != nullptr) {
         *output += InputStateJson().dump();
