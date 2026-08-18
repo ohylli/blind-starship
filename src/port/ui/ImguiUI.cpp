@@ -415,9 +415,9 @@ void DrawSettingsMenu(){
                 .defaultValue = true
             });
             UIWidgets::CVarCheckbox("Obstacle warning", kObstacleCueEnabledCVar, {
-                .tooltip = "A low buzz that beats faster as you close on something solid dead ahead that you "
-                           "cannot shoot down. On-rails levels. Note: Minimal training removes Training's "
-                           "obstacles, so this cue stays silent there.",
+                .tooltip = "A low buzz that beats faster as you close on something solid ahead of you that you "
+                           "cannot shoot down. Works on rails and in solo all-range battles. Note: Minimal "
+                           "training removes Training's obstacles, so this cue stays silent there.",
                 .defaultValue = true
             });
             if (UIWidgets::BeginMenu("Cue volumes")) {

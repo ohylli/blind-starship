@@ -1276,8 +1276,9 @@ static nlohmann::json CueObstacleAheadPolicyJson(const ObstacleAheadCueDebug& d)
     j["scanned"] = d.scanned;
     j["gates"] = { { "enabled", d.enabled },
                    { "obstacleEnabled", d.obstacleEnabled },
-                   { "onRails", d.onRails },
+                   { "modeOk", d.modeOk },
                    { "control", d.control } };
+    j["allRange"] = d.allRange;
     // Scan results are reported whenever the scan ran — an empty scan still shows its
     // counters, which is the "why is it silent" answer (see CueEnemyPolicyJson).
     if (d.scanned) {
@@ -1285,15 +1286,19 @@ static nlohmann::json CueObstacleAheadPolicyJson(const ObstacleAheadCueDebug& d)
         j["onCourse"] = d.onCourse;
         j["warnDist"] = d.warnDist;
         j["margin"] = d.margin;
+        if (d.allRange) {
+            j["forward"] = { { "x", d.fwdX }, { "y", d.fwdY }, { "z", d.fwdZ } };
+        }
     }
     if (d.active) {
         j["target"] = { { "array", CueObstacleArrayJson(d.target.array) },
                         { "slot", d.target.slot },
                         { "objId", d.target.objId },
                         { "record", d.target.record },
+                        { "gap", d.target.gap },
                         { "gapZ", d.target.gapZ },
                         { "clear", { { "x", d.target.clearX }, { "y", d.target.clearY } } },
-                        { "delta", { { "x", d.target.dx }, { "y", d.target.dy } } },
+                        { "delta", { { "x", d.target.dx }, { "y", d.target.dy }, { "z", d.target.dz } } },
                         { "half", { { "x", d.target.halfX }, { "y", d.target.halfY }, { "z", d.target.halfZ } } } };
         j["intervalSec"] = d.intervalSec;
     }

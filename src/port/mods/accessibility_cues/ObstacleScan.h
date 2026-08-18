@@ -28,16 +28,18 @@
 // HITBOX_ROTATED's rotation floats are skipped with its box used as-is — both absorbed
 // by the caller's safety margin; shadow and whoosh records are dropped entirely
 // (Object_ReadSolidHitboxes). Poly-mesh scenery carrying gNoHitbox never appears at all
-// (accepted miss — docs/accessibility-obstacle-cue.md).
+// (accepted miss — docs/accessibility-obstacle-cue.md). gSprites[] is not scanned in
+// either mode (accepted miss, same doc): sprites do collide (Fortuna's poles,
+// Corneria's trees — a harmless stagger, fox_play.c's sprite loop), but warning about
+// them is a scope decision deferred with the user, not an oversight.
 
 #include "port/CGameCompat.h"
 #include "port/mods/ObjectQuery.h"
 
 // Which active-world array a box came from. Reported in the debug mirror so a policy
-// decision can be joined against the `objects` command's dumps. BOSS and SCENERY360
-// currently have no producer (bosses are excluded as policy, gScenery360 is all-range —
-// the planned extension adds its loop); they keep their slots so the debug indices stay
-// stable when that happens.
+// decision can be joined against the `objects` command's dumps. BOSS currently has no
+// producer (bosses are excluded as policy); it keeps its slot so the debug indices stay
+// stable if that ever changes.
 enum ObstacleArray {
     OBSTACLE_ARRAY_SCENERY = 0,
     OBSTACLE_ARRAY_ACTOR,
@@ -58,6 +60,8 @@ struct ObstacleBox {
                   // all-range course test will ray-cast against (unused on rails)
     Vec3f half;   // record half-extents, non-negative
     f32 dx, dy;   // center minus player (pos.x / pos.y); the directional cues' signal
+    f32 dz;       // center minus player trueZpos — with dx/dy the full 3D center delta
+                  // the all-range ray test casts along (negative = ahead of the player)
     // How far OUTSIDE the footprint the player is on each axis: fabsf(d) - half.
     // Negative means the player is inside the footprint on that axis. A collision-course
     // test is "both below the caller's safety margin"; a left/right or above/below cue
@@ -113,9 +117,10 @@ inline void EmitBoxes(ObjectEventType type, T* entry, ObstacleArray array, s32 s
         box.half.z = records[r].zHalf;
         box.dx = box.center.x - player->pos.x;
         box.dy = box.center.y - player->pos.y;
+        // trueZpos is the player's real world Z; pos.z is the path scroll (sf64player.h).
+        box.dz = box.center.z - player->trueZpos;
         box.clearX = fabsf(box.dx) - box.half.x;
         box.clearY = fabsf(box.dy) - box.half.y;
-        // trueZpos is the player's real world Z; pos.z is the path scroll (sf64player.h).
         box.gapZ = player->trueZpos - (box.center.z + box.half.z);
         if (stats != nullptr) {
             stats->boxes++;
@@ -125,12 +130,17 @@ inline void EmitBoxes(ObjectEventType type, T* entry, ObstacleArray array, s32 s
 }
 } // namespace ObstacleScanDetail
 
-// Walks gScenery[] and gActors[] (the on-rails world; gScenery360 is all-range-only and
-// deliberately not scanned yet — the all-range extension adds it here, behind a mode
-// flag, together with a range cutoff like kEnemyCueAllRangeMaxDist; gBosses[] is
-// excluded as policy, see the header comment) and calls fn(const ObstacleBox&) once per
-// solid hitbox record of every active obstacle. `stats` may be null. Cheap: ~110 slots,
-// a handful of records each, no allocation.
+// gScenery360 is a heap array of exactly this many slots — it is an `extern Scenery360*`
+// (sf64context.h) sized by the literal 200 at its Memory_Allocate calls (fox_play.c), so
+// ARRAY_COUNT cannot apply.
+inline constexpr s32 kScenery360Count = 200;
+
+// Walks gScenery[] and gActors[], plus gScenery360[] in all-range mode (gBosses[] is
+// excluded as policy, see the header comment), and calls fn(const ObstacleBox&) once per
+// solid hitbox record of every active obstacle. No range cutoff on the all-range walk:
+// distance thresholding is the caller's policy (the ahead cue's warnDist already bounds
+// it), and 200 extra slots per tick is negligible. `stats` may be null. Cheap: ~310
+// slots, a handful of records each, no allocation.
 template <typename Fn> void ObstacleScan_ForEachBox(Player* player, ObstacleScanStats* stats, Fn&& fn) {
     if (stats != nullptr) {
         stats->active = 0;
@@ -142,5 +152,15 @@ template <typename Fn> void ObstacleScan_ForEachBox(Player* player, ObstacleScan
     }
     for (s32 i = 0; i < ARRAY_COUNT(gActors); i++) {
         ObstacleScanDetail::EmitBoxes(OBJECT_TYPE_ACTOR, &gActors[i], OBSTACLE_ARRAY_ACTOR, i, player, stats, fn);
+    }
+    // The mode gate is load-bearing, not just the null check: the arena allocator frees
+    // the gScenery360 block on level transitions without nulling the pointer, so after
+    // an all-range level it DANGLES — it may only be dereferenced while gLevelMode says
+    // the allocation in fox_play.c is live.
+    if ((gLevelMode == LEVELMODE_ALL_RANGE) && (gScenery360 != nullptr)) {
+        for (s32 i = 0; i < kScenery360Count; i++) {
+            ObstacleScanDetail::EmitBoxes(OBJECT_TYPE_SCENERY360, &gScenery360[i], OBSTACLE_ARRAY_SCENERY360, i,
+                                          player, stats, fn);
+        }
     }
 }

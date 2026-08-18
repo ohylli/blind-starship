@@ -42,7 +42,9 @@ inline constexpr const char* kObstacleCueBoostCVar = "gAccessibilityObstacleCueB
 // honest on every level; the default deliberately sits above it (~3.4 s at cruise
 // speed) because reaction time won by ear beat ramp purity — on the zPos2 = 0 levels
 // the buzz starts partway up the ramp the moment the object streams in. The F1 slider
-// allows up to 6000 for the levels that spawn farther.
+// allows up to 6000 for the levels that spawn farther. None of this streaming honesty
+// applies in all-range mode: the whole arena loads at once, so every warn distance is
+// honest there and the ramp always starts at its top.
 inline constexpr float kObstacleCueWarnDistDefault = 4000.0f;
 inline constexpr float kObstacleCueSlowDefault = 0.8f;
 inline constexpr float kObstacleCueFastDefault = 0.04f;
@@ -66,9 +68,11 @@ inline constexpr float kObstacleCueBoostDefault = 1.5f;
 struct ObstacleAheadCueTargetDebug {
     int32_t array = -1; // ObstacleArray; the debug server resolves the name
     int32_t slot = -1, objId = -1, record = -1;
-    float gapZ = 0;               // distance to the near face, world units
+    float gap = 0;                // the course gap driving the interval: gapZ on rails,
+                                  // the ray's near-face distance in all-range
+    float gapZ = 0;               // raw distance to the near z face, world units
     float clearX = 0, clearY = 0; // footprint clearance (negative = inside)
-    float dx = 0, dy = 0;         // signed center offsets, the directional siblings' input
+    float dx = 0, dy = 0, dz = 0; // signed center offsets, the directional siblings' input
     float halfX = 0, halfY = 0, halfZ = 0;
 };
 
@@ -76,10 +80,13 @@ struct ObstacleAheadCueDebug {
     int32_t frame = -1;
     bool active = false;  // an on-course obstacle was found and the buzz was driven
     bool scanned = false; // the scan ran; scanned && !active means nothing on course
-    bool enabled = false, obstacleEnabled = false, onRails = false, control = false;
+    bool enabled = false, obstacleEnabled = false, control = false;
+    bool modeOk = false, allRange = false; // CueScan_ModeInScope result + mode flag
     int32_t scanActive = 0, scanObstacles = 0, scanBoxes = 0; // ObstacleScanStats
     int32_t onCourse = 0;           // boxes that passed the course test this tick
     float warnDist = 0, margin = 0; // effective (post-guard) knob values used this tick
+    float fwdX = 0, fwdY = 0, fwdZ = 0; // unit heading the all-range ray test cast along;
+                                        // zero on rails (the fixed -z test needs none)
     float intervalSec = 0;          // repeat interval pushed this tick
     ObstacleAheadCueTargetDebug target; // the winning (nearest) box; valid when active
 };
