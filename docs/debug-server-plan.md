@@ -358,6 +358,17 @@ round trip. Design decisions:
   is actually up and folds a server-side warp timeout (`completed: false` inside a
   status-ok envelope) into exit 1, so exit 0 means "sitting in the level".
 
+Additions since: same-spec warps restore the audio themselves (2026-08-25).
+`Game_SetGameState` fades every sequence player to silence and the game only brings them
+back at the end of an audio-spec change (`Audio_RestartSeqPlayers`), which a stock level
+entry always is. A warp into the level already running, or between levels sharing a
+spec, keeps the spec, so the reset degrades to a no-op and the game stayed mute. The warp
+now records the spec id at kickoff and, on arrival (after `Play_Init`, where Training and
+the Venom levels pick theirs), calls `Audio_RestoreAllSeqPlayerVolumes` when the id did
+not change — seq-player volumes, the option volumes, and the global unmute the START
+pause may have left behind, since a warp is accepted from `PLAY_PAUSE`. The reply reports
+the decision as `audioVolumesRestored`; cross-spec warps leave it to the game's reset.
+
 ## Resolved by implementation, phase 2: cue-state query (2026-08-08)
 
 `cues` dumps the accessibility audio-cue system as JSON: backend availability, the

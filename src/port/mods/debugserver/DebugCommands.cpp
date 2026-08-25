@@ -520,7 +520,11 @@ static void WarpOnGamePostUpdate(IEvent* event) {
             // "The level is up" means the first play update actually ran: gPlayState
             // reaching PLAY_UPDATE only says Play_Init finished — the player leaves
             // PLAYERSTATE_INIT when Player_Setup ran inside that first update, which is
-            // where the intro decision and the checkpoint restore live.
+            // where the intro decision and the checkpoint restore live. The PLAYERSTATE_INIT
+            // term also carries the audio check below: Audio_Update runs after Game_Update,
+            // and PLAY_INIT breaks right after Play_Init, so the spec Play_InitLevel queues
+            // is applied one frame before the player leaves PLAYERSTATE_INIT — testing on
+            // gPlayState alone would compare against a stale spec id.
             if (gGameState == GSTATE_PLAY && gCurrentLevel == warp.level && gPlayState > PLAY_INIT &&
                 gPlayer != NULL && gPlayer[0].state != PLAYERSTATE_INIT) {
                 // Game_SetGameState faded every sequence player to silence, and the game

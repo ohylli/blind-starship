@@ -2739,7 +2739,10 @@ void Audio_FadeOutAll(u8 fadeoutTime) {
 // @port: Inverse of Audio_FadeOutAll, for level entries that bypass the audio-spec reset
 // (a spec change ends in Audio_RestartSeqPlayers, which is where the game normally brings
 // the faded players back). Used by the debug server's warp when the spec does not change.
+// The global unmute mirrors Audio_StartReset: the START pause mutes the driver
+// (Audio_PlayPauseSfx) and only its unpause or a spec reset lifts that.
 void Audio_RestoreAllSeqPlayerVolumes(void) {
+    AUDIOCMD_GLOBAL_UNMUTE(true);
     SEQCMD_SET_SEQPLAYER_VOLUME(SEQ_PLAYER_BGM, 0, 127);
     SEQCMD_SET_SEQPLAYER_VOLUME(SEQ_PLAYER_FANFARE, 0, 127);
     SEQCMD_SET_SEQPLAYER_VOLUME(SEQ_PLAYER_SFX, 0, 127);
