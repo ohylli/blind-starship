@@ -2736,6 +2736,25 @@ void Audio_FadeOutAll(u8 fadeoutTime) {
     SEQCMD_SET_SEQPLAYER_VOLUME(SEQ_PLAYER_VOICE, fadeoutTime, 0);
 }
 
+// @port: Inverse of Audio_FadeOutAll, for level entries that bypass the audio-spec reset
+// (a spec change ends in Audio_RestartSeqPlayers, which is where the game normally brings
+// the faded players back). Used by the debug server's warp when the spec does not change.
+void Audio_RestoreAllSeqPlayerVolumes(void) {
+    SEQCMD_SET_SEQPLAYER_VOLUME(SEQ_PLAYER_BGM, 0, 127);
+    SEQCMD_SET_SEQPLAYER_VOLUME(SEQ_PLAYER_FANFARE, 0, 127);
+    SEQCMD_SET_SEQPLAYER_VOLUME(SEQ_PLAYER_SFX, 0, 127);
+    SEQCMD_SET_SEQPLAYER_VOLUME(SEQ_PLAYER_VOICE, 0, 127);
+    Audio_RestoreVolumeSettings(AUDIO_TYPE_MUSIC);
+    Audio_RestoreVolumeSettings(AUDIO_TYPE_SFX);
+    Audio_RestoreVolumeSettings(AUDIO_TYPE_VOICE);
+}
+
+// @port: The spec currently selected by SEQCMD_RESET_AUDIO_HEAP (which is a no-op reset
+// when the id does not change).
+u8 Audio_GetAudioSpecId(void) {
+    return sAudioSpecId;
+}
+
 void Audio_KillAllSfx(void) {
     u8 i;
 

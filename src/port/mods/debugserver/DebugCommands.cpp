@@ -428,6 +428,8 @@ struct WarpState {
     bool introFlagCleared = false;
     bool checkpointConsumed = false;
     int ticks = 0;
+    u8 audioSpecAtKickoff = 0;
+    bool audioVolumesRestored = false;
     const char* note = nullptr;
 };
 static std::shared_ptr<WarpState> sWarp; // game thread only
@@ -485,6 +487,7 @@ static void WarpOnGamePostUpdate(IEvent* event) {
             gNextLevel = warp.level;
             gNextLevelPhase = warp.phase;
             gNextGameState = GSTATE_PLAY;
+            warp.audioSpecAtKickoff = Audio_GetAudioSpecId(); // see the WAIT_PLAY audio note
             Map_LevelStart_AudioSpecSetup((LevelId) warp.level);
             // Always clear the pause for the transition: the level start needs one live
             // play frame — Player_Setup (intro decision, checkpoint restore) runs from
@@ -520,6 +523,17 @@ static void WarpOnGamePostUpdate(IEvent* event) {
             // where the intro decision and the checkpoint restore live.
             if (gGameState == GSTATE_PLAY && gCurrentLevel == warp.level && gPlayState > PLAY_INIT &&
                 gPlayer != NULL && gPlayer[0].state != PLAYERSTATE_INIT) {
+                // Game_SetGameState faded every sequence player to silence, and the game
+                // only brings them back at the end of an audio-spec change (which a
+                // stock level entry always is, since it comes from the map). A warp into
+                // the level already running — or between levels sharing a spec — keeps
+                // the spec, so SEQCMD_RESET_AUDIO_HEAP degrades to a no-op and the game
+                // would stay mute until the next spec change. Checked here, after
+                // Play_Init, since Training and the Venom levels select their spec there.
+                if (Audio_GetAudioSpecId() == warp.audioSpecAtKickoff) {
+                    Audio_RestoreAllSeqPlayerVolumes();
+                    warp.audioVolumesRestored = true;
+                }
                 if (warp.paused) {
                     CVarSetInteger("gDebugPause", 1); // freeze right after the first play frame
                 }
@@ -657,6 +671,7 @@ static nlohmann::json WarpResultJson(const WarpState& warp) {
     j["phase"] = (s32) gLevelPhase;
     j["paused"] = IsDebugPaused();
     j["introSkipped"] = warp.introFlagCleared;
+    j["audioVolumesRestored"] = warp.audioVolumesRestored;
     if (warp.haveCheckpoint || warp.fresh) {
         j["checkpointApplied"] = warp.checkpointConsumed;
     }

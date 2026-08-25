@@ -16,6 +16,8 @@ void Audio_SetUnkVoiceParam(u8 unkVoiceParam);
 u8* Audio_UpdateFrequencyAnalysis(void);
 void Audio_SetVolume(u8 audioType, u8 volume);
 void Audio_FadeOutAll(u8 fadeoutTime);
+void Audio_RestoreAllSeqPlayerVolumes(void);
+u8 Audio_GetAudioSpecId(void);
 void Audio_SetAudioSpec(u8 unused, u16 specParam);
 
 #define AUDIO_SET_SPEC(sfxLayout, spec) Audio_SetAudioSpec(0, ((sfxLayout) << 8) | (spec))
