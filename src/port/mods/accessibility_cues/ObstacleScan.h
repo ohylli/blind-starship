@@ -17,11 +17,13 @@
 //     from "wall" (see the predicate's comment in ObjectQuery.h), and droning a crash
 //     warning through an on-rails boss fight would bury the aim/enemy cues exactly when
 //     they matter most.
-//   - Teammate Arwings (OBJ_ACTOR_TEAM_BOSS — the wingmates escorting you into a boss
-//     run, placed on-rails in Meteo and Area 6) carry a small collidable hitbox with
-//     targetOffset 0, and would otherwise buzz whenever one weaves across your nose.
-//     OBJ_ACTOR_TEAM_ARWING needs no entry — it has gNoHitbox and never passes the
-//     predicate.
+//   - Teammate Arwings carry a small collidable hitbox with targetOffset 0, and would
+//     otherwise buzz whenever one weaves across your nose. They come in two forms that
+//     both need excluding: OBJ_ACTOR_TEAM_BOSS (the escorts placed on-rails for a boss
+//     run in Meteo and Area 6) and the OBJ_ACTOR_EVENT actors with
+//     eventType == EVID_TEAMMATE that fly the rest of an on-rails level (their event
+//     row installs gCubeHitbox100, fox_enmy2.c's sEventActorInfo). OBJ_ACTOR_TEAM_ARWING
+//     needs no entry — it has gNoHitbox and never passes the predicate.
 //
 // Deliberate non-features, so a future session doesn't "fix" them by accident: obj.rot
 // is ignored (the box is axis-aligned in world space even for a yawed wall), and
@@ -32,6 +34,8 @@
 // either mode (accepted miss, same doc): sprites do collide (Fortuna's poles,
 // Corneria's trees — a harmless stagger, fox_play.c's sprite loop), but warning about
 // them is a scope decision deferred with the user, not an oversight.
+
+#include <type_traits>
 
 #include "port/CGameCompat.h"
 #include "port/mods/ObjectQuery.h"
@@ -81,6 +85,19 @@ struct ObstacleScanStats {
 };
 
 namespace ObstacleScanDetail {
+// The wingmate exclusion from the header comment. Only Actor carries eventType, so the
+// event-actor half of the test is compiled in for that wrapper alone.
+template <typename T>
+inline bool IsTeammate(const T* entry) {
+    if (entry->obj.id == OBJ_ACTOR_TEAM_BOSS) {
+        return true;
+    }
+    if constexpr (std::is_same_v<T, Actor>) {
+        return (entry->obj.id == OBJ_ACTOR_EVENT) && (entry->eventType == EVID_TEAMMATE);
+    }
+    return false;
+}
+
 // Yields the boxes of ONE object. T is the array's wrapper type (Scenery/Actor/...);
 // they all embed `Object obj; ObjectInfo info;`, and templating on the wrapper keeps the
 // access type-safe without hand-passing the pieces.
@@ -96,7 +113,7 @@ inline void EmitBoxes(ObjectEventType type, T* entry, ObstacleArray array, s32 s
     if (!Object_IsObstacle(type, entry)) {
         return;
     }
-    if (entry->obj.id == OBJ_ACTOR_TEAM_BOSS) {
+    if (IsTeammate(entry)) {
         return; // wingmates are not obstacles — see the header comment
     }
     if (stats != nullptr) {

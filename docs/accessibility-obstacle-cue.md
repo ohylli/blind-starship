@@ -97,12 +97,14 @@ exclusions sit on top of the predicate, in `ObstacleScan`:
   Note the enemy cue does not cover `gBosses` either (it scans `gActors` only) — boss
   encounters are their own future cue category, as `docs/accessibility-enemy-cue.md`
   already records.
-- **Teammate Arwings (`OBJ_ACTOR_TEAM_BOSS`) are id-excluded.** The wingmates escorting
-  you into a boss run carry a small collidable hitbox with `targetOffset == 0` and weave
-  ahead of the player on-rails (Meteo, Area 6); without the exclusion every crossing
-  wingmate would fire a false "about to crash" buzz. That id test turns out to be
-  *incomplete* — it misses the wingmates that fly the rest of the level. See "Known
-  defects" below.
+- **Teammate Arwings are excluded.** Wingmates carry a small collidable hitbox with
+  `targetOffset == 0` and weave ahead of the player on-rails; without the exclusion
+  every crossing wingmate would fire a false "about to crash" buzz. They come in two
+  forms, both dropped by `ObstacleScanDetail::IsTeammate`: `OBJ_ACTOR_TEAM_BOSS` (the
+  handful of escorts placed for a boss run in Meteo and Area 6) and `OBJ_ACTOR_EVENT`
+  actors with `eventType == EVID_TEAMMATE`, which fly the rest of an on-rails level
+  (their event row installs `gCubeHitbox100`, `fox_enmy2.c:992`). The id-only test
+  originally shipped and missed the second form — see "Fixed defects" below.
 
 All-range coverage per arena (from the level manifests, live-checked 2026-08-18):
 Sector Z is the richest (62 space-junk scenery pieces plus actor junk), Bolse has its
@@ -203,18 +205,21 @@ each is meant to be fixed on its own.
   have straightforward sphere analogues). Note the radius is a *code constant*, not
   data, so some form of event-type → radius table is unavoidable. Meteo's ordinary rocks
   (`METEOR_6` ±200, `METEOR_7` ±100) do carry cube hitboxes and are already covered.
-- **Normal-flight wingmates fire false warnings.** The teammate exclusion in
-  `ObstacleScan.h` tests `obj.id == OBJ_ACTOR_TEAM_BOSS`, which covers only the handful
-  of boss-approach escorts (Meteo places three, around path 303774). Through the rest of
-  an on-rails level the wingmates are `OBJ_ACTOR_EVENT` (id 200) with
+
+## Fixed defects
+
+- **Normal-flight wingmates fired false warnings** (fixed 2026-08-27). The teammate
+  exclusion originally tested only `obj.id == OBJ_ACTOR_TEAM_BOSS`, which covers the
+  handful of boss-approach escorts (Meteo places three, around path 303774). Through
+  the rest of an on-rails level the wingmates are `OBJ_ACTOR_EVENT` (id 200) with
   `eventType == EVID_TEAMMATE`, whose event row carries `gCubeHitbox100` and
-  `targetOffset == 0` (`fox_enmy2.c:992`) — so they classify as obstacles and slip past
-  the exclusion. Observed live: over ~330 frames of straight flight from the
+  `targetOffset == 0` (`fox_enmy2.c:992`) — so they classified as obstacles and slipped
+  past the exclusion. Observed live: over ~330 frames of straight flight from the
   `big-asteroid` checkpoint the *only* record that ever came on course was `gActors`
   slot 34, that wingmate — half-extents 50/50, gap 1141 growing to 1246, the cue active
-  throughout. Precisely the noise the id exclusion was written to prevent. Fix: extend
-  that exclusion to also drop `OBJ_ACTOR_EVENT` actors whose `eventType` is
-  `EVID_TEAMMATE`.
+  throughout. The exclusion now also drops `OBJ_ACTOR_EVENT` actors whose `eventType`
+  is `EVID_TEAMMATE` (`ObstacleScanDetail::IsTeammate`); re-checked live from the same
+  checkpoint and from `obstacle-scout`, where the rock wall still warns.
 
 ## Testing notes
 
