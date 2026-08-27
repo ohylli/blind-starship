@@ -50,7 +50,9 @@ static inline bool Object_HasCollidableHitbox(ObjectEventType type, void* object
 }
 
 // Is this object a collidable, non-lockable obstacle — something the player can crash
-// into but cannot shoot down? Classification only: deliberately NO obj.status check, so
+// into but cannot shoot down? "Collidable" is a hitbox with solid records OR one of the
+// sphere-collided event types (Object_GetSphereCollider) — those carry gNoHitbox and
+// would otherwise be misread as pure triggers. Classification only: deliberately NO obj.status check, so
 // the same predicate serves both event-time filtering (AccessibilityTrainingMinimal
 // calls it from ObjectInitEvent, where status is still OBJ_INIT) and world scans (the
 // obstacle cue adds its own status == OBJ_ACTIVE test). Shared by
@@ -73,12 +75,44 @@ static inline bool Object_HasCollidableHitbox(ObjectEventType type, void* object
 // "boss you fight" from "boss-shaped wall" and any collidable boss classifies as an
 // obstacle here. Consumers that don't want bosses (the obstacle cue: a boss fight is not
 // a crash warning) exclude the array wholesale as policy — see ObstacleScan.h.
+// The engine's THIRD collision mechanism, beside hitbox records and poly meshes: a few
+// actor-event types carry gNoHitbox and are instead collided by a hand-written sphere
+// test keyed on eventType, with the radius a literal in the collision loop rather than
+// data on the object. The table below mirrors those literals; a new entry means finding
+// another such special case in Player_Update's actor loop (fox_play.c). Returns true and
+// writes the PLAYER-collision radius (the crash distance, which is what an obstacle
+// warning cares about; the shot-collision radius may differ) when the object is one.
+// Only OBJ_ACTOR_EVENT actors are ever sphere-collided, so every other type is a fast
+// false.
+//
+//   EVID_ME_BIG_METEOR — Meteo's bouncing big meteor: 900 units around obj.pos for the
+//   player (fox_play.c:2155, VEC3F_MAG against pos.x/pos.y/trueZpos), 1000 for player
+//   shots (fox_beam.c:787). Non-lockable (targetOffset 0 in sEventActorInfo,
+//   fox_enmy2.c:1012) and destructible (script health 500).
+static inline bool Object_GetSphereCollider(ObjectEventType type, void* object, f32* radius) {
+    if (type != OBJECT_TYPE_ACTOR) {
+        return false;
+    }
+    Actor* actor = (Actor*) object;
+    if (actor->obj.id != OBJ_ACTOR_EVENT) {
+        return false;
+    }
+    switch (actor->eventType) {
+        case EVID_ME_BIG_METEOR:
+            *radius = 900.0f;
+            return true;
+        default:
+            return false;
+    }
+}
+
 static inline bool Object_IsObstacle(ObjectEventType type, void* object) {
     if ((type != OBJECT_TYPE_ACTOR) && (type != OBJECT_TYPE_SCENERY) && (type != OBJECT_TYPE_SCENERY360) &&
         (type != OBJECT_TYPE_BOSS)) {
         return false;
     }
-    if (!Object_HasCollidableHitbox(type, object)) {
+    f32 sphereRadius;
+    if (!Object_HasCollidableHitbox(type, object) && !Object_GetSphereCollider(type, object, &sphereRadius)) {
         return false;
     }
     if (type == OBJECT_TYPE_ACTOR) {

@@ -25,6 +25,15 @@
 //     row installs gCubeHitbox100, fox_enmy2.c's sEventActorInfo). OBJ_ACTOR_TEAM_ARWING
 //     needs no entry — it has gNoHitbox and never passes the predicate.
 //
+// Sphere-collided objects (Object_GetSphereCollider — today only Meteo's big meteor,
+// which carries gNoHitbox and is collided by a hand-written 900-unit sphere) are boxed:
+// one synthesized record centered on obj.pos with half-extents equal to the radius on
+// every axis, record index kObstacleSphereRecord. The cube over-warns at its corners
+// (a diagonal pass 900-1270 units off center) — accepted, in the same spirit as the
+// yawed-wall approximation below: a conservative warning about an 1800-unit rock is
+// the right failure direction, and it keeps the course tests and the planned
+// directional cues on one box shape.
+//
 // Deliberate non-features, so a future session doesn't "fix" them by accident: obj.rot
 // is ignored (the box is axis-aligned in world space even for a yawed wall), and
 // HITBOX_ROTATED's rotation floats are skipped with its box used as-is — both absorbed
@@ -59,7 +68,8 @@ struct ObstacleBox {
     ObstacleArray array;
     s32 slot;     // index in that array
     s32 objId;    // obj.id
-    s32 record;   // hitbox record index, 0-based (the engine's hit index is this + 1)
+    s32 record;   // hitbox record index, 0-based (the engine's hit index is this + 1), or
+                  // kObstacleSphereRecord for a box synthesized from a sphere collider
     Vec3f center; // obj.pos + the record's offsets; with `half`, the full box in world
                   // space. Consumed here to derive dx/dy/dz; kept public for debug joins
                   // and the planned directional cues — no course test reads it today.
@@ -77,6 +87,10 @@ struct ObstacleBox {
     // player is level with or past the face. The "distance to impact" a warning maps.
     f32 gapZ;
 };
+
+// `record` value of a box synthesized from a sphere collider (see the header comment).
+// Negative so it can never collide with a real record index in the `cues` dump.
+inline constexpr s32 kObstacleSphereRecord = -1;
 
 struct ObstacleScanStats {
     s32 active;    // occupied OBJ_ACTIVE slots visited
@@ -119,8 +133,21 @@ inline void EmitBoxes(ObjectEventType type, T* entry, ObstacleArray array, s32 s
     if (stats != nullptr) {
         stats->obstacles++;
     }
-    HitboxBox records[kObjectMaxHitboxRecords];
+    HitboxBox records[kObjectMaxHitboxRecords + 1];
     s32 n = Object_ReadSolidHitboxes(entry->info.hitbox, records, kObjectMaxHitboxRecords);
+    f32 sphereRadius;
+    if (Object_GetSphereCollider(type, entry, &sphereRadius)) {
+        // Boxed sphere — see the header comment. The +1 slot above reserves room so it
+        // is never dropped behind a full record walk.
+        records[n].zOffset = 0.0f;
+        records[n].zHalf = sphereRadius;
+        records[n].yOffset = 0.0f;
+        records[n].yHalf = sphereRadius;
+        records[n].xOffset = 0.0f;
+        records[n].xHalf = sphereRadius;
+        records[n].record = kObstacleSphereRecord;
+        n++;
+    }
     for (s32 r = 0; r < n; r++) {
         ObstacleBox box;
         box.array = array;

@@ -26,7 +26,9 @@ height-pitch conventions the ring/enemy cues use. The planned directional obstac
   predicate `AccessibilityTrainingMinimal` strips by, so "training removes exactly what
   the cue warns about" is an invariant, not a coincidence) and `Object_ReadSolidHitboxes`
   (the flat hitbox-array walk, stride-for-stride against `Player_CheckHitboxCollision`,
-  `fox_play.c:1270-1291`).
+  `fox_play.c:1270-1291`), plus `Object_GetSphereCollider` (the event-type → radius
+  table for the engine's third collision mechanism, the hand-written sphere test; see
+  "What is included").
 - **`src/port/mods/accessibility_cues/ObstacleScan.{h,cpp}`** — the shared scan, sibling
   to `CueScan`: walks `gScenery`/`gActors`, plus `gScenery360` in all-range mode (the
   walk is mode-gated because that heap pointer dangles after an all-range level unloads
@@ -86,8 +88,19 @@ all-range arena's scenery array, when in all-range mode — that have a real hit
 (`info.targetOffset == 0`, actors only — scenery is never lockable). That is: buildings,
 arches, rock walls, scripted barriers, big non-lockable hazard actors (Zoness's Dodora
 body, Titania's Delphor body — flying into them is a real collision, so warning is
-correct even mid-fight), and any future non-shootable hazard actor. Two cue-side
-exclusions sit on top of the predicate, in `ObstacleScan`:
+correct even mid-fight), and any future non-shootable hazard actor. Also included, via
+a different route: **sphere-collided actor events** (`Object_GetSphereCollider` in
+`ObjectQuery.h`) — today only Meteo's big meteor (`EVID_ME_BIG_METEOR`), which carries
+`gNoHitbox` and is collided by a hand-written 900-unit sphere around `obj.pos`
+(`fox_play.c:2155`; player shots use 1000, `fox_beam.c:787`). The radius is a code
+literal, not object data, so the predicate keeps a small event-type → radius table that
+passes such objects as collidable, and the scan boxes the sphere: one synthesized
+record centered on `obj.pos` with ±radius half-extents, `record == -1`
+(`kObstacleSphereRecord`) in the `cues` dump. The cube over-warns at its corners
+(diagonal passes 900–1270 units off center); accepted for the same reason as the
+rotation approximation — conservative is the right failure direction for an 1800-unit
+rock, and one box shape keeps the course tests and the directional siblings simple. Two
+cue-side exclusions sit on top of the predicate, in `ObstacleScan`:
 
 - **`gBosses` is not scanned.** `targetOffset` cannot separate "boss you fight" from
   "boss-shaped wall" — nearly every `gBosses` entry has `targetOffset == 0` even though
@@ -185,28 +198,21 @@ Each of these is a deliberate v1 decision with a known attach point, not an over
 
 ## Known defects — found after v1, not yet fixed
 
-Unlike the catalogue above, these two are *not* deliberate. Both surfaced on 2026-08-27
-while evaluating the `big-asteroid` Meteo checkpoint as an obstacle-cue test spot, and
-each is meant to be fixed on its own.
-
-- **Meteo's big meteors are invisible to the cue** (`EVID_ME_BIG_METEOR`). This is a
-  *third* collision mechanism, neither hitbox nor poly mesh: the event row carries
-  `gNoHitbox` (`fox_enmy2.c:1012`) and the engine collides it with a hand-written
-  900-unit **sphere** around `obj.pos` (`fox_play.c:2155`); player shots use a matching
-  1000-unit sphere (`fox_beam.c:787`). It is non-lockable (`targetOffset == 0`) and
-  destructible (health 500), so by the cue's own policy it is squarely a warn-worthy
-  obstacle — `Object_IsObstacle` simply cannot see it, rejecting it on the hitbox test.
-  Confirmed live from the `big-asteroid` checkpoint: with a big meteor active in
-  `gActors` slot 37 the scan reported `obstacles = 15`, which is exactly the 9
-  `METEOR_7` + 4 `METEOR_6` + 1 `SECRET_MARKER_1` + 1 wingmate alive at that moment —
-  the big meteor is not in the count. Attach point: the box emission in `ObstacleScan`,
-  either synthesizing an axis-aligned box from the sphere radius for this event type or
-  teaching `ObstacleBox` a sphere record kind (the ray-vs-AABB and footprint tests both
-  have straightforward sphere analogues). Note the radius is a *code constant*, not
-  data, so some form of event-type → radius table is unavoidable. Meteo's ordinary rocks
-  (`METEOR_6` ±200, `METEOR_7` ±100) do carry cube hitboxes and are already covered.
+Unlike the catalogue above, entries here are *not* deliberate and are meant to be fixed.
+None open at the moment — the two found on 2026-08-27 while evaluating the
+`big-asteroid` Meteo checkpoint are both under "Fixed defects" below.
 
 ## Fixed defects
+
+- **Meteo's big meteors were invisible to the cue** (`EVID_ME_BIG_METEOR`, fixed
+  2026-08-27). A *third* collision mechanism, neither hitbox nor poly mesh: the event
+  row carries `gNoHitbox` (`fox_enmy2.c:1012`) and the engine collides it with a
+  hand-written 900-unit sphere around `obj.pos` (`fox_play.c:2155`), so
+  `Object_IsObstacle` rejected it on the hitbox test. Confirmed live from the
+  `big-asteroid` checkpoint: with a big meteor active in `gActors` slot 37 the scan
+  reported `obstacles = 15` — the 9 `METEOR_7` + 4 `METEOR_6` + 1 `SECRET_MARKER_1` + 1
+  wingmate, the big meteor absent. Fixed by the sphere-collider table + boxed record
+  described under "What is included".
 
 - **Normal-flight wingmates fired false warnings** (fixed 2026-08-27). The teammate
   exclusion originally tested only `obj.id == OBJ_ACTOR_TEAM_BOSS`, which covers the
