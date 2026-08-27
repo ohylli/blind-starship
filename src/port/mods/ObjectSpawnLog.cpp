@@ -56,6 +56,20 @@ static bool ObjectSpawnLog_IsActorEvent(ObjectEventType type, Object* obj) {
     return (type == OBJECT_TYPE_ACTOR) && (obj->id == OBJ_ACTOR_EVENT);
 }
 
+// "collidable" for solid hitbox records, "sphere" for the hand-written sphere test
+// (Object_GetSphereCollider — the object carries gNoHitbox yet still collides), "none"
+// otherwise. Keeps the log in step with what Object_IsObstacle treats as collidable.
+static const char* ObjectSpawnLog_HitboxLabel(ObjectEventType type, void* object) {
+    f32 radius;
+    if (Object_HasCollidableHitbox(type, object)) {
+        return "collidable";
+    }
+    if (Object_GetSphereCollider(type, object, &radius)) {
+        return "sphere";
+    }
+    return "none";
+}
+
 static void ObjectSpawnLog_Emit(ObjectEventType type, void* object, bool cancelled) {
     Object* obj = (Object*) object;
     if (ObjectSpawnLog_IsActorEvent(type, obj)) {
@@ -66,7 +80,7 @@ static void ObjectSpawnLog_Emit(ObjectEventType type, void* object, bool cancell
                      ObjectId_GetName(obj->id),
                      EventId_GetName(eventType), eventType,
                      obj->pos.x, obj->pos.y, obj->pos.z,
-                     Object_HasCollidableHitbox(type, object) ? "collidable" : "none",
+                     ObjectSpawnLog_HitboxLabel(type, object),
                      Starship_LevelName(gCurrentLevel), (int) gCurrentLevel,
                      cancelled ? "FILTERED" : "PASSED");
         return;
@@ -76,7 +90,7 @@ static void ObjectSpawnLog_Emit(ObjectEventType type, void* object, bool cancell
                  obj->id,
                  ObjectId_GetName(obj->id),
                  obj->pos.x, obj->pos.y, obj->pos.z,
-                 Object_HasCollidableHitbox(type, object) ? "collidable" : "none",
+                 ObjectSpawnLog_HitboxLabel(type, object),
                  Starship_LevelName(gCurrentLevel), (int) gCurrentLevel,
                  cancelled ? "FILTERED" : "PASSED");
 }

@@ -27,6 +27,11 @@
 //     any future non-event hazard actor. Predicate matches the engine's own
 //     lock-on check (PlayerShot_FindLockTarget, fox_beam.c) and what the
 //     enemy audio cue will use (docs/accessibility-enemy-cue.md).
+//   - Sphere-collided actor-events (Object_GetSphereCollider): no hitbox at
+//     all, but a hand-written collision radius in the engine. Today only
+//     EVID_ME_BIG_METEOR, which never spawns in Training, so this arm is
+//     inert here — it exists so the predicate stays identical to the
+//     obstacle cue's.
 //   All filtered via ShouldFilter on both ObjectInit and ObjectUpdate.
 //
 // WHAT IT DELIBERATELY KEEPS:

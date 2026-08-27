@@ -1,7 +1,8 @@
 #pragma once
 
 // The shared obstacle scan: which world objects count as obstacles (the shared
-// Object_IsObstacle predicate — collidable hitbox, not lockable — minus the cue-side
+// Object_IsObstacle predicate — collidable hitbox or sphere collider, not lockable —
+// minus the cue-side
 // exclusions below) and their solid hitbox records as world-space boxes with the
 // player-relative geometry every consumer needs already derived. The obstacle-ahead cue
 // (its rails footprint test and its all-range ray test) is the first consumer; the

@@ -29,9 +29,11 @@ static inline ObjectInfo* Object_GetInfo(ObjectEventType type, void* object) {
 
 // info.hitbox is a flat f32 array where element 0 is the record count cast to
 // int (see docs/game-world.md section 7). The gNoHitbox sentinel is { 0.0f },
-// meaning "no records" — the object can't collide with the player and is
-// either purely decorative scenery or a pure script trigger (e.g. an
-// actor-event with EVID_EVENT_HANDLER, used to play radio messages).
+// meaning "no records" — no hitbox-record collision with the player. Such an object
+// either cannot collide at all (purely decorative scenery, or a pure script trigger
+// like an actor-event with EVID_EVENT_HANDLER, used to play radio messages) or collides
+// through one of the engine's other two mechanisms: a poly mesh, or the hand-written
+// sphere test tabled in Object_GetSphereCollider below.
 //
 // This lets us distinguish hazards (real hitbox, count >= 1) from triggers
 // without enumerating ObjectIds. Critical for actor-events specifically:
@@ -49,41 +51,19 @@ static inline bool Object_HasCollidableHitbox(ObjectEventType type, void* object
     return info->hitbox[0] != 0.0f;
 }
 
-// Is this object a collidable, non-lockable obstacle — something the player can crash
-// into but cannot shoot down? "Collidable" is a hitbox with solid records OR one of the
-// sphere-collided event types (Object_GetSphereCollider) — those carry gNoHitbox and
-// would otherwise be misread as pure triggers. Classification only: deliberately NO obj.status check, so
-// the same predicate serves both event-time filtering (AccessibilityTrainingMinimal
-// calls it from ObjectInitEvent, where status is still OBJ_INIT) and world scans (the
-// obstacle cue adds its own status == OBJ_ACTIVE test). Shared by
-// AccessibilityTrainingMinimal (which strips exactly this set from Training) and the
-// obstacle-ahead cue (which warns about exactly this set) — that agreement is why it
-// lives here.
-//
-// For actors (regular or OBJ_ACTOR_EVENT), enemies are distinguished from environmental
-// obstacles by info.targetOffset: enemies have a non-zero lock-on offset (the engine's
-// own missile lock-on predicate, PlayerShot_FindLockTarget in fox_beam.c, mirrored by
-// the enemy cue's CueScan_IsCueableEnemy). Obstacles like EVID_TR_BARRIER (the training
-// barrier) have targetOffset == 0.0f even though they carry a collidable hitbox; those
-// are exactly what this classifies as obstacles. For OBJ_ACTOR_EVENT actors
-// info.targetOffset is the default 0.0f until the script runs EVOP_INIT_ACTOR (which
-// also installs the real hitbox — see the second-tick note above), so the hitbox and
-// targetOffset land together and the check is consistent. Scenery is never lockable and
-// skips the test. Bosses deliberately get NO targetOffset test: nearly every gBosses
-// entry has targetOffset == 0 even though it is shootable (gObjectInfo,
-// fox_edata_info.c — Sarumarine is the lone lockable one), so the field cannot separate
-// "boss you fight" from "boss-shaped wall" and any collidable boss classifies as an
-// obstacle here. Consumers that don't want bosses (the obstacle cue: a boss fight is not
-// a crash warning) exclude the array wholesale as policy — see ObstacleScan.h.
 // The engine's THIRD collision mechanism, beside hitbox records and poly meshes: a few
 // actor-event types carry gNoHitbox and are instead collided by a hand-written sphere
 // test keyed on eventType, with the radius a literal in the collision loop rather than
 // data on the object. The table below mirrors those literals; a new entry means finding
-// another such special case in Player_Update's actor loop (fox_play.c). Returns true and
-// writes the PLAYER-collision radius (the crash distance, which is what an obstacle
-// warning cares about; the shot-collision radius may differ) when the object is one.
-// Only OBJ_ACTOR_EVENT actors are ever sphere-collided, so every other type is a fast
-// false.
+// another such special case in Player_CollisionCheck's actor loop (fox_play.c:2138).
+// Returns true and writes the PLAYER-collision radius (the crash distance, which is what
+// an obstacle warning cares about; the shot-collision radius may differ) when the object
+// is one. Only OBJ_ACTOR_EVENT actors are tabled here, so every other type is a fast
+// false. Bosses have sphere cases of their own in Player_CollisionCheck's boss loop —
+// OBJ_BOSS_BO_BASE_SHIELD, 1500 units and gNoHitbox so the sphere is its only collision
+// (fox_play.c:2078), and OBJ_BOSS_KA_SAUCERER, 2700 units on top of a real hitbox
+// (fox_play.c:2099) — deliberately NOT tabled: the only consumer that would see them,
+// the obstacle cue, excludes gBosses wholesale as policy (ObstacleScan.h).
 //
 //   EVID_ME_BIG_METEOR — Meteo's bouncing big meteor: 900 units around obj.pos for the
 //   player (fox_play.c:2155, VEC3F_MAG against pos.x/pos.y/trueZpos), 1000 for player
@@ -106,6 +86,33 @@ static inline bool Object_GetSphereCollider(ObjectEventType type, void* object, 
     }
 }
 
+// Is this object a collidable, non-lockable obstacle — something the player can crash
+// into but cannot shoot down? "Collidable" is a hitbox with solid records OR one of the
+// sphere-collided event types (Object_GetSphereCollider above) — those carry gNoHitbox
+// and would otherwise be misread as pure triggers. Classification only: deliberately NO
+// obj.status check, so the same predicate serves both event-time filtering
+// (AccessibilityTrainingMinimal calls it from ObjectInitEvent, where status is still
+// OBJ_INIT) and world scans (the obstacle cue adds its own status == OBJ_ACTIVE test).
+// Shared by
+// AccessibilityTrainingMinimal (which strips exactly this set from Training) and the
+// obstacle-ahead cue (which warns about exactly this set) — that agreement is why it
+// lives here.
+//
+// For actors (regular or OBJ_ACTOR_EVENT), enemies are distinguished from environmental
+// obstacles by info.targetOffset: enemies have a non-zero lock-on offset (the engine's
+// own missile lock-on predicate, PlayerShot_FindLockTarget in fox_beam.c, mirrored by
+// the enemy cue's CueScan_IsCueableEnemy). Obstacles like EVID_TR_BARRIER (the training
+// barrier) have targetOffset == 0.0f even though they carry a collidable hitbox; those
+// are exactly what this classifies as obstacles. For OBJ_ACTOR_EVENT actors
+// info.targetOffset is the default 0.0f until the script runs EVOP_INIT_ACTOR (which
+// also installs the real hitbox — see the second-tick note above), so the hitbox and
+// targetOffset land together and the check is consistent. Scenery is never lockable and
+// skips the test. Bosses deliberately get NO targetOffset test: nearly every gBosses
+// entry has targetOffset == 0 even though it is shootable (gObjectInfo,
+// fox_edata_info.c — Sarumarine is the lone lockable one), so the field cannot separate
+// "boss you fight" from "boss-shaped wall" and any collidable boss classifies as an
+// obstacle here. Consumers that don't want bosses (the obstacle cue: a boss fight is not
+// a crash warning) exclude the array wholesale as policy — see ObstacleScan.h.
 static inline bool Object_IsObstacle(ObjectEventType type, void* object) {
     if ((type != OBJECT_TYPE_ACTOR) && (type != OBJECT_TYPE_SCENERY) && (type != OBJECT_TYPE_SCENERY360) &&
         (type != OBJECT_TYPE_BOSS)) {

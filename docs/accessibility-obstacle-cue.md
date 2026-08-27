@@ -22,7 +22,8 @@ height-pitch conventions the ring/enemy cues use. The planned directional obstac
 ## The three layers
 
 - **`src/port/mods/ObjectQuery.h`** — generic decomp knowledge, shared beyond the cues:
-  `Object_IsObstacle` (the classification: collidable hitbox + not lockable; also the
+  `Object_IsObstacle` (the classification: collidable hitbox or sphere collider + not
+  lockable; also the
   predicate `AccessibilityTrainingMinimal` strips by, so "training removes exactly what
   the cue warns about" is an invariant, not a coincidence) and `Object_ReadSolidHitboxes`
   (the flat hitbox-array walk, stride-for-stride against `Player_CheckHitboxCollision`,
@@ -107,6 +108,10 @@ cue-side exclusions sit on top of the predicate, in `ObstacleScan`:
   it is shootable (Sarumarine is the game's one lockable boss), so a lockability test
   excludes nothing, and droning a crash warning through an on-rails boss fight (Meteo,
   Area 6, Sector X, …) would bury the aim/enemy cues exactly when they matter most.
+  Bosses also have hand-written collision spheres of their own (`OBJ_BOSS_BO_BASE_SHIELD`,
+  1500 units and `gNoHitbox`, `fox_play.c:2078`; `OBJ_BOSS_KA_SAUCERER`, 2700 units,
+  `fox_play.c:2099`) that `Object_GetSphereCollider` deliberately leaves untabled for the
+  same reason — a future boss cue would need to add them.
   Note the enemy cue does not cover `gBosses` either (it scans `gActors` only) — boss
   encounters are their own future cue category, as `docs/accessibility-enemy-cue.md`
   already records.
