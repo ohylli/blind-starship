@@ -4,6 +4,8 @@ Status: v1 implemented 2026-08-11; all-range support added 2026-08-18. Companion
 `docs/accessibility-cues-tuning.md`
 (which documents the knobs); this file records what the cue covers, *why* it is shaped
 this way, and the catalogue of intentional misses — read this before "fixing" a silence.
+Silences that are *not* deliberate are kept separately under "Known defects" so the two
+are never confused.
 
 ## What it is
 
@@ -98,7 +100,9 @@ exclusions sit on top of the predicate, in `ObstacleScan`:
 - **Teammate Arwings (`OBJ_ACTOR_TEAM_BOSS`) are id-excluded.** The wingmates escorting
   you into a boss run carry a small collidable hitbox with `targetOffset == 0` and weave
   ahead of the player on-rails (Meteo, Area 6); without the exclusion every crossing
-  wingmate would fire a false "about to crash" buzz.
+  wingmate would fire a false "about to crash" buzz. That id test turns out to be
+  *incomplete* — it misses the wingmates that fly the rest of the level. See "Known
+  defects" below.
 
 All-range coverage per arena (from the level manifests, live-checked 2026-08-18):
 Sector Z is the richest (62 space-junk scenery pieces plus actor junk), Bolse has its
@@ -176,6 +180,41 @@ Each of these is a deliberate v1 decision with a known attach point, not an over
   winning record's half-extents precisely so this is diagnosable from one `cues` dump;
   the remedy, if seen, is a "wider than the corridor" skip (compare against
   `pathWidth`) as policy.
+
+## Known defects — found after v1, not yet fixed
+
+Unlike the catalogue above, these two are *not* deliberate. Both surfaced on 2026-08-27
+while evaluating the `big-asteroid` Meteo checkpoint as an obstacle-cue test spot, and
+each is meant to be fixed on its own.
+
+- **Meteo's big meteors are invisible to the cue** (`EVID_ME_BIG_METEOR`). This is a
+  *third* collision mechanism, neither hitbox nor poly mesh: the event row carries
+  `gNoHitbox` (`fox_enmy2.c:1012`) and the engine collides it with a hand-written
+  900-unit **sphere** around `obj.pos` (`fox_play.c:2155`); player shots use a matching
+  1000-unit sphere (`fox_beam.c:787`). It is non-lockable (`targetOffset == 0`) and
+  destructible (health 500), so by the cue's own policy it is squarely a warn-worthy
+  obstacle — `Object_IsObstacle` simply cannot see it, rejecting it on the hitbox test.
+  Confirmed live from the `big-asteroid` checkpoint: with a big meteor active in
+  `gActors` slot 37 the scan reported `obstacles = 15`, which is exactly the 9
+  `METEOR_7` + 4 `METEOR_6` + 1 `SECRET_MARKER_1` + 1 wingmate alive at that moment —
+  the big meteor is not in the count. Attach point: the box emission in `ObstacleScan`,
+  either synthesizing an axis-aligned box from the sphere radius for this event type or
+  teaching `ObstacleBox` a sphere record kind (the ray-vs-AABB and footprint tests both
+  have straightforward sphere analogues). Note the radius is a *code constant*, not
+  data, so some form of event-type → radius table is unavoidable. Meteo's ordinary rocks
+  (`METEOR_6` ±200, `METEOR_7` ±100) do carry cube hitboxes and are already covered.
+- **Normal-flight wingmates fire false warnings.** The teammate exclusion in
+  `ObstacleScan.h` tests `obj.id == OBJ_ACTOR_TEAM_BOSS`, which covers only the handful
+  of boss-approach escorts (Meteo places three, around path 303774). Through the rest of
+  an on-rails level the wingmates are `OBJ_ACTOR_EVENT` (id 200) with
+  `eventType == EVID_TEAMMATE`, whose event row carries `gCubeHitbox100` and
+  `targetOffset == 0` (`fox_enmy2.c:992`) — so they classify as obstacles and slip past
+  the exclusion. Observed live: over ~330 frames of straight flight from the
+  `big-asteroid` checkpoint the *only* record that ever came on course was `gActors`
+  slot 34, that wingmate — half-extents 50/50, gap 1141 growing to 1246, the cue active
+  throughout. Precisely the noise the id exclusion was written to prevent. Fix: extend
+  that exclusion to also drop `OBJ_ACTOR_EVENT` actors whose `eventType` is
+  `EVID_TEAMMATE`.
 
 ## Testing notes
 
