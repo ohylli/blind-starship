@@ -350,7 +350,7 @@ Practical consequences:
 The port's event bus (`src/port/hooks/`) defines several per-frame events:
 
 - `GamePreUpdateEvent` / `GamePostUpdateEvent` — `EngineEvent.h`, fired around each game update tick (`fox_game.c:352`, `fox_game.c:614`).
-- `PlayUpdateEvent` — `EngineEvent.h`, **cancellable wrapper** around `Play_Update()` (`fox_play.c:7183`). Fires *before* `Play_Update` runs, so the camera has not yet been updated when the listener fires.
+- `PlayUpdateEvent` — `EngineEvent.h`, **cancellable wrapper** around `Play_Update()` (fired from `Play_Main`, `fox_play.c`). Fires *before* `Play_Update` runs, so the camera has not yet been updated when the listener fires.
 - `PlayerPreUpdateEvent` / `PlayerPostUpdateEvent` — `EngineEvent.h`, fired around each player's update (passes `Player*`).
 - `ObjectUpdateEvent` — `ActorEvent.h`, per-actor (passes the actor).
 

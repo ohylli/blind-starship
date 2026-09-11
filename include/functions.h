@@ -435,6 +435,12 @@ bool func_col1_800998FC(Vec3f* objPos, Vec3f* colliderPos, Vec3f* objVel, s32 co
 
 // fox_col2
 bool func_col2_800A3690(Vec3f* objPos, Vec3f* colliderPos, s32 colId, Vec3f* hitDataOut);
+// Port additions (see fox_col2.c): bounds-checked table access and the heightfield test
+// split so a caller probing many points resolves the mesh's asset tables once.
+bool Col_GetPolyBounds(s32 colId, bool useCol2, Vec3f* min, Vec3f* max);
+bool Col2_ResolveMesh(s32 colId, CollisionHeader2** colHeaderOut, Triangle** polysOut, Vec3f** meshOut);
+bool Col2_CheckSurface(Vec3f* objPos, Vec3f* colliderPos, CollisionHeader2* colHeader, Triangle* polys, Vec3f* mesh,
+                       Vec3f* hitDataOut);
 
 // fox_pause
 void func_pause_800A3CA0(void);

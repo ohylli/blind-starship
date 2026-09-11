@@ -15,13 +15,13 @@ bool CueScan_ModeInScope(bool* outAllRange) {
     return (gLevelMode == LEVELMODE_ON_RAILS) || (allRange && !gVersusMode);
 }
 
-// Lock-on predicate. Matches PlayerShot_FindLockTarget (fox_beam.c:1741):
+// Lock-on predicate. Matches PlayerShot_FindLockTarget (fox_beam.c):
 // status == OBJ_ACTIVE && info.targetOffset != 0. No `id != OBJ_ACTOR_EVENT`
 // here — the on-rails levels spawn essentially all gameplay enemies as
 // OBJ_ACTOR_EVENT (Venom tanks, Spy Eyes, etc.) and EVOP_INIT_ACTOR
-// (fox_enmy2.c:1132-1258) overwrites `actor->info` with the per-event info
-// at init: line 1211 copies targetOffset from sEventActorInfo[eventType] for
-// EVID < 200, line 1157 hardcodes targetOffset = 1.0 for EVID_200..EVID_300.
+// (ActorEvent_ProcessScript, fox_enmy2.c) overwrites `actor->info` with the
+// per-event info at init: targetOffset copied from sEventActorInfo[eventType]
+// for EVID < 200, hardcoded to 1.0 for EVID_200..EVID_300.
 // So after init, a OBJ_ACTOR_EVENT actor whose eventType is a real enemy has
 // a non-zero targetOffset; the id field stays as OBJ_ACTOR_EVENT but no
 // longer reflects whether the actor is lockable. Filtering on id would
@@ -33,7 +33,7 @@ bool CueScan_IsCueableEnemy(Actor* actor) {
 // Build the world->body rotation on gCalcMatrix from the player's aim
 // angles. Body frame: +X right of aim, +Y above aim, -Z ahead of aim
 // (right-handed, conventional FPS convention). This is the inverse of
-// Player_SetupArwingShot's body->world rotation (fox_play.c:3037-3039),
+// Player_SetupArwingShot's body->world rotation (fox_play.c),
 // minus the +180° yaw (we choose body +X = right rather than left) and
 // minus bank (irrelevant for direction). See docs/accessibility-enemy-cue.md
 // for the derivation. gCalcMatrix is a scratch the game reuses every frame;

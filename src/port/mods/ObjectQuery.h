@@ -128,11 +128,11 @@ static inline bool Object_GetPolyCollider(ObjectEventType type, void* object, s3
 // The horizontal range gate the engine applies BEFORE running a scenery piece's poly
 // test: Player_CollisionCheck only calls Player_CheckPolyCollision when obj.pos is
 // within this XZ distance of the ship's center (pos.x / trueZpos) — 1100 in the
-// on-rails gScenery loop (fox_play.c:1994), and in the gScenery360 loop 1100, or 4000
-// on Sector Y and Venom-Andross (fox_play.c:1856-1858). The actor and boss loops have
-// no such gate. Returns 0 for "ungated". A consumer that replays the engine's surface
-// test (the obstacle cue's heightfield sampling) honors it so a big mesh's far corners,
-// which the engine never tests, do not warn.
+// on-rails gScenery loop, and in the gScenery360 loop 1100, or 4000 on Sector Y and
+// Venom-Andross (both literals sit at the top of those loops in Player_CollisionCheck).
+// The actor and boss loops have no such gate. Returns 0 for "ungated". A consumer that
+// projects a course through the mesh (the obstacle cue) honors it so a big mesh's far
+// corners, which the engine never tests, do not warn.
 static inline f32 Object_GetPolyCollisionRangeXZ(ObjectEventType type) {
     switch (type) {
         case OBJECT_TYPE_SCENERY:
@@ -149,34 +149,71 @@ static inline f32 Object_GetPolyCollisionRangeXZ(ObjectEventType type) {
 // the player's offset by -obj.rot.y before testing, Player_CheckPolyCollision). The
 // header arrays are plain in-process data (fox_colheaders.c, included into fox_col2.c);
 // only their polys/mesh fields are asset references, and those are not touched here.
-static inline void Object_GetPolyBounds(s32 colId, bool useCol2, Vec3f* min, Vec3f* max) {
-    if (useCol2) {
-        *min = D_800D2CA0[colId].min;
-        *max = D_800D2CA0[colId].max;
-    } else {
-        *min = D_800D2B38[colId].min;
-        *max = D_800D2B38[colId].max;
+// False for an index outside the table (Col_GetPolyBounds owns the sizes) — unreachable
+// through Object_GetPolyCollider, whose ids all map into range, but a caller holding a
+// colId it did not get from there (say a sentinel -1) must not index blindly.
+static inline bool Object_GetPolyBounds(s32 colId, bool useCol2, Vec3f* min, Vec3f* max) {
+    return Col_GetPolyBounds(colId, useCol2, min, max);
+}
+
+// A CollisionHeader2 heightfield mesh resolved once for repeated point probes, in the
+// producing object's frame. Object_ResolvePolyHeightfield fills it; the asset tables
+// are resolved here and nowhere per probe (Col2_ResolveMesh explains the cost). sn/cs
+// are the terms of the rotation the engine applies before testing — Player_CheckPolyCollision
+// runs Matrix_RotateY(-obj.rot.y) over gCalcMatrix — multiplied out, so a probe never
+// touches the shared scratch matrix or the frame-interpolation recording behind it.
+typedef struct PolyHeightfield {
+    CollisionHeader2* header;
+    Triangle* polys;
+    Vec3f* mesh;
+    Vec3f objPos;
+    f32 sn, cs;
+} PolyHeightfield;
+
+static inline bool Object_ResolvePolyHeightfield(s32 colId, const Vec3f* objPos, f32 rotY, PolyHeightfield* out) {
+    if (!Col2_ResolveMesh(colId, &out->header, &out->polys, &out->mesh)) {
+        return false;
     }
+    out->objPos = *objPos;
+    out->sn = sinf(-rotY * M_DTOR);
+    out->cs = cosf(-rotY * M_DTOR);
+    return true;
+}
+
+// Is a world-space point at or below the heightfield's surface? The engine's own test
+// (Col2_CheckSurface, the body of the func_col2_800A36FC the collision pass calls) on
+// the point rotated into the mesh's frame: the row-vector product of MTXF_NEW's
+// RotateY (m[0][0] = cs, m[0][2] = -sn, m[2][0] = sn, m[2][2] = cs) written out. Pure —
+// reads gCurrentLevel, writes nothing the engine owns.
+static inline bool Object_PolyHeightfieldHit(const PolyHeightfield* hf, const Vec3f* worldPoint) {
+    f32 rx = worldPoint->x - hf->objPos.x;
+    f32 rz = worldPoint->z - hf->objPos.z;
+    Vec3f probe = { hf->objPos.x + hf->cs * rx + hf->sn * rz, worldPoint->y,
+                    hf->objPos.z - hf->sn * rx + hf->cs * rz };
+    Vec3f objPos = hf->objPos; // the engine API takes non-const pointers
+    Vec3f hitData;
+    return Col2_CheckSurface(&probe, &objPos, hf->header, hf->polys, hf->mesh, &hitData);
 }
 
 // The engine's THIRD collision mechanism, beside hitbox records and poly meshes: a few
 // actor-event types carry gNoHitbox and are instead collided by a hand-written sphere
 // test keyed on eventType, with the radius a literal in the collision loop rather than
 // data on the object. The table below mirrors those literals; a new entry means finding
-// another such special case in Player_CollisionCheck's actor loop (fox_play.c:2152).
+// another such special case in Player_CollisionCheck's actor loop.
 // Returns true and writes the PLAYER-collision radius (the crash distance, which is what
 // an obstacle warning cares about; the shot-collision radius may differ) when the object
 // is one. Only OBJ_ACTOR_EVENT actors are tabled here, so every other type is a fast
 // false. Bosses have sphere cases of their own in Player_CollisionCheck's boss loop —
-// OBJ_BOSS_BO_BASE_SHIELD, 1500 units and gNoHitbox so the sphere is its only collision
-// (fox_play.c:2092), and OBJ_BOSS_KA_SAUCERER, 2700 units on top of a real hitbox
-// (fox_play.c:2113) — deliberately NOT tabled: the only consumer that would see them,
-// the obstacle cue, excludes gBosses wholesale as policy (ObstacleScan.h).
+// OBJ_BOSS_BO_BASE_SHIELD, 1500 units and gNoHitbox so the sphere is its only collision,
+// and OBJ_BOSS_KA_SAUCERER, 2700 units on top of a real hitbox — deliberately NOT
+// tabled: the only consumer that would see them, the obstacle cue, excludes gBosses
+// wholesale as policy (ObstacleScan.h).
 //
 //   EVID_ME_BIG_METEOR — Meteo's bouncing big meteor: 900 units around obj.pos for the
-//   player (fox_play.c:2169, VEC3F_MAG against pos.x/pos.y/trueZpos), 1000 for player
-//   shots (fox_beam.c:787). Non-lockable (targetOffset 0 in sEventActorInfo,
-//   fox_enmy2.c:1012) and destructible (script health 500).
+//   player (Player_CollisionCheck's actor loop, VEC3F_MAG against pos.x/pos.y/trueZpos),
+//   1000 for player shots (PlayerShot_CollisionCheck, fox_beam.c). Non-lockable
+//   (targetOffset 0 in its sEventActorInfo row, fox_enmy2.c) and destructible (script
+//   health 500).
 static inline bool Object_GetSphereCollider(ObjectEventType type, void* object, f32* radius) {
     if (type != OBJECT_TYPE_ACTOR) {
         return false;
@@ -263,7 +300,7 @@ typedef struct HitboxBox {
 // they never damage the player — and the rotated variant's box is used with its rotation
 // ignored (slightly wrong footprint for yawed walls; callers absorb it with margins).
 // Writes at most maxOut records, returns how many. The stride arithmetic mirrors
-// Player_CheckHitboxCollision (fox_play.c:1270-1291) exactly: 6 floats per record, +4
+// Player_CheckHitboxCollision's record walk (fox_play.c) exactly: 6 floats per record, +4
 // extra for HITBOX_ROTATED (sentinel + 3 rotation floats), +1 extra for records at or
 // above HITBOX_SHADOW (shadow and whoosh), so a data variant the engine understands can
 // never desynchronize this walk. Records with a non-finite field are dropped —

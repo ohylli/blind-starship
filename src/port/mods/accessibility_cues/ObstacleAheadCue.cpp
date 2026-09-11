@@ -133,10 +133,54 @@ static bool ObstacleAheadCue_RaySpan(const ObstacleBox& box, const Vec3f& fwd, f
 // play frames at cruise speed, and a mesh triangle is hundreds of units across, so a
 // finer step buys nothing while a much coarser one could step over a narrow ridge.
 static constexpr f32 kHeightfieldStep = 100.0f;
-// Cap on steps per box per tick. The deepest heightfield box is ~2600 units and the
-// all-range diagonal through it ~4500 (45 steps); this guards a NaN or absurd span,
-// not a real mesh.
+// Cap on steps per box per tick. The walk never spans more than the warn distance, and
+// warnDist is clamped to kObstacleCueWarnDistMax, so no real span reaches this (the
+// assert keeps it so — a walk cut short would leave a slope past the cap unwarned);
+// it guards a NaN or absurd input, not a mesh.
 static constexpr s32 kHeightfieldMaxSteps = 64;
+static_assert((f32) kHeightfieldMaxSteps * kHeightfieldStep >= kObstacleCueWarnDistMax,
+              "the heightfield walk must reach the far end of the widest warn band");
+
+// The engine's XZ range gate (box.polyRangeXZ, Object_GetPolyCollisionRangeXZ) applied
+// along the course. Player_CollisionCheck tests a scenery mesh only while the SHIP is
+// within that distance of obj.pos, so along the course the mesh can only be hit on the
+// stretch where the ship will be inside that circle: this clips [tNear, tFar] (course
+// distances from the ship) to it — a ray/circle intersection in the XZ plane — and
+// returns false when nothing of the span survives. Ungated boxes pass through.
+// Gating along the course rather than at the ship's current position is what a
+// warning needs: a big mesh's far corners the engine never tests never warn, and a
+// solid mesh the ship enters outside the circle keeps warning until the ship reaches
+// the stretch where the engine's own test takes over.
+static bool ObstacleAheadCue_ClipToPolyRange(const ObstacleBox& box, const Vec3f& origin, const Vec3f& course,
+                                             f32* tNear, f32* tFar) {
+    if (!(box.polyRangeXZ > 0.0f)) {
+        return true;
+    }
+    const f32 ox = origin.x - box.objPos.x;
+    const f32 oz = origin.z - box.objPos.z;
+    // |o + d t|^2 = R^2 in XZ, i.e. a t^2 + 2 b t + c = 0.
+    const f32 a = course.x * course.x + course.z * course.z;
+    const f32 b = ox * course.x + oz * course.z;
+    const f32 c = ox * ox + oz * oz - box.polyRangeXZ * box.polyRangeXZ;
+    constexpr f32 kVerticalEps = 1e-6f; // course is unit-length: a is the squared horizontal cosine
+    if (a < kVerticalEps) {
+        return c < 0.0f; // straight up or down: the whole span is in or out with the ship
+    }
+    const f32 disc = b * b - a * c;
+    if (!(disc >= 0.0f)) {
+        return false; // the course never enters the circle (or NaN)
+    }
+    const f32 sq = sqrtf(disc);
+    const f32 tIn = (-b - sq) / a;
+    const f32 tOut = (-b + sq) / a;
+    if (tIn > *tNear) {
+        *tNear = tIn;
+    }
+    if (tOut < *tFar) {
+        *tFar = tOut;
+    }
+    return *tNear <= *tFar;
+}
 
 // Heightfield refinement of the course test, for a poly box of the CollisionHeader2
 // family (box.polyHeightfield — every terrain bump, the reefs, the island, Fortuna
@@ -145,28 +189,30 @@ static constexpr s32 kHeightfieldMaxSteps = 64;
 // fox_col2.c), so the box — which spans the whole hill — over-warns whenever the ship
 // is inside the footprint below the peak on a course that clears the slope. This
 // walks the course through the box in kHeightfieldStep steps from `tStart` to `tEnd`
-// (distances along the unit `course` ray from `origin`, the ship's center) and asks
-// the engine's own test at each step (func_col2_800A3690, the same mesh the engine
-// would consult), so "would I hit it" is answered by the code that decides it.
+// (distances along the unit `course` ray from `origin`, the ship's center — already
+// clipped to the engine's range gate by ObstacleAheadCue_ClipToPolyRange) and asks the
+// engine's own surface test at each step (Object_PolyHeightfieldHit over the same mesh
+// the engine would consult), so "would I hit it" is answered by the code that decides
+// it. The mesh is resolved once per box (Object_ResolvePolyHeightfield), not per probe.
 //
 // The probe is not the ship's center but the BOTTOM EDGE of the margin square around
 // it: the point `margin` below the course and its two lateral neighbors `margin` to
 // either side. That is the slack the box test already grants (the player inside the
 // footprint expanded by margin) restated for a surface hit from above — a slope that
 // rises to within the margin of the course warns, one the course clears by more stays
-// silent. Each probe is rotated into the mesh's frame exactly as
-// Player_CheckPolyCollision does (Matrix_RotateY(-obj.rot.y) applied to the offset
-// from obj.pos; the sn/cs products below are that matrix multiplied out), and a step
-// is skipped where the engine's own XZ range gate would skip the whole test
-// (box.polyRangeXZ, measured from the ship's center like the collision loops do), so
-// a big mesh's far corners, which the engine never tests, never warn.
+// silent.
 //
 // Returns the course distance of the first hit — 0 when the ship is already at or
 // below the surface — or a negative value when every probe clears. `probes` counts
 // the engine calls for the `cues` dump's cost line: at most (span / step + 1) * 3 per
-// box, each a bounds check plus a walk over the mesh's 13-36 triangles.
+// box, each a bounds check plus a walk over the mesh's 13-36 triangles on the tables
+// resolved up front.
 static f32 ObstacleAheadCue_HeightfieldGap(const ObstacleBox& box, const Vec3f& origin, const Vec3f& course,
                                            f32 tStart, f32 tEnd, f32 margin, int32_t* probes) {
+    PolyHeightfield hf;
+    if (!Object_ResolvePolyHeightfield(box.polyColId, &box.objPos, box.rotY, &hf)) {
+        return -1.0f; // not a tabled mesh — unreachable for a scan-produced box
+    }
     // Horizontal unit vector perpendicular to the course: +x on rails (course is -z);
     // falls back to +x for a near-vertical all-range heading.
     Vec3f lateral = { -course.z, 0.0f, course.x };
@@ -178,23 +224,24 @@ static f32 ObstacleAheadCue_HeightfieldGap(const ObstacleBox& box, const Vec3f& 
         lateral.x = 1.0f;
         lateral.z = 0.0f;
     }
-    const f32 sn = sinf(-box.rotY * M_DTOR);
-    const f32 cs = cosf(-box.rotY * M_DTOR);
-    Vec3f objPos = box.objPos; // the engine API takes non-const pointers
     // The engine rejects a probe outside the mesh's own bounding box before it looks at
-    // the surface (the bounds check at the top of func_col2_800A36FC), so a probe the
+    // the surface (the bounds check at the top of Col2_CheckSurface), so a probe the
     // margin pushes BELOW the box floor would clear a hill it is plainly under. A
     // surface cannot lie below that floor, so lifting the probe up to it asks the same
     // question — "is the surface within margin below the course" — in terms the engine
     // answers. (Verified live: with an 800 margin every bump cleared until this clamp.)
     const f32 floorY = box.center.y - box.half.y;
 
-    s32 steps = (s32) ceilf((tEnd - tStart) / kHeightfieldStep);
-    if (!(steps >= 0)) {
+    // The span is bounded as a float BEFORE the integer cast: converting a non-finite
+    // or out-of-range float to s32 is undefined, so the old "cast, then test the int"
+    // order only worked by what x86 and ARM happen to produce.
+    const f32 span = tEnd - tStart;
+    if (!(span >= 0.0f)) {
         return -1.0f; // NaN or a reversed span
     }
-    if (steps > kHeightfieldMaxSteps) {
-        steps = kHeightfieldMaxSteps;
+    s32 steps = kHeightfieldMaxSteps;
+    if (span < (f32) kHeightfieldMaxSteps * kHeightfieldStep) {
+        steps = (s32) ceilf(span / kHeightfieldStep);
     }
     for (s32 i = 0; i <= steps; i++) {
         f32 t = tStart + (f32) i * kHeightfieldStep;
@@ -202,25 +249,14 @@ static f32 ObstacleAheadCue_HeightfieldGap(const ObstacleBox& box, const Vec3f& 
             t = tEnd;
         }
         const Vec3f p = { origin.x + course.x * t, origin.y + course.y * t, origin.z + course.z * t };
-        if (box.polyRangeXZ > 0.0f) {
-            f32 gx = p.x - objPos.x;
-            f32 gz = p.z - objPos.z;
-            if (sqrtf(gx * gx + gz * gz) >= box.polyRangeXZ) {
-                continue; // the engine would not test this mesh from here
-            }
-        }
         f32 probeY = p.y - margin;
         if (probeY < floorY) {
             probeY = floorY;
         }
         for (s32 k = -1; k <= 1; k++) {
-            const Vec3f rel = { p.x + lateral.x * (f32) k * margin - objPos.x, probeY - objPos.y,
-                                p.z + lateral.z * (f32) k * margin - objPos.z };
-            Vec3f probe = { objPos.x + cs * rel.x + sn * rel.z, objPos.y + rel.y,
-                            objPos.z - sn * rel.x + cs * rel.z };
-            Vec3f hitData;
+            const Vec3f probe = { p.x + lateral.x * (f32) k * margin, probeY, p.z + lateral.z * (f32) k * margin };
             (*probes)++;
-            if (func_col2_800A3690(&probe, &objPos, box.polyColId, &hitData)) {
+            if (Object_PolyHeightfieldHit(&hf, &probe)) {
                 return t;
             }
         }
@@ -257,6 +293,11 @@ static void ObstacleAheadCue_OnPostUpdate(IEvent* event) {
     f32 warnDist = CVarGetFloat(kObstacleCueWarnDistCVar, kObstacleCueWarnDistDefault);
     if (!(warnDist > 0.0f)) {
         warnDist = kObstacleCueWarnDistDefault; // zero, negative, or NaN
+    }
+    if (warnDist > kObstacleCueWarnDistMax) {
+        warnDist = kObstacleCueWarnDistMax; // the slider's ceiling; a hand-edited config or the
+                                            // debug server can store more, and the heightfield
+                                            // walk's step cap is sized to this (see the assert)
     }
     f32 margin = CVarGetFloat(kObstacleCueMarginCVar, kObstacleCueMarginDefault);
     if (!(margin >= 0.0f)) {
@@ -310,6 +351,13 @@ static void ObstacleAheadCue_OnPostUpdate(IEvent* event) {
             }
             tNear = box.gapZ;
             tFar = box.gapZ + 2.0f * box.half.z;
+        }
+        // A poly mesh of either family is only ever tested by the engine while the ship
+        // is inside its XZ range gate; clip the span to that stretch of the course, and
+        // drop the box when none of it is inside (ObstacleAheadCue_ClipToPolyRange).
+        if ((box.record == kObstaclePolyRecord) &&
+            !ObstacleAheadCue_ClipToPolyRange(box, origin, course, &tNear, &tFar)) {
+            return;
         }
         f32 gap;
         if (box.polyHeightfield) {

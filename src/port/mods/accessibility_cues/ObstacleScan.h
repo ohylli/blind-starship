@@ -4,12 +4,11 @@
 // Object_IsObstacle predicate — collidable hitbox, poly mesh or sphere collider, not
 // lockable — minus the cue-side exclusions below) and their collision shapes as
 // world-space boxes with the player-relative geometry every consumer needs already
-// derived. The obstacle-ahead cue
-// (its rails footprint test and its all-range ray test) is the first consumer; the
-// planned directional obstacle cues (left/right, above/below) are the reason the
-// geometry is yielded raw — no thresholding, no margin, no direction naming happens
-// here. Every filter beyond "is a warn-worthy obstacle with a solid box" is the
-// caller's policy. Game-coupled by design, like CueScan.h.
+// derived. The obstacle-ahead cue (its rails footprint test and its all-range ray test)
+// is the first consumer; the planned directional obstacle cues (left/right, above/below)
+// are the reason the geometry is yielded raw — no thresholding, no margin, no direction
+// naming happens here. Every filter beyond "is a warn-worthy obstacle with a solid box"
+// is the caller's policy. Game-coupled by design, like CueScan.h.
 //
 // Cue-side exclusions on top of the predicate (policy shared by the future obstacle
 // cues, deliberately NOT in Object_IsObstacle, whose other consumer is
@@ -26,28 +25,30 @@
 //     row installs gCubeHitbox100, fox_enmy2.c's sEventActorInfo). OBJ_ACTOR_TEAM_ARWING
 //     needs no entry — it has gNoHitbox and never passes the predicate.
 //
-// Three collision mechanisms, one box shape. Hitbox objects yield one box per solid
-// record. Poly-mesh objects (Object_GetPolyCollider — the terrain bumps, mountains,
-// reefs, the molar rock, the Sector Y capital ships) yield ONE box, the mesh's own
-// bounding box around obj.pos (Object_GetPolyBounds), record index
-// kObstaclePolyRecord — and it REPLACES the object's hitbox records, because the engine
-// never tests those for the player once an id is routed to the poly test (the capital
-// ship's real hitbox and the island's are dead data as far as crashing goes). The box is
-// exact for the solid meshes but a coarse over-approximation for the heightfield family
-// (see the ObjectQuery.h comment): a terrain bump's box spans the whole hill, so a
-// course through the box at an altitude that clears the slope still counts as on
-// course. Refining that is the consumer's job — the scan stays box-only so every
-// consumer shares one shape, and carries the mesh identity, obj.pos/rot.y and the
-// engine's range gate on the box (the poly* fields) so a consumer can replay the
-// engine's own surface test along its course, as the ahead cue does
-// (ObstacleAheadCue_HeightfieldGap). Sphere-collided objects (Object_GetSphereCollider — today only Meteo's big
-// meteor, which carries gNoHitbox and is collided by a hand-written 900-unit sphere)
-// are boxed the same way: one synthesized record centered on obj.pos with half-extents
-// equal to the radius on every axis, record index kObstacleSphereRecord. The cube
-// over-warns at its corners (a diagonal pass 900-1270 units off center) — accepted, in
-// the same spirit as the yawed-wall approximation below: a conservative warning about
-// an 1800-unit rock is the right failure direction, and it keeps the course tests and
-// the planned directional cues on one box shape.
+// Three collision mechanisms, one box shape (ObstacleScan_RecordKind names them):
+//   - Hitbox objects yield one box per solid record (Object_ReadSolidHitboxes).
+//   - Poly-mesh objects (Object_GetPolyCollider — the terrain bumps, mountains, reefs,
+//     the molar rock, the Sector Y capital ships) yield ONE box, the mesh's own bounding
+//     box around obj.pos (Object_GetPolyBounds), record index kObstaclePolyRecord — and
+//     it REPLACES the object's hitbox records, because the engine never tests those for
+//     the player once an id is routed to the poly test (the capital ship's real hitbox
+//     and the island's are dead data as far as crashing goes). The box is exact for the
+//     solid meshes but a coarse over-approximation for the heightfield family (see the
+//     ObjectQuery.h comment): a terrain bump's box spans the whole hill, so a course
+//     through the box at an altitude that clears the slope still counts as on course.
+//     Refining that is the consumer's job — the scan stays box-only so every consumer
+//     shares one shape, and carries the mesh identity, obj.pos/rot.y and the engine's
+//     range gate on the box (the poly* fields) so a consumer can replay the engine's own
+//     surface test along its course, as the ahead cue does
+//     (ObstacleAheadCue_HeightfieldGap over Object_PolyHeightfieldHit).
+//   - Sphere-collided objects (Object_GetSphereCollider — today only Meteo's big meteor,
+//     which carries gNoHitbox and is collided by a hand-written 900-unit sphere) are
+//     boxed the same way: one synthesized record centered on obj.pos with half-extents
+//     equal to the radius on every axis, record index kObstacleSphereRecord. The cube
+//     over-warns at its corners (a diagonal pass 900-1270 units off center) — accepted,
+//     in the same spirit as the yawed-wall approximation below: a conservative warning
+//     about an 1800-unit rock is the right failure direction, and it keeps the course
+//     tests and the planned directional cues on one box shape.
 //
 // Deliberate non-features, so a future session doesn't "fix" them by accident: obj.rot
 // is ignored (the box is axis-aligned in world space even for a yawed wall or a
@@ -74,6 +75,9 @@ enum ObstacleArray {
     OBSTACLE_ARRAY_SCENERY360,
 };
 const char* ObstacleScan_ArrayName(ObstacleArray array); // for JSON / logs
+// "hitbox", "sphere" or "poly" for an ObstacleBox::record value, so the `cues` dump
+// never shows the sentinels below as bare magic numbers.
+const char* ObstacleScan_RecordKind(s32 record);
 
 // One solid hitbox record of one obstacle, in world space, plus the player-relative
 // geometry. Plain scalars: safe to copy into a debug mirror that outlives the object.
@@ -171,17 +175,21 @@ inline void EmitBoxes(ObjectEventType type, T* entry, ObstacleArray array, s32 s
     if (Object_GetPolyCollider(type, entry, &polyColId, &polyUseCol2)) {
         // The mesh's bounding box, INSTEAD of the hitbox records — see the header
         // comment. min/max are obj.pos-relative corners; the record wants a center
-        // offset plus half-extents.
+        // offset plus half-extents. A colId outside the header table (unreachable: the
+        // engine's id map only yields tabled indices) yields no box at all rather than
+        // falling back to the dead hitbox records.
         Vec3f min, max;
-        Object_GetPolyBounds(polyColId, polyUseCol2, &min, &max);
-        records[0].zOffset = (min.z + max.z) * 0.5f;
-        records[0].zHalf = (max.z - min.z) * 0.5f;
-        records[0].yOffset = (min.y + max.y) * 0.5f;
-        records[0].yHalf = (max.y - min.y) * 0.5f;
-        records[0].xOffset = (min.x + max.x) * 0.5f;
-        records[0].xHalf = (max.x - min.x) * 0.5f;
-        records[0].record = kObstaclePolyRecord;
-        n = 1;
+        n = 0;
+        if (Object_GetPolyBounds(polyColId, polyUseCol2, &min, &max)) {
+            records[0].zOffset = (min.z + max.z) * 0.5f;
+            records[0].zHalf = (max.z - min.z) * 0.5f;
+            records[0].yOffset = (min.y + max.y) * 0.5f;
+            records[0].yHalf = (max.y - min.y) * 0.5f;
+            records[0].xOffset = (min.x + max.x) * 0.5f;
+            records[0].xHalf = (max.x - min.x) * 0.5f;
+            records[0].record = kObstaclePolyRecord;
+            n = 1;
+        }
     } else {
         n = Object_ReadSolidHitboxes(entry->info.hitbox, records, kObjectMaxHitboxRecords);
     }
@@ -265,9 +273,9 @@ template <typename Fn> void ObstacleScan_ForEachBox(Player* player, ObstacleScan
     // info.hitbox is a pointer field that would then be dereferenced with arbitrary
     // bits — no null or bounds check can catch that. The safe invariant is to walk the
     // array only while the engine itself walks it under this same mode gate
-    // (fox_enmy.c:888). That formulation also covers Venom-Andross, which skips the
-    // allocation and reuses a prior level's block in place after re-zeroing its
-    // statuses (fox_play.c:7142).
+    // (Object_CheckCollision, fox_enmy.c). That formulation also covers Venom-Andross,
+    // which skips the allocation and reuses a prior level's block in place after
+    // re-zeroing its statuses (Play_Main, fox_play.c).
     if ((gLevelMode == LEVELMODE_ALL_RANGE) && (gScenery360 != nullptr)) {
         for (s32 i = 0; i < kScenery360Count; i++) {
             ObstacleScanDetail::EmitBoxes(OBJECT_TYPE_SCENERY360, &gScenery360[i], OBSTACLE_ARRAY_SCENERY360, i,

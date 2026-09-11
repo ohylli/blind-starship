@@ -390,7 +390,8 @@ pause-and-inspect workflow this command was the point of.
 Additions since: the obstacle-ahead cue (2026-08-11) reports its policy the same way —
 gates, scan counters (`active`/`obstacles`/`boxes` plus `onCourse`), the effective
 warn-distance/margin knobs, and when active the winning hitbox record (source array +
-slot/objId/record, the course `gap` driving the interval plus the raw `gapZ` to the
+slot/objId/record, with `recordKind` naming a synthesized record — `hitbox`, `sphere`
+or `poly` — the course `gap` driving the interval plus the raw `gapZ` to the
 near face, per-axis `clear`/`delta`/`half`) and the pushed `intervalSec`. The all-range
 extension (2026-08-18) renamed `gates.onRails` to `gates.modeOk` with a top-level
 `allRange` flag (matching the aim cue's shape), added the `gates.aimValid` form gate,

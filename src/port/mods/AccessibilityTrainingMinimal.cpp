@@ -69,9 +69,11 @@ static bool AccessibilityTrainingMinimal_ShouldFilter(ObjectEventType type, void
     if (!AccessibilityTrainingMinimal_ScopeActive()) {
         return false;
     }
-    // Classification (collidable hitbox, not lockable) is the shared obstacle predicate,
-    // also consumed by the obstacle-ahead cue — the enemy-vs-obstacle rationale
-    // (targetOffset, the actor-event second-tick install) lives with it in ObjectQuery.h.
+    // Classification (collidable — a hitbox with solid records, a poly mesh, or a sphere
+    // collider — and not lockable) is the shared obstacle predicate, also consumed by
+    // the obstacle-ahead cue, so Training strips exactly what the cue warns about — the
+    // enemy-vs-obstacle rationale (targetOffset, the actor-event second-tick install)
+    // lives with it in ObjectQuery.h.
     // The predicate deliberately has no status check, which is what lets this caller run
     // it on ObjectInitEvent (status still OBJ_INIT).
     return Object_IsObstacle(type, object);

@@ -26,7 +26,7 @@ The ring cue feeds the engine a world-space delta `(enemy.pos - player.pos)` and
 
 For the enemy cue we instead rotate that world delta into the Arwing's body frame before feeding it to the engine. After the rotation, the X component means "how far to the right of where I'm pointing" and the Y component means "how far above where I'm pointing," regardless of the Arwing's heading in world space. Distance (the length of the delta) is unchanged, because rotating a vector doesn't change its length.
 
-This is the same math `Player_SetupShot` (`src/engine/fox_play.c:3037-3050`) already uses to compute a laser's velocity vector, just inverted. There it builds a calc matrix from the player's aim angles and transforms a body-frame `(0, 0, speed)` vector into world space. We build the same matrix and transform a world-space delta into body frame.
+This is the same math `Player_SetupArwingShot` (`src/engine/fox_play.c`) already uses to compute a laser's velocity vector, just inverted. There it builds a calc matrix from the player's aim angles and transforms a body-frame `(0, 0, speed)` vector into world space. We build the same matrix and transform a world-space delta into body frame.
 
 The angles that define the Arwing's aim, in the form `Player_SetupShot` uses, are:
 
@@ -34,7 +34,7 @@ The angles that define the Arwing's aim, in the form `Player_SetupShot` uses, ar
 - Pitch: `player->rot.x + player->xRot_120 + player->aerobaticPitch`
 - Bank: `player->bankAngle` — irrelevant for direction; matters only for shot start offset.
 
-These fields are on the `Player` struct at `include/sf64player.h:210`, `:218`, `:221`, `:327`, etc.
+These fields are on the `Player` struct in `include/sf64player.h`.
 
 The math is identical in on-rails and all-range. What differs is only the range of values the angles take: small deviations from forward in on-rails, full 360° in all-range.
 
@@ -42,7 +42,7 @@ The math is identical in on-rails and all-range. What differs is only the range 
 
 ## A rejected alternative: the on-screen reticle global
 
-`D_display_801613E0[0..1]` (`src/engine/fox_display.c:16`) holds the on-screen reticle positions, computed inside `Display_Arwing` / `Display_Landmaster` by transforming a forward-axis point through `gGfxMatrix`. It is tempting as a ready-made "where the player is aiming" point, and the spawner mod (`src/mods/spawner.c:47-60`) reads it for click-to-spawn placement.
+`D_display_801613E0[0..1]` (`src/engine/fox_display.c`) holds the on-screen reticle positions, computed inside `Display_Arwing` / `Display_Landmaster` by transforming a forward-axis point through `gGfxMatrix`. It is tempting as a ready-made "where the player is aiming" point, and the spawner mod (`Spawner_Actor` in `src/mods/spawner.c`) reads it for click-to-spawn placement.
 
 It is not the right primitive for the cue:
 
@@ -61,13 +61,13 @@ actor->obj.status == OBJ_ACTIVE
 && actor->info.targetOffset != 0.0f
 ```
 
-This is exactly the predicate the engine itself uses for laser lock-on — see `PlayerShot_FindLockTarget` (`src/engine/fox_beam.c:1741`) and the follow-up tracking pass at `:2152`. By inheriting it the cue automatically picks up every dynamic adjustment the game already does to disable lock-on:
+This is exactly the predicate the engine itself uses for laser lock-on — see `PlayerShot_FindLockTarget` (`src/engine/fox_beam.c`) and the follow-up tracking pass in `PlayerShot_UpdateLockOnShot`. By inheriting it the cue automatically picks up every dynamic adjustment the game already does to disable lock-on:
 
-- **Teammates in all-range** — `ActorAllRange_SpawnTeam` zeroes `info.targetOffset` for aiType ≤ AI360_PEPPY right after `Object_SetInfo` copies the default from `gObjectInfo[]` (`fox_360.c:421`). Fox/Falco/Slippy/Peppy never read as targets.
-- **Event handlers** — aiType `AI360_EVENT_HANDLER` actors get `info.targetOffset = 0.0f` every update tick (`fox_360.c:1300`).
-- **Defeated / downed states** — various per-level scripts zero `targetOffset` when an enemy transitions out of its hostile state (e.g. `fox_sz.c:842`, `fox_ka.c:2230`, `fox_ti.c:870`, `fox_fo.c:513`).
+- **Teammates in all-range** — `ActorAllRange_SpawnTeam` zeroes `info.targetOffset` for aiType ≤ AI360_PEPPY right after `Object_SetInfo` copies the default from `gObjectInfo[]` (`fox_360.c`). Fox/Falco/Slippy/Peppy never read as targets.
+- **Event handlers** — aiType `AI360_EVENT_HANDLER` actors get `info.targetOffset = 0.0f` every update tick (`ActorAllRange_Update`, `fox_360.c`).
+- **Defeated / downed states** — various per-level scripts zero `targetOffset` when an enemy transitions out of its hostile state (e.g. `SectorZ_TeamSetup` in `fox_sz.c`, `Katina_801981F8` in `fox_ka.c`, `Titania_TiRasco_Update` in `fox_ti.c`, `Fortuna_FoRadar_Update` in `fox_fo.c`).
 
-**Why there is no `id != OBJ_ACTOR_EVENT` filter** — `OBJ_ACTOR_EVENT` is *not* a "this slot is an invisible event handler" marker. It is the storage form for nearly every gameplay enemy on the on-rails levels: the level's scripted-event bytecode allocates an `OBJ_ACTOR_EVENT` actor and then `EVOP_INIT_ACTOR` (`fox_enmy2.c:1132-1258`) rewrites that actor's `info` field from a per-event-type table. After init, a Venom Tank actor has `obj.id == OBJ_ACTOR_EVENT` but `info.targetOffset == 1.0` (copied from `sEventActorInfo[EVID_VENOM_TANK]` at line 1211); the same for Spy Eyes, Garudas, Skibots, Star Wolf, etc. Filtering by `id != OBJ_ACTOR_EVENT` would reject every event-spawned enemy in Training and the rest of the on-rails pipeline. Pure event handlers (`EVID_EVENT_HANDLER`, `EVID_FFF` before init resolves) keep `info.targetOffset = 0.0f` because their `EVOP_INIT_ACTOR` branch never overwrites it, so the `targetOffset` check filters them on its own.
+**Why there is no `id != OBJ_ACTOR_EVENT` filter** — `OBJ_ACTOR_EVENT` is *not* a "this slot is an invisible event handler" marker. It is the storage form for nearly every gameplay enemy on the on-rails levels: the level's scripted-event bytecode allocates an `OBJ_ACTOR_EVENT` actor and then `EVOP_INIT_ACTOR` (in `ActorEvent_ProcessScript`, `fox_enmy2.c`) rewrites that actor's `info` field from a per-event-type table. After init, a Venom Tank actor has `obj.id == OBJ_ACTOR_EVENT` but `info.targetOffset == 1.0` (copied from `sEventActorInfo[EVID_VENOM_TANK]`); the same for Spy Eyes, Garudas, Skibots, Star Wolf, etc. Filtering by `id != OBJ_ACTOR_EVENT` would reject every event-spawned enemy in Training and the rest of the on-rails pipeline. Pure event handlers (`EVID_EVENT_HANDLER`, `EVID_FFF` before init resolves) keep `info.targetOffset = 0.0f` because their `EVOP_INIT_ACTOR` branch never overwrites it, so the `targetOffset` check filters them on its own.
 
 Note that `actor->info` is the actor's *per-instance copy* of the per-class `ObjectInfo`, not a pointer back to the master table. `Object_SetInfo` (called from `Actor_Load`) does a struct copy at load time; subsequent dynamic writes like the ones above only affect that instance. This is why the engine's own lock-on check reads `actor->info.targetOffset` rather than `gObjectInfo[actor->obj.id].targetOffset`.
 

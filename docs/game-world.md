@@ -220,7 +220,7 @@ Not every spawn comes from `gLevelObjects`. There are three other paths:
 - **Item drops** — when an enemy dies, its `itemDrop` field (an `ItemDrop`
   enum like `DROP_SILVER_RING`, `DROP_BOMB`, `DROP_1UP`) tells `Item_Load` to
   spawn a corresponding `OBJ_ITEM_*` at the enemy's death position.
-- **Versus item spawns** — `Play_SpawnVsItem` (`fox_play.c:7077`) places
+- **Versus item spawns** — `Play_SpawnVsItem` (`fox_play.c`) places
   pickups at fixed scenery positions in versus mode.
 
 For accessibility purposes the distinction matters because items "appearing
@@ -284,8 +284,8 @@ types, and per-object specials (e.g. `aWzGateHitbox` for the Warp Zone gate is
 
 ## 6. The per-frame update loop
 
-The top-level game-frame entry point is `Play_Main()` (`fox_play.c:7102`).
-For normal gameplay it calls `Play_Update()` (`fox_play.c:7032`), which runs:
+The top-level game-frame entry point is `Play_Main()` (`fox_play.c`).
+For normal gameplay it calls `Play_Update()` (same file), which runs:
 
 1. Screen fade bookkeeping (`Play_UpdateFillScreen`).
 2. Team shield damage for Falco/Peppy/Slippy.
@@ -499,11 +499,11 @@ small enemies use this directly.
 ### The collision pass
 
 All player collision is centralised in one large function in
-`Player_Update`'s call tree (the function around `fox_play.c:1799`, which
+`Player_Update`'s call tree (`Player_CollisionCheck` in `fox_play.c`, which
 calls `Player_UpdateHitbox` and then walks every array). The two lower-level
 test functions are:
 
-- **`Player_CheckHitboxCollision()`** (`fox_play.c:1258`) — tests up to four
+- **`Player_CheckHitboxCollision()`** (`fox_play.c`) — tests up to four
   player hitpoints (`hit3`, `hit4`, `hit1`, `hit2` — body, tail, right wing,
   left wing) against each hitbox record. Returns 1–4 for which hitpoint hit,
   `-1` for shadow, `-2` for whoosh, `0` for no hit.
@@ -801,8 +801,8 @@ The general shape, mirroring the screen-reader pattern in
 | Per-type slot-finders | `Scenery_Load` / `Sprite_Load` / `Actor_Load` / `Boss_Load` / `Item_Load` — `src/engine/fox_enmy.c:213–283` (effects loaded from `gLevelObjects` are handled inline by `Object_Load`'s switch, not a dedicated function) |
 | Master per-frame world iterator | `Object_Update` — `src/engine/fox_enmy.c:3128` |
 | Per-type per-frame update (where the lifecycle hooks fire) | `Actor_Update` (`fox_enmy.c:2813`), `Boss_Update` (`:2889`), `Scenery_Update` (`:2944`), `Sprite_Update` (`:2971`), `Item_Update` (`:3001`), `Effect_Update` (`:3031`) |
-| Top-level game frame | `Play_Main` / `Play_Update` — `src/engine/fox_play.c:7102 / 7018` |
-| Player collision pass (player vs. world) | starting around `src/engine/fox_play.c:1799`, with helpers at `:1258` (hitbox) and `:1656` (item) |
+| Top-level game frame | `Play_Main` / `Play_Update` — `src/engine/fox_play.c` |
+| Player collision pass (player vs. world) | `Player_CollisionCheck` in `src/engine/fox_play.c`, with helpers `Player_CheckHitboxCollision` (hitbox) and `Player_CheckItemCollect` (item) |
 | Scenery polygon collision tables | `src/engine/fox_col1.c`, `src/engine/fox_col2.c` |
 | World→camera-space SFX position converter | `Object_SetSfxSourceToPos` — `src/engine/fox_edisplay.c:1578` |
 | Existing port-side object-lifecycle events | `src/port/hooks/list/ActorEvent.h` (`ObjectInitEvent`, `ObjectUpdateEvent`, `ObjectDestroyEvent`) |

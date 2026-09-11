@@ -27,10 +27,12 @@ height-pitch conventions the ring/enemy cues use. The planned directional obstac
   collider + not lockable; also the
   predicate `AccessibilityTrainingMinimal` strips by, so "training removes exactly what
   the cue warns about" is an invariant, not a coincidence) and `Object_ReadSolidHitboxes`
-  (the flat hitbox-array walk, stride-for-stride against `Player_CheckHitboxCollision`,
-  `fox_play.c:1270-1291`), plus `Object_GetPolyCollider`/`Object_GetPolyBounds` (the
-  poly-mesh dispatch lists and each mesh's stored bounding box — the engine's second
-  collision mechanism) and `Object_GetSphereCollider` (the event-type → radius
+  (the flat hitbox-array walk, stride-for-stride against `Player_CheckHitboxCollision`),
+  plus `Object_GetPolyCollider`/`Object_GetPolyBounds` (the poly-mesh dispatch lists and
+  each mesh's stored bounding box — the engine's second collision mechanism),
+  `Object_ResolvePolyHeightfield`/`Object_PolyHeightfieldHit` (the engine's heightfield
+  surface test on a mesh resolved once, for a consumer probing many points) and
+  `Object_GetSphereCollider` (the event-type → radius
   table for the engine's third collision mechanism, the hand-written sphere test; see
   "What is included").
 - **`src/port/mods/accessibility_cues/ObstacleScan.{h,cpp}`** — the shared scan, sibling
@@ -78,28 +80,42 @@ encounter, mirroring the rails rule. The heading composition is the Arwing's (an
 Marine's); the forms that compose differently (Landmaster, on-foot) never appear in
 solo all-range, and the cue stops rather than guesses if one ever does.
 
+**Poly meshes honor the engine's range gate along the course.** A scenery poly mesh is
+only tested by the engine while the *ship* is within an XZ radius of `obj.pos` (1100
+units in `Player_CollisionCheck`'s scenery loops, 4000 on Sector Y and Venom-Andross;
+`Object_GetPolyCollisionRangeXZ`), so both mesh families get their course span clipped
+to the stretch where the ship will be inside that circle — a ray/circle intersection in
+the XZ plane, `ObstacleAheadCue_ClipToPolyRange` — and a box with none of its span
+inside is dropped. Gating along the course rather than at the ship's current position
+is what a warning needs: a big mesh's far corners the engine never tests never warn
+(Fortuna mountain 2's stored box reaches 1300 units out against an 1100 gate), and a
+solid mesh the ship enters outside the circle keeps warning until the ship reaches the
+stretch where the engine's own test takes over.
+
 **Heightfield meshes get a second, decisive test.** A poly-mesh box of the
 `CollisionHeader2` family (every terrain bump, the reefs, the island, Fortuna mountain
 1, Venom's mountain — see "What is included") passes the tests above as a *candidate*
 only: its box spans the whole hill, but the engine hits such a mesh solely when one of
-the ship's body points is at or below the surface under it. So the cue walks the course
-through the box in 100-unit steps and asks the engine's own surface test at each step
-(`func_col2_800A3690`, the same mesh and code the engine would consult;
-`ObstacleAheadCue_HeightfieldGap`). The probe is the *bottom edge of the margin square*
-around the ship — the point one margin below the course and its two lateral neighbors
-one margin to either side — which is the box test's slack ("inside the footprint
-expanded by the margin") restated for a surface hit from above: a slope that rises to
-within the margin of the course warns, one the course clears by more stays silent.
-Each probe is rotated into the mesh's frame exactly as `Player_CheckPolyCollision`
-does (`obj.rot.y`), and steps the engine's own range gate would skip (a scenery poly is
-only tested while `obj.pos` is within 1100 XZ units of the ship, `fox_play.c:1994`,
-`Object_GetPolyCollisionRangeXZ`) are skipped too, so a big mesh's far corners never
-warn. The first hit's course distance replaces the near-face gap; no hit drops the box.
-Two rules differ from the solid case on purpose: the walk starts *at the ship* when the
-ship is already inside the box (a bump's box is up to 2600 units deep and the slope may
-still rise ahead — being past the near face does not hand the encounter to the engine),
-and it stops at the warning distance rather than the box's far face. Solid meshes
-(`CollisionHeader`, the swept-triangle test) keep the plain box.
+the ship's body points is at or below the surface under it. So the cue walks the
+clipped course span through the box in 100-unit steps and asks the engine's own surface
+test at each step (`Object_PolyHeightfieldHit` over `Col2_CheckSurface`, the body of
+the `func_col2_800A36FC` the collision pass calls, on the same mesh;
+`ObstacleAheadCue_HeightfieldGap`). The mesh's asset tables are resolved once per box
+(`Object_ResolvePolyHeightfield` over `Col2_ResolveMesh`), not per probe — each resolve
+is a resource-manager round trip, and a walk is a few hundred probes per tick. The
+probe is the *bottom edge of the margin square* around the ship — the point one margin
+below the course and its two lateral neighbors one margin to either side — which is the
+box test's slack ("inside the footprint expanded by the margin") restated for a surface
+hit from above: a slope that rises to within the margin of the course warns, one the
+course clears by more stays silent. Each probe is rotated into the mesh's frame exactly
+as `Player_CheckPolyCollision` does (`obj.rot.y`, multiplied out so the walk never
+touches the engine's scratch matrix). The first hit's course distance replaces the
+near-face gap; no hit drops the box. Two rules differ from the solid case on purpose:
+the walk starts *at the ship* when the ship is already inside the box (a bump's box is
+up to 2600 units deep and the slope may still rise ahead — being past the near face
+does not hand the encounter to the engine), and it stops at the warning distance rather
+than the box's far face. Solid meshes (`CollisionHeader`, the swept-triangle test) keep
+the plain, range-clipped box.
 
 The nearest on-course record wins and its gap maps geometrically (log-domain
 interpolation) to the pulse interval (slow at the warning distance, fast at contact), so
@@ -120,11 +136,12 @@ correct even mid-fight), and any future non-shootable hazard actor. Also include
 a different route: **sphere-collided actor events** (`Object_GetSphereCollider` in
 `ObjectQuery.h`) — today only Meteo's big meteor (`EVID_ME_BIG_METEOR`), which carries
 `gNoHitbox` and is collided by a hand-written 900-unit sphere around `obj.pos`
-(`fox_play.c:2169`; player shots use 1000, `fox_beam.c:787`). The radius is a code
-literal, not object data, so the predicate keeps a small event-type → radius table that
-passes such objects as collidable, and the scan boxes the sphere: one synthesized
-record centered on `obj.pos` with ±radius half-extents, `record == -1`
-(`kObstacleSphereRecord`) in the `cues` dump. The cube over-warns at its corners
+(`Player_CollisionCheck`'s actor loop; player shots use 1000, `PlayerShot_CollisionCheck`
+in `fox_beam.c`). The radius is a code literal, not object data, so the predicate keeps
+a small event-type → radius table that passes such objects as collidable, and the scan
+boxes the sphere: one synthesized record centered on `obj.pos` with ±radius
+half-extents, `record == -1` / `recordKind "sphere"` (`kObstacleSphereRecord`) in the
+`cues` dump. The cube over-warns at its corners
 (diagonal passes 900–1270 units off center); accepted for the same reason as the
 rotation approximation — conservative is the right failure direction for an 1800-unit
 rock, and one box shape keeps the course tests and the directional siblings simple.
@@ -141,8 +158,9 @@ about the wrong shape). `Object_GetPolyCollider` mirrors the three dispatch list
 resolves the mesh through the engine's own id → mesh map (`Play_GetPolyColId`, split out
 of `Play_CheckPolyCollision` for exactly this), and the scan yields **one box per
 object, the mesh's stored bounding box** (`CollisionHeader.min/max`,
-`fox_colheaders.c`) around `obj.pos`, `record == -2` (`kObstaclePolyRecord`) in the
-`cues` dump, *replacing* any hitbox records. Rotation is ignored as everywhere else.
+`fox_colheaders.c`) around `obj.pos`, `record == -2` / `recordKind "poly"`
+(`kObstaclePolyRecord`) in the `cues` dump, *replacing* any hitbox records. Rotation is
+ignored as everywhere else.
 The catch: the engine has two mesh families and only one is a solid. The
 `CollisionHeader` family (the molar rock, Fortuna mountains 2 and 3, the capital ship,
 the boss bases) is a swept-triangle test, and its box is a fair stand-in. The
@@ -163,10 +181,11 @@ Two cue-side exclusions sit on top of the predicate, in `ObstacleScan`:
   it is shootable (Sarumarine is the game's one lockable boss), so a lockability test
   excludes nothing, and droning a crash warning through an on-rails boss fight (Meteo,
   Area 6, Sector X, …) would bury the aim/enemy cues exactly when they matter most.
-  Bosses also have hand-written collision spheres of their own (`OBJ_BOSS_BO_BASE_SHIELD`,
-  1500 units and `gNoHitbox`, `fox_play.c:2092`; `OBJ_BOSS_KA_SAUCERER`, 2700 units,
-  `fox_play.c:2113`) that `Object_GetSphereCollider` deliberately leaves untabled for the
-  same reason — a future boss cue would need to add them.
+  Bosses also have hand-written collision spheres of their own in
+  `Player_CollisionCheck`'s boss loop (`OBJ_BOSS_BO_BASE_SHIELD`, 1500 units and
+  `gNoHitbox`; `OBJ_BOSS_KA_SAUCERER`, 2700 units) that `Object_GetSphereCollider`
+  deliberately leaves untabled for the same reason — a future boss cue would need to add
+  them.
   Note the enemy cue does not cover `gBosses` either (it scans `gActors` only) — boss
   encounters are their own future cue category, as `docs/accessibility-enemy-cue.md`
   already records.
@@ -176,7 +195,7 @@ Two cue-side exclusions sit on top of the predicate, in `ObstacleScan`:
   forms, both dropped by `ObstacleScanDetail::IsTeammate`: `OBJ_ACTOR_TEAM_BOSS` (the
   handful of escorts placed for a boss run in Meteo and Area 6) and `OBJ_ACTOR_EVENT`
   actors with `eventType == EVID_TEAMMATE`, which fly the rest of an on-rails level
-  (their event row installs `gCubeHitbox100`, `fox_enmy2.c:992`). The id-only test
+  (their `sEventActorInfo` row in `fox_enmy2.c` installs `gCubeHitbox100`). The id-only test
   originally shipped and missed the second form — see "Fixed defects" below.
 
 All-range coverage per arena (from the level manifests, live-checked 2026-08-18):
@@ -231,7 +250,7 @@ Each of these is a deliberate v1 decision with a known attach point, not an over
   rotation floats (the unrotated box is used as-is). A yawed wall's effective footprint
   is therefore somewhat wrong; the safety margin absorbs typical cases. Attach point:
   rotate the player offset into the box frame in `ObstacleScan` (the engine's own
-  approach, `fox_play.c:1275-1311`).
+  approach in `Player_CheckHitboxCollision`).
 - **Shadow and whoosh hitbox records are skipped** (`HITBOX_SHADOW` dims the screen,
   `HITBOX_WHOOSH` plays the near-miss sound; neither damages).
 - **The on-rails course is a straight −Z ray from the current position.** Lateral
@@ -245,7 +264,8 @@ Each of these is a deliberate v1 decision with a known attach point, not an over
 - **Landmaster-ground scenery may false-positive.** The engine's Arwing collision pass
   id-excludes Macbeth/Titania driving surfaces (`OBJ_SCENERY_TI_BRIDGE`,
   `MA_TRAIN_TRACK_13`, `MA_BUILDING_1/2`, `MA_TOWER`, `MA_WALL_2/3`, `MA_FLOOR_1..5`,
-  `MA_TERRAIN_BUMP` — `fox_play.c:1976-1985`) because the tank handles them separately;
+  `MA_TERRAIN_BUMP` — the skip-list at the top of `Player_CollisionCheck`'s scenery
+  loop) because the tank handles them separately;
   the cue does not, so those levels may buzz about the floor being driven on. Untested in
   v1. Remedies if it bites: replicate that id skip-list in the cue's filter, or gate the
   cue by vehicle form.
@@ -275,8 +295,9 @@ None open at the moment.
 
 - **Meteo's big meteors were invisible to the cue** (`EVID_ME_BIG_METEOR`, fixed
   2026-08-27). A *third* collision mechanism, neither hitbox nor poly mesh: the event
-  row carries `gNoHitbox` (`fox_enmy2.c:1012`) and the engine collides it with a
-  hand-written 900-unit sphere around `obj.pos` (`fox_play.c:2169`), so
+  row carries `gNoHitbox` (`sEventActorInfo`, `fox_enmy2.c`) and the engine collides it
+  with a hand-written 900-unit sphere around `obj.pos` (`Player_CollisionCheck`'s actor
+  loop), so
   `Object_IsObstacle` rejected it on the hitbox test. Confirmed live from the
   `big-asteroid` checkpoint: with a big meteor active in `gActors` slot 37 the scan
   reported `obstacles = 15` — the 9 `METEOR_7` + 4 `METEOR_6` + 1 `SECRET_MARKER_1` + 1
@@ -288,7 +309,7 @@ None open at the moment.
   handful of boss-approach escorts (Meteo places three, around path 303774). Through
   the rest of an on-rails level the wingmates are `OBJ_ACTOR_EVENT` (id 200) with
   `eventType == EVID_TEAMMATE`, whose event row carries `gCubeHitbox100` and
-  `targetOffset == 0` (`fox_enmy2.c:992`) — so they classified as obstacles and slipped
+  `targetOffset == 0` (`sEventActorInfo`, `fox_enmy2.c`) — so they classified as obstacles and slipped
   past the exclusion. Observed live: over ~330 frames of straight flight from the
   `big-asteroid` checkpoint the *only* record that ever came on course was `gActors`
   slot 34, that wingmate — half-extents 50/50, gap 1141 growing to 1246, the cue active
@@ -347,9 +368,10 @@ None open at the moment.
   the all-range form gate `aimValid` among them), the top-level `allRange` flag, scan
   counters (`active`/`obstacles`/`boxes`, plus `onCourse` after the course filter), the
   effective knobs, the unit `forward` heading (all-range only), and the winning record
-  (array/slot/objId/record, the course `gap` plus the raw `gapZ`, per-axis
-  clearance/delta/half-extents, the pushed `intervalSec`). Join `target.slot` against
-  `objects scenery` to cross-check positions.
+  (array/slot/objId/record with `recordKind` naming the record sentinels — `hitbox`,
+  `sphere` or `poly` — plus `heightfield` for a walked poly box, the course `gap` plus
+  the raw `gapZ`, per-axis clearance/delta/half-extents, the pushed `intervalSec`).
+  Join `target.slot` against `objects scenery` to cross-check positions.
 - The F1 volume-slider Preview plays the buzz as a seamless drone (previews force
   interval 0 — pre-existing behavior shared with the aim cue): it checks timbre and
   volume, not cadence.

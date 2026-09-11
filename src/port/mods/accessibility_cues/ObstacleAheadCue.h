@@ -46,6 +46,12 @@ inline constexpr const char* kObstacleCueBoostCVar = "gAccessibilityObstacleCueB
 // applies in all-range mode: the whole arena loads at once, so every warn distance is
 // honest there and the ramp always starts at its top.
 inline constexpr float kObstacleCueWarnDistDefault = 4000.0f;
+// Ceiling of the warning-distance slider AND the clamp the cue applies to the CVar (a
+// hand-edited starship.cfg.json or the debug server can store any float): the
+// heightfield walk's per-box step cap is sized to reach this far, so a larger value
+// would let a slope beyond the cap go unwarned. A static_assert in ObstacleAheadCue.cpp
+// ties the two together.
+inline constexpr float kObstacleCueWarnDistMax = 6000.0f;
 inline constexpr float kObstacleCueSlowDefault = 0.8f;
 inline constexpr float kObstacleCueFastDefault = 0.04f;
 // Floor for the fast-interval slider AND the length budget of the synthesized buzz:
@@ -92,8 +98,9 @@ struct ObstacleAheadCueDebug {
     int32_t scanActive = 0, scanObstacles = 0, scanBoxes = 0; // ObstacleScanStats
     int32_t onCourse = 0;           // boxes that passed the course test this tick
     // Heightfield refinement (ObstacleAheadCue_HeightfieldGap): boxes whose course
-    // span was walked, how many of those the walk cleared (dropped: the course never
-    // meets the surface), and the engine surface-test calls spent — the cost line.
+    // span was walked, how many of those the walk dropped (the course never meets the
+    // surface, or meets it only at the warn band's far edge), and the engine
+    // surface-test calls spent — the cost line.
     int32_t heightfieldTested = 0, heightfieldCleared = 0, heightfieldProbes = 0;
     float warnDist = 0, margin = 0; // effective (post-guard) knob values used this tick
     float fwdX = 0, fwdY = 0, fwdZ = 0; // unit heading the all-range ray test cast along;

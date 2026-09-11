@@ -9,7 +9,50 @@ bool func_col2_800A3690(Vec3f* objPos, Vec3f* colliderPos, s32 colId, Vec3f* hit
     return func_col2_800A36FC(objPos, colliderPos, LOAD_ASSET(&D_800D2CA0[colId]), hitDataOut);
 }
 
-bool func_col2_800A36FC(Vec3f* objPos, Vec3f* colliderPos, CollisionHeader2* colHeader, Vec3f* hitDataOut) {
+// Port addition: the stored bounding box of a poly mesh, bounds-checked against the two
+// header tables (fox_colheaders.c, included above — this is the one TU that knows their
+// sizes). False for an index outside the table, outputs untouched.
+bool Col_GetPolyBounds(s32 colId, bool useCol2, Vec3f* min, Vec3f* max) {
+    if (useCol2) {
+        if ((colId < 0) || (colId >= ARRAY_COUNT(D_800D2CA0))) {
+            return false;
+        }
+        *min = D_800D2CA0[colId].min;
+        *max = D_800D2CA0[colId].max;
+    } else {
+        if ((colId < 0) || (colId >= ARRAY_COUNT(D_800D2B38))) {
+            return false;
+        }
+        *min = D_800D2B38[colId].min;
+        *max = D_800D2B38[colId].max;
+    }
+    return true;
+}
+
+// Port addition: resolves a CollisionHeader2 mesh's asset-referenced polygon and vertex
+// tables ONCE, for a caller that probes many points against one mesh (the accessibility
+// obstacle cue's heightfield walk). Each SEGMENTED_TO_VIRTUAL is a resource-manager
+// lookup — a mutex, two string copies and a future even on a cache hit — which
+// func_col2_800A36FC pays on every call that passes its bounds check; a walk of a few
+// hundred probes per tick must not. False for an index outside the table.
+bool Col2_ResolveMesh(s32 colId, CollisionHeader2** colHeaderOut, Triangle** polysOut, Vec3f** meshOut) {
+    CollisionHeader2* colHeader;
+
+    if ((colId < 0) || (colId >= ARRAY_COUNT(D_800D2CA0))) {
+        return false;
+    }
+    colHeader = LOAD_ASSET(&D_800D2CA0[colId]);
+    *colHeaderOut = colHeader;
+    *polysOut = SEGMENTED_TO_VIRTUAL(colHeader->polys);
+    *meshOut = SEGMENTED_TO_VIRTUAL(colHeader->mesh);
+    return true;
+}
+
+// The heightfield test proper, on already-resolved tables: the body of
+// func_col2_800A36FC, which resolves them and calls this. Reads no game state beyond
+// gCurrentLevel and writes only *hitDataOut.
+bool Col2_CheckSurface(Vec3f* objPos, Vec3f* colliderPos, CollisionHeader2* colHeader, Triangle* polys, Vec3f* mesh,
+                       Vec3f* hitDataOut) {
     Vec3f objRelPos;
     PlaneF triPlane;
     bool above;
@@ -20,8 +63,6 @@ bool func_col2_800A36FC(Vec3f* objPos, Vec3f* colliderPos, CollisionHeader2* col
     Vec3f vtx;
     s32 sp38 = false;
     s32 count;
-    Triangle* polys;
-    Vec3f* mesh;
 
     objRelPos.x = objPos->x - colliderPos->x;
     objRelPos.y = objPos->y - colliderPos->y;
@@ -34,9 +75,6 @@ bool func_col2_800A36FC(Vec3f* objPos, Vec3f* colliderPos, CollisionHeader2* col
 
     above = false;
     count = colHeader->polyCount;
-
-    polys = SEGMENTED_TO_VIRTUAL(colHeader->polys);
-    mesh = SEGMENTED_TO_VIRTUAL(colHeader->mesh);
 
     for (i = 0; i < count; i++, polys++) {
         for (j = 0; j < 3; j++) {
@@ -86,6 +124,29 @@ bool func_col2_800A36FC(Vec3f* objPos, Vec3f* colliderPos, CollisionHeader2* col
         }
     }
     return sp38;
+}
+
+bool func_col2_800A36FC(Vec3f* objPos, Vec3f* colliderPos, CollisionHeader2* colHeader, Vec3f* hitDataOut) {
+    Vec3f objRelPos;
+    Triangle* polys;
+    Vec3f* mesh;
+
+    // The bounds check runs before the asset tables are resolved, as it always did, so
+    // the engine's collision pass still pays the resource lookups only for a point
+    // inside the box. Col2_CheckSurface repeats the six comparisons; that is free.
+    objRelPos.x = objPos->x - colliderPos->x;
+    objRelPos.y = objPos->y - colliderPos->y;
+    objRelPos.z = objPos->z - colliderPos->z;
+
+    if ((objRelPos.x < colHeader->min.x) || (objRelPos.y < colHeader->min.y) || (objRelPos.z < colHeader->min.z) ||
+        (colHeader->max.x < objRelPos.x) || (colHeader->max.y < objRelPos.y) || (colHeader->max.z < objRelPos.z)) {
+        return false;
+    }
+
+    polys = SEGMENTED_TO_VIRTUAL(colHeader->polys);
+    mesh = SEGMENTED_TO_VIRTUAL(colHeader->mesh);
+
+    return Col2_CheckSurface(objPos, colliderPos, colHeader, polys, mesh, hitDataOut);
 }
 
 // Checks if point is above the triangle tri. If so, puts the triangle normal in normOut

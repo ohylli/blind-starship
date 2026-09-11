@@ -14,3 +14,13 @@ const char* ObstacleScan_ArrayName(ObstacleArray array) {
             return "unknown";
     }
 }
+
+const char* ObstacleScan_RecordKind(s32 record) {
+    if (record == kObstacleSphereRecord) {
+        return "sphere";
+    }
+    if (record == kObstaclePolyRecord) {
+        return "poly";
+    }
+    return (record >= 0) ? "hitbox" : "unknown";
+}

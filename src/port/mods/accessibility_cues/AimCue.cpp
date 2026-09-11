@@ -138,7 +138,7 @@ static void AimCue_OnPostUpdate(IEvent* event) {
 
     // Normalized aim signals, both [-1, 1]: nx -> pan (positive = right), ny -> pitch
     // (positive = up). Sign notes, derived from the engine and worth keeping straight:
-    // the stick is NEGATED into rot (fox_play.c:4019/:4064), so rot.y < 0 means "aiming
+    // the stick is NEGATED into rot (Player_MoveArwingOnRails), so rot.y < 0 means "aiming
     // right", and a positive total pitch angle means "aiming up" (Player_SetupArwingShot's
     // matrix maps positive pitch to +Y velocity). Hence the minus on the yaw terms and the
     // plus on the pitch terms below.

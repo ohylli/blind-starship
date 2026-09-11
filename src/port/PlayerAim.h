@@ -15,23 +15,25 @@
 // Verified live on Fortuna against measured velocity at speed 40, in four samples that
 // agree to every printed digit: two in normal flight (aimPitch 0 and 30.4278) and two
 // mid-U-turn (aimPitch 66.0 and 138.0559). aerobaticPitch is part of aimPitch, exactly as
-// fox_display.c:970 and fox_demo.c:1548 add it. Past 90 degrees the Arwing is inverted and
+// Display_BarrelRollShield (fox_display.c) and Cutscene_UTurn (fox_demo.c) add it. Past 90
+// degrees the Arwing is inverted and
 // travels backward relative to its nose, but that needs no branch — cos(aimPitch) turns
 // negative and reverses the horizontal terms on its own. The 138.0559 sample is the one
 // that pins this down: climbing 41.9441 degrees by velocity, i.e. 180 - aimPitch.
 //
-// Form coverage: this is the *Arwing* composition (Player_MoveArwing360 fox_play.c:3865,
-// Player_MoveArwingOnRails fox_play.c:3975, Player_PerformLoop), and the Blue Marine
-// flies by the identical composition (fox_aq.c:979-980). It is NOT the Landmaster's —
-// Player_MoveTank360 (fox_play.c:4260) composes velocity from rot_104 in X->Z->Y order
+// Form coverage: this is the *Arwing* composition (Player_MoveArwing360,
+// Player_MoveArwingOnRails and Player_PerformLoop, fox_play.c), and the Blue Marine
+// flies by the identical composition (Aquas_BlueMarineMove, fox_aq.c). It is NOT the
+// Landmaster's — Player_MoveTank360 composes velocity from rot_104 in X->Z->Y order
 // with no xRot_120 or aerobaticPitch at all — and not on-foot Fox's either
 // (Player_MoveOnFoot writes only vel.x/vel.z from its own composition). Gate on
 // Player_AimAnglesValid before treating these as a flight direction.
 //
-// `faceYaw` is the +180 model-draw convention (fox_display.c:967), useful only for
-// reasoning about rendering — do not steer by it. Neither composition folds in
-// damageShake, which some draw sites add, and fox_beam.c:861 uses a different yaw offset
-// for its shot type, so exact projectile trajectories still want the raw fields.
+// `faceYaw` is the +180 model-draw convention (Display_BarrelRollShield's RotateY,
+// fox_display.c), useful only for reasoning about rendering — do not steer by it. Neither
+// composition folds in damageShake, which some draw sites add, and the reflected-shot
+// case in PlayerShot_CollisionCheck (fox_beam.c) uses a different yaw offset for its shot
+// type, so exact projectile trajectories still want the raw fields.
 
 #include "port/CGameCompat.h"
 

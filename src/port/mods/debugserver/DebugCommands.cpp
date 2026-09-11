@@ -1336,6 +1336,7 @@ static nlohmann::json CueObstacleAheadPolicyJson(const ObstacleAheadCueDebug& d)
                         { "slot", d.target.slot },
                         { "objId", d.target.objId },
                         { "record", d.target.record },
+                        { "recordKind", ObstacleScan_RecordKind(d.target.record) },
                         { "heightfield", d.target.heightfield },
                         { "gap", d.target.gap },
                         { "gapZ", d.target.gapZ },
