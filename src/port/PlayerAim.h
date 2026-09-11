@@ -20,10 +20,10 @@
 // negative and reverses the horizontal terms on its own. The 138.0559 sample is the one
 // that pins this down: climbing 41.9441 degrees by velocity, i.e. 180 - aimPitch.
 //
-// Form coverage: this is the *Arwing* composition (Player_MoveArwing360 fox_play.c:3851,
-// Player_MoveArwingOnRails fox_play.c:3961, Player_PerformLoop), and the Blue Marine
+// Form coverage: this is the *Arwing* composition (Player_MoveArwing360 fox_play.c:3865,
+// Player_MoveArwingOnRails fox_play.c:3975, Player_PerformLoop), and the Blue Marine
 // flies by the identical composition (fox_aq.c:979-980). It is NOT the Landmaster's —
-// Player_MoveTank360 (fox_play.c:4246) composes velocity from rot_104 in X->Z->Y order
+// Player_MoveTank360 (fox_play.c:4260) composes velocity from rot_104 in X->Z->Y order
 // with no xRot_120 or aerobaticPitch at all — and not on-foot Fox's either
 // (Player_MoveOnFoot writes only vel.x/vel.z from its own composition). Gate on
 // Player_AimAnglesValid before treating these as a flight direction.

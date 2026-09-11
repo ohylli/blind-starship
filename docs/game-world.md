@@ -220,7 +220,7 @@ Not every spawn comes from `gLevelObjects`. There are three other paths:
 - **Item drops** — when an enemy dies, its `itemDrop` field (an `ItemDrop`
   enum like `DROP_SILVER_RING`, `DROP_BOMB`, `DROP_1UP`) tells `Item_Load` to
   spawn a corresponding `OBJ_ITEM_*` at the enemy's death position.
-- **Versus item spawns** — `Play_SpawnVsItem` (`fox_play.c:7063`) places
+- **Versus item spawns** — `Play_SpawnVsItem` (`fox_play.c:7077`) places
   pickups at fixed scenery positions in versus mode.
 
 For accessibility purposes the distinction matters because items "appearing
@@ -284,8 +284,8 @@ types, and per-object specials (e.g. `aWzGateHitbox` for the Warp Zone gate is
 
 ## 6. The per-frame update loop
 
-The top-level game-frame entry point is `Play_Main()` (`fox_play.c:7088`).
-For normal gameplay it calls `Play_Update()` (`fox_play.c:7018`), which runs:
+The top-level game-frame entry point is `Play_Main()` (`fox_play.c:7102`).
+For normal gameplay it calls `Play_Update()` (`fox_play.c:7032`), which runs:
 
 1. Screen fade bookkeeping (`Play_UpdateFillScreen`).
 2. Team shield damage for Falco/Peppy/Slippy.
@@ -403,7 +403,7 @@ ring-counter trigger that spawns an invisible `OBJ_ITEM_RING_CHECK` collider
 (`Scenery_CoStoneArch_Init`, `fox_enmy.c:1075` — see section 9 about
 filtering this); the enemy-death drop path (`fox_enmy.c:1730`); several
 overlay-specific spawns (`fox_aq.c`, `fox_andross.c`, `fox_co.c`);
-versus-mode spawns (`fox_play.c:7077`); and demo cutscene spawns
+versus-mode spawns (`fox_play.c:7091`); and demo cutscene spawns
 (`fox_demo.c:1585`). The enemy-drop site is the most common path for items
 that appear unexpectedly mid-flight — that is where 1-ups, gold rings, and
 silver rings show up after killing an enemy with `itemDrop` set.
@@ -499,7 +499,7 @@ small enemies use this directly.
 ### The collision pass
 
 All player collision is centralised in one large function in
-`Player_Update`'s call tree (the function around `fox_play.c:1785`, which
+`Player_Update`'s call tree (the function around `fox_play.c:1799`, which
 calls `Player_UpdateHitbox` and then walks every array). The two lower-level
 test functions are:
 
@@ -525,7 +525,7 @@ Routing inside the main collision pass:
   scenery: only objects with `obj.pos.z > player->trueZpos - 2000.0f` are
   considered — i.e. objects too far ahead of the player (more than ~2000
   units in the negative-Z forward direction) are skipped until the player
-  closes the gap (`fox_play.c:1970`).
+  closes the gap (`fox_play.c:1984`).
 - **`gScenery360[]`**: in all-range mode. Iterates all 200 slots with an
   explicit radius check (1100 units normally; 4000 in Sector Y / Venom
   Andross).
@@ -534,7 +534,7 @@ Routing inside the main collision pass:
 - **`gActors[60]`**: special-cased for molar rock (poly), event SY ship
   (poly), big meteor (sphere), Macbeth train cars (plain box with
   `fwork`-derived position offset). Everything else: standard plain box.
-- **`gItems[20]`**: `Player_CheckItemCollect()` (`fox_play.c:1656`) — same
+- **`gItems[20]`**: `Player_CheckItemCollect()` (`fox_play.c:1670`) — same
   box test, but on hit it sets `item->collected = 1` and `item->playerNum =
   N` rather than dealing damage.
 
@@ -564,7 +564,7 @@ There is essentially **no terrain mesh** in this game.
   submarine is bounded by it.
 
 The single exception is **Titania**, which has a real heightmap. `Ground_Init`
-is called with a tile size at `fox_play.c:2922`, and `Ground_801B6AEC` /
+is called with a tile size at `fox_play.c:2936`, and `Ground_801B6AEC` /
 `Ground_801B6E20` query the height at a given `(x, z + gPathProgress)`
 position. This is the only level where "the ground" is more than a plane.
 
@@ -694,7 +694,7 @@ f32 dist = sqrtf(dx*dx + dy*dy + dz*dz);
 ```
 
 This pattern is exactly what the existing collision code uses (e.g.
-`fox_play.c:2155`).
+`fox_play.c:2169`).
 
 ### World-space → camera-space (for the audio system)
 
@@ -801,8 +801,8 @@ The general shape, mirroring the screen-reader pattern in
 | Per-type slot-finders | `Scenery_Load` / `Sprite_Load` / `Actor_Load` / `Boss_Load` / `Item_Load` — `src/engine/fox_enmy.c:213–283` (effects loaded from `gLevelObjects` are handled inline by `Object_Load`'s switch, not a dedicated function) |
 | Master per-frame world iterator | `Object_Update` — `src/engine/fox_enmy.c:3128` |
 | Per-type per-frame update (where the lifecycle hooks fire) | `Actor_Update` (`fox_enmy.c:2813`), `Boss_Update` (`:2889`), `Scenery_Update` (`:2944`), `Sprite_Update` (`:2971`), `Item_Update` (`:3001`), `Effect_Update` (`:3031`) |
-| Top-level game frame | `Play_Main` / `Play_Update` — `src/engine/fox_play.c:7088 / 7018` |
-| Player collision pass (player vs. world) | starting around `src/engine/fox_play.c:1785`, with helpers at `:1258` (hitbox) and `:1656` (item) |
+| Top-level game frame | `Play_Main` / `Play_Update` — `src/engine/fox_play.c:7102 / 7018` |
+| Player collision pass (player vs. world) | starting around `src/engine/fox_play.c:1799`, with helpers at `:1258` (hitbox) and `:1656` (item) |
 | Scenery polygon collision tables | `src/engine/fox_col1.c`, `src/engine/fox_col2.c` |
 | World→camera-space SFX position converter | `Object_SetSfxSourceToPos` — `src/engine/fox_edisplay.c:1578` |
 | Existing port-side object-lifecycle events | `src/port/hooks/list/ActorEvent.h` (`ObjectInitEvent`, `ObjectUpdateEvent`, `ObjectDestroyEvent`) |

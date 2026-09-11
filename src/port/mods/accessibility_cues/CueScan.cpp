@@ -33,7 +33,7 @@ bool CueScan_IsCueableEnemy(Actor* actor) {
 // Build the world->body rotation on gCalcMatrix from the player's aim
 // angles. Body frame: +X right of aim, +Y above aim, -Z ahead of aim
 // (right-handed, conventional FPS convention). This is the inverse of
-// Player_SetupArwingShot's body->world rotation (fox_play.c:3023-3025),
+// Player_SetupArwingShot's body->world rotation (fox_play.c:3037-3039),
 // minus the +180° yaw (we choose body +X = right rather than left) and
 // minus bank (irrelevant for direction). See docs/accessibility-enemy-cue.md
 // for the derivation. gCalcMatrix is a scratch the game reuses every frame;

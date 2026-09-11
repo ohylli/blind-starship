@@ -26,7 +26,7 @@ The ring cue feeds the engine a world-space delta `(enemy.pos - player.pos)` and
 
 For the enemy cue we instead rotate that world delta into the Arwing's body frame before feeding it to the engine. After the rotation, the X component means "how far to the right of where I'm pointing" and the Y component means "how far above where I'm pointing," regardless of the Arwing's heading in world space. Distance (the length of the delta) is unchanged, because rotating a vector doesn't change its length.
 
-This is the same math `Player_SetupShot` (`src/engine/fox_play.c:3023-3036`) already uses to compute a laser's velocity vector, just inverted. There it builds a calc matrix from the player's aim angles and transforms a body-frame `(0, 0, speed)` vector into world space. We build the same matrix and transform a world-space delta into body frame.
+This is the same math `Player_SetupShot` (`src/engine/fox_play.c:3037-3050`) already uses to compute a laser's velocity vector, just inverted. There it builds a calc matrix from the player's aim angles and transforms a body-frame `(0, 0, speed)` vector into world space. We build the same matrix and transform a world-space delta into body frame.
 
 The angles that define the Arwing's aim, in the form `Player_SetupShot` uses, are:
 

@@ -1,6 +1,7 @@
 # The obstacle-ahead cue: design record
 
-Status: v1 implemented 2026-08-11; all-range support added 2026-08-18. Companion to
+Status: v1 implemented 2026-08-11; all-range support added 2026-08-18; poly-mesh
+coverage (bounding boxes) added 2026-09-11. Companion to
 `docs/accessibility-cues-tuning.md`
 (which documents the knobs); this file records what the cue covers, *why* it is shaped
 this way, and the catalogue of intentional misses — read this before "fixing" a silence.
@@ -22,19 +23,22 @@ height-pitch conventions the ring/enemy cues use. The planned directional obstac
 ## The three layers
 
 - **`src/port/mods/ObjectQuery.h`** — generic decomp knowledge, shared beyond the cues:
-  `Object_IsObstacle` (the classification: collidable hitbox or sphere collider + not
-  lockable; also the
+  `Object_IsObstacle` (the classification: collidable hitbox, poly mesh or sphere
+  collider + not lockable; also the
   predicate `AccessibilityTrainingMinimal` strips by, so "training removes exactly what
   the cue warns about" is an invariant, not a coincidence) and `Object_ReadSolidHitboxes`
   (the flat hitbox-array walk, stride-for-stride against `Player_CheckHitboxCollision`,
-  `fox_play.c:1270-1291`), plus `Object_GetSphereCollider` (the event-type → radius
+  `fox_play.c:1270-1291`), plus `Object_GetPolyCollider`/`Object_GetPolyBounds` (the
+  poly-mesh dispatch lists and each mesh's stored bounding box — the engine's second
+  collision mechanism) and `Object_GetSphereCollider` (the event-type → radius
   table for the engine's third collision mechanism, the hand-written sphere test; see
   "What is included").
 - **`src/port/mods/accessibility_cues/ObstacleScan.{h,cpp}`** — the shared scan, sibling
   to `CueScan`: walks `gScenery`/`gActors`, plus `gScenery360` in all-range mode (the
   walk is mode-gated because that heap pointer dangles after an all-range level unloads
   — see the comment at the loop), applies the predicate plus the cue-side exclusions
-  (below), and yields every solid hitbox record as a world-space box with the
+  (below), and yields every collision shape — each solid hitbox record, a poly mesh's
+  bounding box, a boxed collision sphere — as a world-space box with the
   player-relative geometry derived (the full 3D center delta `dx`/`dy`/`dz`, per-axis
   footprint clearance, gap to the near Z face). No thresholding — every filter beyond
   "warn-worthy obstacle" is the consumer's policy. The remaining roadmap item (the
@@ -93,15 +97,40 @@ correct even mid-fight), and any future non-shootable hazard actor. Also include
 a different route: **sphere-collided actor events** (`Object_GetSphereCollider` in
 `ObjectQuery.h`) — today only Meteo's big meteor (`EVID_ME_BIG_METEOR`), which carries
 `gNoHitbox` and is collided by a hand-written 900-unit sphere around `obj.pos`
-(`fox_play.c:2155`; player shots use 1000, `fox_beam.c:787`). The radius is a code
+(`fox_play.c:2169`; player shots use 1000, `fox_beam.c:787`). The radius is a code
 literal, not object data, so the predicate keeps a small event-type → radius table that
 passes such objects as collidable, and the scan boxes the sphere: one synthesized
 record centered on `obj.pos` with ±radius half-extents, `record == -1`
 (`kObstacleSphereRecord`) in the `cues` dump. The cube over-warns at its corners
 (diagonal passes 900–1270 units off center); accepted for the same reason as the
 rotation approximation — conservative is the right failure direction for an 1800-unit
-rock, and one box shape keeps the course tests and the directional siblings simple. Two
-cue-side exclusions sit on top of the predicate, in `ObstacleScan`:
+rock, and one box shape keeps the course tests and the directional siblings simple.
+
+Also included, via the engine's **second** mechanism: **poly-mesh objects**. A fixed set
+of object ids is routed by `Player_CollisionCheck` to `Player_CheckPolyCollision`
+*instead of* the hitbox test — the Corneria terrain bumps 1–5, Aquas's bumps and coral
+reefs, Zoness's island, Fortuna's three mountain types and Venom 2's mountain (all-range),
+Meteo's molar rock, and the Sector Y capital ships (`EVID_SY_SHIP_2`), plus the four
+poly boss bases the cue never sees. For those ids the hitbox is dead data as far as
+crashing goes, whether it is `gNoHitbox` (most) or a real record table the engine simply
+ignores (the capital ship, the island, the reefs — the cue used to read those and warn
+about the wrong shape). `Object_GetPolyCollider` mirrors the three dispatch lists and
+resolves the mesh through the engine's own id → mesh map (`Play_GetPolyColId`, split out
+of `Play_CheckPolyCollision` for exactly this), and the scan yields **one box per
+object, the mesh's stored bounding box** (`CollisionHeader.min/max`,
+`fox_colheaders.c`) around `obj.pos`, `record == -2` (`kObstaclePolyRecord`) in the
+`cues` dump, *replacing* any hitbox records. Rotation is ignored as everywhere else.
+The catch: the engine has two mesh families and only one is a solid. The
+`CollisionHeader` family (the molar rock, Fortuna mountains 2 and 3, the capital ship,
+the boss bases) is a swept-triangle test, and its box is a fair stand-in. The
+`CollisionHeader2` family (every bump, both reefs, the island, Fortuna mountain 1,
+Venom's mountain) is a **heightfield**: the engine finds the triangle under the player's
+X/Z and hits only when the player's Y is at or below that surface (`fox_col2.c`). Its
+box spans the whole hill, so the box alone over-warns whenever the player is inside the
+footprint below the peak, even on a course that clears the slope — see "Known defects"
+for the planned fix.
+
+Two cue-side exclusions sit on top of the predicate, in `ObstacleScan`:
 
 - **`gBosses` is not scanned.** `targetOffset` cannot separate "boss you fight" from
   "boss-shaped wall" — nearly every `gBosses` entry has `targetOffset == 0` even though
@@ -109,8 +138,8 @@ cue-side exclusions sit on top of the predicate, in `ObstacleScan`:
   excludes nothing, and droning a crash warning through an on-rails boss fight (Meteo,
   Area 6, Sector X, …) would bury the aim/enemy cues exactly when they matter most.
   Bosses also have hand-written collision spheres of their own (`OBJ_BOSS_BO_BASE_SHIELD`,
-  1500 units and `gNoHitbox`, `fox_play.c:2078`; `OBJ_BOSS_KA_SAUCERER`, 2700 units,
-  `fox_play.c:2099`) that `Object_GetSphereCollider` deliberately leaves untabled for the
+  1500 units and `gNoHitbox`, `fox_play.c:2092`; `OBJ_BOSS_KA_SAUCERER`, 2700 units,
+  `fox_play.c:2113`) that `Object_GetSphereCollider` deliberately leaves untabled for the
   same reason — a future boss cue would need to add them.
   Note the enemy cue does not cover `gBosses` either (it scans `gActors` only) — boss
   encounters are their own future cue category, as `docs/accessibility-enemy-cue.md`
@@ -127,7 +156,8 @@ cue-side exclusions sit on top of the predicate, in `ObstacleScan`:
 All-range coverage per arena (from the level manifests, live-checked 2026-08-18):
 Sector Z is the richest (62 space-junk scenery pieces plus actor junk), Bolse has its
 poles and buildings plus the non-lockable installations, Fortuna its towers (3 solid
-records each; the mountains are whoosh-only — see the poly-mesh miss below), and
+records each) and, since the poly-mesh change, its 33 mountains (their hitbox tables
+hold whoosh records only; the poly box is what warns now), and
 Venom-Andross its 29 tunnel passages. **Katina places no spawn-list scenery at all** —
 its base and mothership are boss/poly geometry — so the only obstacles there are the
 non-lockable allied fighters (below): near-silence, an accepted consequence of what the
@@ -147,18 +177,16 @@ noisy.
 
 Each of these is a deliberate v1 decision with a known attach point, not an oversight.
 
-- **Poly-mesh scenery is invisible.** A handful of big shapes collide via
-  `Player_CheckPolyCollision`, not hitboxes, and carry `gNoHitbox` — Corneria's terrain
-  bumps (`OBJ_SCENERY_CO_BUMP_1..5`), highways, Aquas coral/bumps, Fortuna mountains,
-  Meteo's molar rock, Great Fox and boss bases. The predicate rejects them, so the
-  biggest terrain features in some levels get no warning. Attach point: an explicit
-  id → bounding-box table (or the poly mesh's own AABB) consulted in `ObstacleScan` when
-  the hitbox is empty. Conversely `OBJ_SCENERY_ZO_ISLAND` has *both* a hitbox and a poly
-  path — the engine collides the poly, the cue reads the hitbox: benign over-warning.
-  Fortuna's mountains are this miss's all-range face: their hitbox tables exist but hold
-  whoosh records only (confirmed live — 12 towers × 3 solid records + the actor boxes
-  account for every box the scan yields; no mountain ever came on course), so the
-  biggest terrain in that arena gives no warning.
+- **Poly meshes are boxes, and rotated meshes use the unrotated box.** Covered since
+  2026-09-11 (see "What is included"); what remains deliberate is the shape: one
+  axis-aligned bounding box per mesh, `obj.rot` ignored like every other box. The
+  earlier version of this entry listed Corneria's highways and Aquas's coral among the
+  invisible objects; that was wrong — highways 1, 2 and 5–9 have real hitboxes and were
+  always covered, highways 3 and 4 collide with nothing at all, and both coral reefs
+  have hitboxes (they were the island's case: poly-collided, hitbox-read). It also
+  missed Venom 2's mountain and the Sector Y capital ships. Meteo's tunnel
+  (`OBJ_SCENERY_ME_TUNNEL`) has a mesh header but no call site dispatches it, so it is
+  not a collider and not a miss.
 - **Lockable actors never buzz** — including one parked dead on the flight path. They
   are the enemy cue's domain, and warning "obstacle" about a thing the player is
   supposed to shoot would be noise. If by-ear testing wants a collision warning for
@@ -191,7 +219,7 @@ Each of these is a deliberate v1 decision with a known attach point, not an over
 - **Landmaster-ground scenery may false-positive.** The engine's Arwing collision pass
   id-excludes Macbeth/Titania driving surfaces (`OBJ_SCENERY_TI_BRIDGE`,
   `MA_TRAIN_TRACK_13`, `MA_BUILDING_1/2`, `MA_TOWER`, `MA_WALL_2/3`, `MA_FLOOR_1..5`,
-  `MA_TERRAIN_BUMP` — `fox_play.c:1962-1971`) because the tank handles them separately;
+  `MA_TERRAIN_BUMP` — `fox_play.c:1976-1985`) because the tank handles them separately;
   the cue does not, so those levels may buzz about the floor being driven on. Untested in
   v1. Remedies if it bites: replicate that id skip-list in the cue's filter, or gate the
   cue by vehicle form.
@@ -204,15 +232,27 @@ Each of these is a deliberate v1 decision with a known attach point, not an over
 ## Known defects — found after v1, not yet fixed
 
 Unlike the catalogue above, entries here are *not* deliberate and are meant to be fixed.
-None open at the moment — the two found on 2026-08-27 while evaluating the
-`big-asteroid` Meteo checkpoint are both under "Fixed defects" below.
+
+- **Heightfield meshes over-warn** (known since the poly change, 2026-09-11 — the
+  planned second step of that work). The `CollisionHeader2` family (all terrain bumps,
+  the reefs, the island, Fortuna mountain 1, Venom's mountain) is a surface the player
+  only hits from above, but the scan yields its whole bounding box and the cue treats it
+  as solid: on Corneria, which places 178 bumps, the box test buzzes whenever the player
+  is low inside a bump's footprint even on a course that clears the slope. Planned fix,
+  as *cue policy* (the scan stays box-only so the directional siblings share one shape):
+  once a heightfield box passes the course test, walk the course through the box in
+  ~100-unit steps at the player's current altitude and ask the engine's own surface
+  test (`func_col2_800A3690`, after rotating the offset by `-obj.rot.y` as
+  `Player_CheckPolyCollision` does) whether that point is at or below the surface; the
+  first hit is the impact distance, no hit drops the box. Solid meshes keep the plain
+  box.
 
 ## Fixed defects
 
 - **Meteo's big meteors were invisible to the cue** (`EVID_ME_BIG_METEOR`, fixed
   2026-08-27). A *third* collision mechanism, neither hitbox nor poly mesh: the event
   row carries `gNoHitbox` (`fox_enmy2.c:1012`) and the engine collides it with a
-  hand-written 900-unit sphere around `obj.pos` (`fox_play.c:2155`), so
+  hand-written 900-unit sphere around `obj.pos` (`fox_play.c:2169`), so
   `Object_IsObstacle` rejected it on the hitbox test. Confirmed live from the
   `big-asteroid` checkpoint: with a big meteor active in `gActors` slot 37 the scan
   reported `obstacles = 15` — the 9 `METEOR_7` + 4 `METEOR_6` + 1 `SECRET_MARKER_1` + 1
@@ -235,9 +275,18 @@ None open at the moment — the two found on 2026-08-27 while evaluating the
 ## Testing notes
 
 - **Minimal training silences the cue in Training by design** — it strips the same
-  predicate's object set. Tune on Corneria; the `obstacle-scout` debug checkpoint
+  predicate's object set (Training places none of the poly-mesh ids, so the poly change
+  did not alter what it strips). Tune on Corneria; the `obstacle-scout` debug checkpoint
   (`tools/checkpoints.json`) sits just before a rock-wall pair and a building, with
-  `obstacle-ahead` ~250 units further in.
+  `obstacle-ahead` ~250 units further in. The same checkpoint doubles as the poly-box
+  test: a Corneria bump 4 (`objId 4`) sits centered on the corridor ~2600 units past
+  the rock walls, but the Arwing flies at altitude ~350 over a box 174 tall, so with the
+  default margin it is correctly off course (`clearY` ≈ 165 against 150). Set
+  `gAccessibilityObstacleCueMarginXY` to `800.0` (a float, or the CVar becomes an int
+  the cue ignores) and step past the walls: the winner becomes `record -2` with
+  half-extents 1311.5/87/1311.5 — the `CollisionHeader2` index 1 bounds — and its
+  `delta` equals the bump's `objects scenery` position plus the mesh's center offset.
+  Verified live 2026-09-11.
 - **All-range testing has no checkpoints** (the checkpoint machinery captures the
   on-rails `pathProgress` tuple only) and the player cannot be steered from the debug
   server, so deterministic tests use Sector Z (densest junk) with the margin CVar

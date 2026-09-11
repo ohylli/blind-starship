@@ -1380,23 +1380,16 @@ s32 Player_CheckHitboxCollision(Player* player, f32* hitboxData, s32* index, f32
     return 0;
 }
 
-bool Play_CheckPolyCollision(ObjectId objId, f32 arg1, f32 arg2, f32 arg3, f32 arg4, f32 arg5, f32 arg6, Vec3f* arg7,
-                             Vec3f* arg8) {
-    Vec3f sp54;
-    Vec3f sp48;
-    Vec3f sp3C;
-    f32 sp34[2] = { 0, 0 };
+// The object id -> collision mesh map behind Play_CheckPolyCollision, split out so the
+// port's accessibility layer (Object_GetPolyCollider, port/mods/ObjectQuery.h) reads the
+// same table instead of mirroring it. Which ids are routed to a poly test at all is
+// decided by the id lists at Player_CollisionCheck's call sites, not here: the default
+// case maps every other id to the generic COL2_0 cone and only means something for an id
+// that some call site actually dispatches.
+s32 Play_GetPolyColId(ObjectId objId, bool* useCol2) {
     s32 colId;
-    bool useCol2;
 
-    sp54.x = arg4;
-    sp54.y = arg5;
-    sp54.z = arg6;
-    sp48.x = arg1;
-    sp48.y = arg2;
-    sp48.z = arg3;
-
-    useCol2 = false;
+    *useCol2 = false;
 
     switch (objId) {
         case OBJ_ACTOR_ME_MOLAR_ROCK:
@@ -1405,7 +1398,7 @@ bool Play_CheckPolyCollision(ObjectId objId, f32 arg1, f32 arg2, f32 arg3, f32 a
         case OBJ_SCENERY_CO_BUMP_4:
         case OBJ_SCENERY_CO_BUMP_5:
             colId = COL2_1;
-            useCol2 = true;
+            *useCol2 = true;
             break;
         case OBJ_SCENERY_FO_MOUNTAIN_2:
             colId = COL1_5;
@@ -1433,68 +1426,68 @@ bool Play_CheckPolyCollision(ObjectId objId, f32 arg1, f32 arg2, f32 arg3, f32 a
             break;
         case OBJ_SCENERY_AQ_CORAL_REEF_2:
             colId = COL2_18;
-            useCol2 = true;
+            *useCol2 = true;
             break;
         case OBJ_SCENERY_AQ_BUMP_1:
             colId = COL2_15;
-            useCol2 = true;
+            *useCol2 = true;
             break;
         case OBJ_SCENERY_AQ_BUMP_2:
             colId = COL2_16;
-            useCol2 = true;
+            *useCol2 = true;
             break;
         case OBJ_SCENERY_ZO_ISLAND:
             colId = COL2_7;
-            useCol2 = true;
+            *useCol2 = true;
             break;
         case OBJ_SCENERY_CO_BUMP_2:
             colId = COL2_2;
-            useCol2 = true;
+            *useCol2 = true;
             break;
         case OBJ_SCENERY_CO_BUMP_3:
         case OBJ_SCENERY_MA_TERRAIN_BUMP:
             colId = COL2_3;
-            useCol2 = true;
+            *useCol2 = true;
             break;
         case OBJ_SCENERY_VS_KA_FLBASE:
             colId = COL2_17;
-            useCol2 = true;
+            *useCol2 = true;
             break;
         case OBJ_SCENERY_VS_PYRAMID_1:
             colId = COL2_4;
-            useCol2 = true;
+            *useCol2 = true;
             break;
         case OBJ_SCENERY_VS_PYRAMID_2:
             colId = COL2_6;
-            useCol2 = true;
+            *useCol2 = true;
             break;
         case OBJ_SCENERY_AQ_CORAL_REEF_1:
             colId = COL2_14;
-            useCol2 = true;
+            *useCol2 = true;
             break;
         case OBJ_SCENERY_MA_FLOOR_1:
             colId = COL2_8;
-            useCol2 = true;
+            *useCol2 = true;
             break;
         case OBJ_SCENERY_MA_FLOOR_3:
             colId = COL2_9;
-            useCol2 = true;
+            *useCol2 = true;
             break;
         case OBJ_SCENERY_MA_FLOOR_2:
             colId = COL2_10;
-            useCol2 = true;
+            *useCol2 = true;
             break;
         case OBJ_SCENERY_MA_FLOOR_4:
             colId = COL2_11;
-            useCol2 = true;
+            *useCol2 = true;
             break;
         case OBJ_SCENERY_MA_WALL_3:
             colId = COL2_12;
-            useCol2 = true;
+            *useCol2 = true;
             break;
         case OBJ_SCENERY_MA_FLOOR_5:
             colId = COL2_13;
-            useCol2 = true;
+            *useCol2 = true;
             break;
         case OBJ_SCENERY_AQ_TUNNEL_1:
         case OBJ_SCENERY_AQ_ARCH:
@@ -1550,9 +1543,30 @@ bool Play_CheckPolyCollision(ObjectId objId, f32 arg1, f32 arg2, f32 arg3, f32 a
         case OBJ_SCENERY_MA_WALL_4:
         default:
             colId = COL2_0;
-            useCol2 = true;
+            *useCol2 = true;
             break;
     }
+
+    return colId;
+}
+
+bool Play_CheckPolyCollision(ObjectId objId, f32 arg1, f32 arg2, f32 arg3, f32 arg4, f32 arg5, f32 arg6, Vec3f* arg7,
+                             Vec3f* arg8) {
+    Vec3f sp54;
+    Vec3f sp48;
+    Vec3f sp3C;
+    f32 sp34[2] = { 0, 0 };
+    s32 colId;
+    bool useCol2;
+
+    sp54.x = arg4;
+    sp54.y = arg5;
+    sp54.z = arg6;
+    sp48.x = arg1;
+    sp48.y = arg2;
+    sp48.z = arg3;
+
+    colId = Play_GetPolyColId(objId, &useCol2);
 
     if (!useCol2) {
         if (func_col1_800998FC(&sp54, &sp48, arg8, colId, &sp3C, sp34) > 0) {

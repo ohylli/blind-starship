@@ -488,6 +488,7 @@ void Player_CheckItemCollect(Player* player);
 void Player_UpdateHitbox(Player* player);
 s32 Player_CheckHitboxCollision(Player* player, f32* hitboxData, s32* index, f32 xPos, f32 yPos, f32 zPos, f32 xRot, f32 yRot,
                   f32 zRot, f32 arg9, f32 argA, f32 argB);
+s32 Play_GetPolyColId(ObjectId objId, bool* useCol2);
 bool Play_CheckPolyCollision(ObjectId objId, f32 arg1, f32 arg2, f32 arg3, f32 arg4, f32 arg5, f32 arg6, Vec3f* arg7, Vec3f* arg8);
 void Scenery360_Initialize(Scenery360*);
 
