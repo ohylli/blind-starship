@@ -125,6 +125,25 @@ static inline bool Object_GetPolyCollider(ObjectEventType type, void* object, s3
     return true;
 }
 
+// The horizontal range gate the engine applies BEFORE running a scenery piece's poly
+// test: Player_CollisionCheck only calls Player_CheckPolyCollision when obj.pos is
+// within this XZ distance of the ship's center (pos.x / trueZpos) — 1100 in the
+// on-rails gScenery loop (fox_play.c:1994), and in the gScenery360 loop 1100, or 4000
+// on Sector Y and Venom-Andross (fox_play.c:1856-1858). The actor and boss loops have
+// no such gate. Returns 0 for "ungated". A consumer that replays the engine's surface
+// test (the obstacle cue's heightfield sampling) honors it so a big mesh's far corners,
+// which the engine never tests, do not warn.
+static inline f32 Object_GetPolyCollisionRangeXZ(ObjectEventType type) {
+    switch (type) {
+        case OBJECT_TYPE_SCENERY:
+            return 1100.0f;
+        case OBJECT_TYPE_SCENERY360:
+            return ((gCurrentLevel == LEVEL_SECTOR_Y) || (gCurrentLevel == LEVEL_VENOM_ANDROSS)) ? 4000.0f : 1100.0f;
+        default:
+            return 0.0f;
+    }
+}
+
 // The bounding box of a poly mesh from Object_GetPolyCollider, as the engine stores it:
 // min/max corners relative to obj.pos in the object's LOCAL frame (the engine rotates
 // the player's offset by -obj.rot.y before testing, Player_CheckPolyCollision). The

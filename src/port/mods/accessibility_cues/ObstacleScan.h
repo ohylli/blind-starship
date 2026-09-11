@@ -36,9 +36,11 @@
 // exact for the solid meshes but a coarse over-approximation for the heightfield family
 // (see the ObjectQuery.h comment): a terrain bump's box spans the whole hill, so a
 // course through the box at an altitude that clears the slope still counts as on
-// course. Refining that is the consumer's job (the ahead cue's heightfield sampling,
-// planned as the next step) — the scan stays box-only so every consumer shares one
-// shape. Sphere-collided objects (Object_GetSphereCollider — today only Meteo's big
+// course. Refining that is the consumer's job — the scan stays box-only so every
+// consumer shares one shape, and carries the mesh identity, obj.pos/rot.y and the
+// engine's range gate on the box (the poly* fields) so a consumer can replay the
+// engine's own surface test along its course, as the ahead cue does
+// (ObstacleAheadCue_HeightfieldGap). Sphere-collided objects (Object_GetSphereCollider — today only Meteo's big
 // meteor, which carries gNoHitbox and is collided by a hand-written 900-unit sphere)
 // are boxed the same way: one synthesized record centered on obj.pos with half-extents
 // equal to the radius on every axis, record index kObstacleSphereRecord. The cube
@@ -99,6 +101,19 @@ struct ObstacleBox {
     // first: center.z + half.z. Positive while the box is still ahead, <= 0 once the
     // player is level with or past the face. The "distance to impact" a warning maps.
     f32 gapZ;
+    // The producing object's obj.pos and obj.rot.y, for consumers that need the object
+    // rather than the box (the heightfield sampling rotates its probes into the mesh's
+    // frame the way Player_CheckPolyCollision does).
+    Vec3f objPos;
+    f32 rotY;
+    // Poly-mesh identity, valid only when record == kObstaclePolyRecord (else -1 / false /
+    // 0): the engine's mesh index and family (Object_GetPolyCollider), whether that
+    // family is the CollisionHeader2 HEIGHTFIELD — a surface hit only from above, whose
+    // box therefore over-approximates (see the header comment) — and the XZ range gate
+    // the engine applies before testing it (Object_GetPolyCollisionRangeXZ, 0 = none).
+    s32 polyColId;
+    bool polyHeightfield;
+    f32 polyRangeXZ;
 };
 
 // `record` values of a box synthesized from a sphere collider / a poly mesh's bounds
@@ -150,8 +165,8 @@ inline void EmitBoxes(ObjectEventType type, T* entry, ObstacleArray array, s32 s
     }
     HitboxBox records[kObjectMaxHitboxRecords + 1];
     s32 n;
-    s32 polyColId;
-    bool polyUseCol2;
+    s32 polyColId = -1;
+    bool polyUseCol2 = false;
     f32 sphereRadius;
     if (Object_GetPolyCollider(type, entry, &polyColId, &polyUseCol2)) {
         // The mesh's bounding box, INSTEAD of the hitbox records — see the header
@@ -201,6 +216,17 @@ inline void EmitBoxes(ObjectEventType type, T* entry, ObstacleArray array, s32 s
         box.clearX = fabsf(box.dx) - box.half.x;
         box.clearY = fabsf(box.dy) - box.half.y;
         box.gapZ = player->trueZpos - (box.center.z + box.half.z);
+        box.objPos = entry->obj.pos;
+        box.rotY = entry->obj.rot.y;
+        if (records[r].record == kObstaclePolyRecord) {
+            box.polyColId = polyColId;
+            box.polyHeightfield = polyUseCol2;
+            box.polyRangeXZ = Object_GetPolyCollisionRangeXZ(type);
+        } else {
+            box.polyColId = -1;
+            box.polyHeightfield = false;
+            box.polyRangeXZ = 0.0f;
+        }
         if (stats != nullptr) {
             stats->boxes++;
         }

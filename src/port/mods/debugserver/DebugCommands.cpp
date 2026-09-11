@@ -1322,6 +1322,9 @@ static nlohmann::json CueObstacleAheadPolicyJson(const ObstacleAheadCueDebug& d)
     if (d.scanned) {
         j["scan"] = { { "active", d.scanActive }, { "obstacles", d.scanObstacles }, { "boxes", d.scanBoxes } };
         j["onCourse"] = d.onCourse;
+        j["heightfield"] = { { "tested", d.heightfieldTested },
+                             { "cleared", d.heightfieldCleared },
+                             { "probes", d.heightfieldProbes } };
         j["warnDist"] = d.warnDist;
         j["margin"] = d.margin;
         if (d.allRange) {
@@ -1333,6 +1336,7 @@ static nlohmann::json CueObstacleAheadPolicyJson(const ObstacleAheadCueDebug& d)
                         { "slot", d.target.slot },
                         { "objId", d.target.objId },
                         { "record", d.target.record },
+                        { "heightfield", d.target.heightfield },
                         { "gap", d.target.gap },
                         { "gapZ", d.target.gapZ },
                         { "clear", { { "x", d.target.clearX }, { "y", d.target.clearY } } },

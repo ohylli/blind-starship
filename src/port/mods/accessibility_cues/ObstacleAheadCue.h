@@ -68,8 +68,11 @@ inline constexpr float kObstacleCueBoostDefault = 1.5f;
 struct ObstacleAheadCueTargetDebug {
     int32_t array = -1; // ObstacleArray; the debug server resolves the name
     int32_t slot = -1, objId = -1, record = -1;
+    bool heightfield = false;     // a heightfield mesh box: `gap` is the sampled impact
+                                  // distance along the course, not the box's near face
     float gap = 0;                // the course gap driving the interval: gapZ on rails,
-                                  // the ray's near-face distance in all-range
+                                  // the ray's near-face distance in all-range, or for a
+                                  // heightfield box the first sampled surface hit
     float gapZ = 0;               // raw distance to the near z face, world units
     float clearX = 0, clearY = 0; // footprint clearance (negative = inside)
     float dx = 0, dy = 0, dz = 0; // signed center offsets, the directional siblings' input
@@ -88,6 +91,10 @@ struct ObstacleAheadCueDebug {
                           // heading gate is what silenced the cue"
     int32_t scanActive = 0, scanObstacles = 0, scanBoxes = 0; // ObstacleScanStats
     int32_t onCourse = 0;           // boxes that passed the course test this tick
+    // Heightfield refinement (ObstacleAheadCue_HeightfieldGap): boxes whose course
+    // span was walked, how many of those the walk cleared (dropped: the course never
+    // meets the surface), and the engine surface-test calls spent — the cost line.
+    int32_t heightfieldTested = 0, heightfieldCleared = 0, heightfieldProbes = 0;
     float warnDist = 0, margin = 0; // effective (post-guard) knob values used this tick
     float fwdX = 0, fwdY = 0, fwdZ = 0; // unit heading the all-range ray test cast along;
                                         // zero on rails (the fixed -z test needs none)

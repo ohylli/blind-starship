@@ -1,7 +1,7 @@
 # The obstacle-ahead cue: design record
 
 Status: v1 implemented 2026-08-11; all-range support added 2026-08-18; poly-mesh
-coverage (bounding boxes) added 2026-09-11. Companion to
+coverage added 2026-09-11 (bounding boxes, then heightfield sampling). Companion to
 `docs/accessibility-cues-tuning.md`
 (which documents the knobs); this file records what the cue covers, *why* it is shaped
 this way, and the catalogue of intentional misses — read this before "fixing" a silence.
@@ -78,6 +78,29 @@ encounter, mirroring the rails rule. The heading composition is the Arwing's (an
 Marine's); the forms that compose differently (Landmaster, on-foot) never appear in
 solo all-range, and the cue stops rather than guesses if one ever does.
 
+**Heightfield meshes get a second, decisive test.** A poly-mesh box of the
+`CollisionHeader2` family (every terrain bump, the reefs, the island, Fortuna mountain
+1, Venom's mountain — see "What is included") passes the tests above as a *candidate*
+only: its box spans the whole hill, but the engine hits such a mesh solely when one of
+the ship's body points is at or below the surface under it. So the cue walks the course
+through the box in 100-unit steps and asks the engine's own surface test at each step
+(`func_col2_800A3690`, the same mesh and code the engine would consult;
+`ObstacleAheadCue_HeightfieldGap`). The probe is the *bottom edge of the margin square*
+around the ship — the point one margin below the course and its two lateral neighbors
+one margin to either side — which is the box test's slack ("inside the footprint
+expanded by the margin") restated for a surface hit from above: a slope that rises to
+within the margin of the course warns, one the course clears by more stays silent.
+Each probe is rotated into the mesh's frame exactly as `Player_CheckPolyCollision`
+does (`obj.rot.y`), and steps the engine's own range gate would skip (a scenery poly is
+only tested while `obj.pos` is within 1100 XZ units of the ship, `fox_play.c:1994`,
+`Object_GetPolyCollisionRangeXZ`) are skipped too, so a big mesh's far corners never
+warn. The first hit's course distance replaces the near-face gap; no hit drops the box.
+Two rules differ from the solid case on purpose: the walk starts *at the ship* when the
+ship is already inside the box (a bump's box is up to 2600 units deep and the slope may
+still rise ahead — being past the near face does not hand the encounter to the engine),
+and it stops at the warning distance rather than the box's far face. Solid meshes
+(`CollisionHeader`, the swept-triangle test) keep the plain box.
+
 The nearest on-course record wins and its gap maps geometrically (log-domain
 interpolation) to the pulse interval (slow at the warning distance, fast at contact), so
 the pulse rate climbs by equal-sounding tempo steps as the gap closes instead of
@@ -126,9 +149,12 @@ the boss bases) is a swept-triangle test, and its box is a fair stand-in. The
 `CollisionHeader2` family (every bump, both reefs, the island, Fortuna mountain 1,
 Venom's mountain) is a **heightfield**: the engine finds the triangle under the player's
 X/Z and hits only when the player's Y is at or below that surface (`fox_col2.c`). Its
-box spans the whole hill, so the box alone over-warns whenever the player is inside the
-footprint below the peak, even on a course that clears the slope — see "Known defects"
-for the planned fix.
+box spans the whole hill, so the box alone would over-warn whenever the player is
+inside the footprint below the peak, even on a course that clears the slope — which is
+why the cue samples the engine's surface test along the course for that family (see
+"The collision-course test"). The scan itself stays box-only and carries the mesh
+identity, `obj.pos`/`obj.rot.y` and the range gate on the box (`ObstacleBox.poly*`) so
+any consumer can replay the same test.
 
 Two cue-side exclusions sit on top of the predicate, in `ObstacleScan`:
 
@@ -232,22 +258,20 @@ Each of these is a deliberate v1 decision with a known attach point, not an over
 ## Known defects — found after v1, not yet fixed
 
 Unlike the catalogue above, entries here are *not* deliberate and are meant to be fixed.
-
-- **Heightfield meshes over-warn** (known since the poly change, 2026-09-11 — the
-  planned second step of that work). The `CollisionHeader2` family (all terrain bumps,
-  the reefs, the island, Fortuna mountain 1, Venom's mountain) is a surface the player
-  only hits from above, but the scan yields its whole bounding box and the cue treats it
-  as solid: on Corneria, which places 178 bumps, the box test buzzes whenever the player
-  is low inside a bump's footprint even on a course that clears the slope. Planned fix,
-  as *cue policy* (the scan stays box-only so the directional siblings share one shape):
-  once a heightfield box passes the course test, walk the course through the box in
-  ~100-unit steps at the player's current altitude and ask the engine's own surface
-  test (`func_col2_800A3690`, after rotating the offset by `-obj.rot.y` as
-  `Player_CheckPolyCollision` does) whether that point is at or below the surface; the
-  first hit is the impact distance, no hit drops the box. Solid meshes keep the plain
-  box.
+None open at the moment.
 
 ## Fixed defects
+
+- **Heightfield meshes over-warned** (introduced with the poly-mesh boxes on
+  2026-09-11 and fixed the same day as the planned second step). The `CollisionHeader2`
+  family (all terrain bumps, the reefs, the island, Fortuna mountain 1, Venom's
+  mountain) is a surface the player only hits from above, but the scan yields its whole
+  bounding box and the cue treated it as solid: on Corneria, which places 178 bumps,
+  the box test buzzed whenever the player was low inside a bump's footprint even on a
+  course that cleared the slope. Fixed as *cue policy* by the heightfield walk
+  described under "The collision-course test" — the scan stays box-only so the
+  directional siblings share one shape. The `cues` dump reports it as
+  `heightfield.tested/cleared/probes` per tick and `target.heightfield` on the winner.
 
 - **Meteo's big meteors were invisible to the cue** (`EVID_ME_BIG_METEOR`, fixed
   2026-08-27). A *third* collision mechanism, neither hitbox nor poly mesh: the event
@@ -286,7 +310,29 @@ Unlike the catalogue above, entries here are *not* deliberate and are meant to b
   the cue ignores) and step past the walls: the winner becomes `record -2` with
   half-extents 1311.5/87/1311.5 — the `CollisionHeader2` index 1 bounds — and its
   `delta` equals the bump's `objects scenery` position plus the mesh's center offset.
-  Verified live 2026-09-11.
+  Verified live 2026-09-11. Beware that a `set` made in a run that later exits cleanly
+  is saved to `starship.cfg.json` — check the margin there before the next session.
+- **Heightfield walk, on rails** (verified live 2026-09-11, same checkpoint). With the
+  default margin at altitude 350 the bump box test itself rejects (`clear.y` 176), so
+  `heightfield.tested` stays 0. With margin `200.0`, 60 frames past the walls
+  (z ≈ −49285), bump 4 (`gScenery` slot 12) is tested and *hits* — `target.heightfield`
+  true, `gap` 2331.8 against a near-face `gapZ` of 1131.8: the walk found the slope
+  1200 units deeper into the box, where it rises to within 200 of the ship. With
+  `170.0` or `160.0` the same box is tested and *cleared*: the hill never comes that
+  close. Diving at the default margin (`input stick 0 60 30` then `step 30` lands the
+  ship at altitude 40) makes the walk hit at `gap` 200 — the first step inside the
+  engine's 1100-unit range gate — then 0, and within ten more frames the engine's own
+  collision fires (shields 255 → 247, `hitTimer` set). Margin `800.0` makes every
+  nearby bump hit, `gap` 0 for the one the ship is flying over: that is the margin's
+  vertical slack, not a defect. Before the probe was clamped to the mesh's box floor
+  those same bumps all *cleared* at 800, because the engine rejects a probe below its
+  bounding box before looking at the surface — the clamp exists for that.
+- **Heightfield walk, all-range** (verified live 2026-09-11): `warp fortuna --no-intro
+  --paused`, `step 60`, dive (`input stick 0 60 25`, `step 25`), then step on: a
+  Fortuna mountain 1 (`objId 148`, `record -2`, half-extents 1013/297/1075 — the
+  `CollisionHeader2` index 0 bounds) becomes the winner with `heightfield: true`, its
+  `gap` a few hundred units past the ray's entry (the range gate again) and shrinking
+  step by step.
 - **All-range testing has no checkpoints** (the checkpoint machinery captures the
   on-rails `pathProgress` tuple only) and the player cannot be steered from the debug
   server, so deterministic tests use Sector Z (densest junk) with the margin CVar
