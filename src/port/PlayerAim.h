@@ -53,8 +53,8 @@ inline f32 Player_AimPitch(const Player& p) {
 
 // The spherical form above, realized: the aim heading as a world-space unit vector.
 // This is the single owner of the composition — consumers (the obstacle cue's ray test,
-// the planned directional cues) call this instead of open-coding the sines, so the
-// verified signs can never drift. Gate on Player_AimAnglesValid first.
+// the directional cues' future all-range step) call this instead of open-coding the
+// sines, so the verified signs can never drift. Gate on Player_AimAnglesValid first.
 inline Vec3f Player_AimForward(const Player& p) {
     f32 yaw = Player_AimYaw(p) * M_DTOR;
     f32 pitch = Player_AimPitch(p) * M_DTOR;

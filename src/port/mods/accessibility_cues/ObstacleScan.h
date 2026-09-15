@@ -5,13 +5,14 @@
 // lockable — minus the cue-side exclusions below) and their collision shapes as
 // world-space boxes with the player-relative geometry every consumer needs already
 // derived. The obstacle-ahead cue (its rails footprint test and its all-range ray test)
-// is the first consumer; the planned directional obstacle cues (left/right, above/below)
-// are the reason the geometry is yielded raw — no thresholding, no margin, no direction
-// naming happens here. Every filter beyond "is a warn-worthy obstacle with a solid box"
-// is the caller's policy. Game-coupled by design, like CueScan.h.
+// was the first consumer; the directional obstacle cues (ObstacleDirectionCue.cpp:
+// beside, above, below) are the second, and the reason the geometry is yielded raw — no
+// thresholding, no margin, no direction naming happens here. Every filter beyond "is a
+// warn-worthy obstacle with a solid box" is the caller's policy. Game-coupled by design,
+// like CueScan.h.
 //
-// Cue-side exclusions on top of the predicate (policy shared by the future obstacle
-// cues, deliberately NOT in Object_IsObstacle, whose other consumer is
+// Cue-side exclusions on top of the predicate (policy shared by every obstacle cue,
+// deliberately NOT in Object_IsObstacle, whose other consumer is
 // AccessibilityTrainingMinimal):
 //   - gBosses[] is not scanned at all: targetOffset cannot separate "boss you fight"
 //     from "wall" (see the predicate's comment in ObjectQuery.h), and droning a crash
@@ -58,7 +59,7 @@
 //     over-warns at its corners (a diagonal pass 900-1270 units off center) — accepted,
 //     in the same spirit as the yawed-wall approximation below: a conservative warning
 //     about an 1800-unit rock is the right failure direction, and it keeps the course
-//     tests and the planned directional cues on one box shape.
+//     tests and the directional cues on one box shape.
 //
 // Deliberate non-features, so a future session doesn't "fix" them by accident: obj.rot
 // is ignored (the box is axis-aligned in world space even for a yawed wall or a
@@ -101,15 +102,15 @@ struct ObstacleBox {
                   // a sphere collider / a poly mesh's bounds
     Vec3f center; // obj.pos + the record's offsets; with `half`, the full box in world
                   // space. Consumed here to derive dx/dy/dz; kept public for debug joins
-                  // and the planned directional cues — no course test reads it today.
+                  // — no course test reads it today.
     Vec3f half;   // record half-extents, non-negative
-    f32 dx, dy;   // center minus player (pos.x / pos.y); the directional cues' signal
+    f32 dx, dy;   // center minus player (pos.x / pos.y); their signs pick the directional cues' side
     f32 dz;       // center minus player trueZpos — with dx/dy the full 3D center delta
                   // the all-range ray test casts along (negative = ahead of the player)
     // How far OUTSIDE the footprint the player is on each axis: fabsf(d) - half.
     // Negative means the player is inside the footprint on that axis. A collision-course
-    // test is "both below the caller's safety margin"; a left/right or above/below cue
-    // reads the sign of dx / dy together with these.
+    // test is "both below the caller's safety margin"; the directional cues read the
+    // sign of dx / dy together with these (ObstacleDirectionCue.cpp).
     f32 clearX, clearY;
     // Player to the box's NEAR face in Z — the face the player, flying toward -z, meets
     // first: center.z + half.z. Positive while the box is still ahead, <= 0 once the

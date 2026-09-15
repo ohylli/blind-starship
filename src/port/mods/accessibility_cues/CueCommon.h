@@ -3,8 +3,9 @@
 // Shared policy helpers for the Star Fox cue listeners. The cues themselves (sound file,
 // volume CVar, preview, lazy loading, voice pools) live in the game-agnostic Cue class
 // over the Cue3D HRTF seam; the files in this directory are the Star Fox side — one file
-// per cue (RingCue, EnemyCue, AimCue, ObstacleAheadCue), each registering its cue and
-// deciding, per game tick, what it targets, coordinated by ../AccessibilityCues.cpp.
+// per cue or cue family (RingCue, EnemyCue, AimCue, ObstacleAheadCue, ObstacleDirectionCue),
+// each registering its cue(s) and deciding, per game tick, what it targets, coordinated by
+// ../AccessibilityCues.cpp.
 // This header holds what the cue files share: the master toggle, the height->pitch
 // mapping and its knobs, the damped-tone generator, and small scalar helpers. The
 // game-coupled shared scans live in CueScan.h (enemies) and ObstacleScan.h (obstacle

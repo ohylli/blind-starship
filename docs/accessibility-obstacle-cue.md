@@ -15,9 +15,9 @@ collision course with a collidable, non-lockable obstacle, pulsing faster as the
 nears. It deliberately encodes nothing else — rendered dead center (`CUE3D_MODE_DIRECT`,
 no HRTF, no distance attenuation), constant loudness, constant pitch. "How soon" rides
 the pulse interval alone, so it can never be confused with the distance-loudness or
-height-pitch conventions the ring/enemy cues use. The planned directional obstacle cues
-(left/right pan, above/below) will carry the "which way to dodge" half; this cue is the
-"how soon" half. Covers on-rails levels (any vehicle) and solo all-range battles
+height-pitch conventions the ring/enemy cues use. The directional obstacle cues
+(`docs/accessibility-obstacle-direction-cues.md`: beside, above, below) carry the "which
+way is closed" half; this cue is the "how soon" half. Covers on-rails levels (any vehicle) and solo all-range battles
 (Versus is out of scope, like every cue — see `CueScan_ModeInScope`).
 
 ## The three layers
@@ -43,8 +43,8 @@ height-pitch conventions the ring/enemy cues use. The planned directional obstac
   bounding box, a boxed collision sphere — as a world-space box with the
   player-relative geometry derived (the full 3D center delta `dx`/`dy`/`dz`, per-axis
   footprint clearance, gap to the near Z face). No thresholding — every filter beyond
-  "warn-worthy obstacle" is the consumer's policy. The remaining roadmap item (the
-  directional cues) consumes this same stream.
+  "warn-worthy obstacle" is the consumer's policy. The directional cues
+  (`ObstacleDirectionCue.{h,cpp}`) consume this same stream.
 - **`src/port/mods/accessibility_cues/ObstacleAheadCue.{h,cpp}`** — policy: gates, the
   course test, nearest-gap selection, the gap→interval mapping, the buzz, the debug
   mirror for the debug server's `cues` command.

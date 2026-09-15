@@ -25,8 +25,8 @@
 // must not occupy the spatial channel the ring/enemy cues use, and "how soon" is the
 // only actionable dimension for something you steer away from. The pulse interval is
 // deliberately the ONLY signal: loudness and pitch stay constant so "faster" is
-// unambiguously "closer". The planned directional siblings (obstacle left/right,
-// above/below) will carry the "which way to dodge" half. Design record:
+// unambiguously "closer". The directional siblings (ObstacleDirectionCue.cpp: beside,
+// above, below) carry the "which way is closed" half over the same scan. Design record:
 // docs/accessibility-obstacle-cue.md.
 static Cue* sObstacleCue = nullptr;
 
@@ -274,7 +274,7 @@ static void ObstacleAheadCue_OnPostUpdate(IEvent* event) {
     sDebugState = ObstacleAheadCueDebug{};
     ObstacleAheadCueDebug& dbg = sDebugState;
     dbg.enabled = CueCommon_IsEnabled();
-    dbg.obstacleEnabled = (CVarGetInteger(kObstacleCueEnabledCVar, 1) == 1);
+    dbg.obstacleEnabled = ObstacleCommon_IsEnabled();
     // gLevelMode is 0 (== LEVELMODE_ON_RAILS) before any level loads, so modeOk alone
     // does not filter the pre-game ticks; control (which also null-checks gPlayer) is
     // what makes the reads below safe. CueScan_ModeInScope is the sibling cues' scoping:
@@ -299,10 +299,7 @@ static void ObstacleAheadCue_OnPostUpdate(IEvent* event) {
                                             // debug server can store more, and the heightfield
                                             // walk's step cap is sized to this (see the assert)
     }
-    f32 margin = CVarGetFloat(kObstacleCueMarginCVar, kObstacleCueMarginDefault);
-    if (!(margin >= 0.0f)) {
-        margin = kObstacleCueMarginDefault; // negative or NaN
-    }
+    const f32 margin = ObstacleCommon_Margin();
     dbg.warnDist = warnDist;
     dbg.margin = margin;
 
@@ -439,11 +436,10 @@ static void ObstacleAheadCue_OnPostUpdate(IEvent* event) {
 }
 
 void ObstacleAheadCue_Register() {
-    CVarRegisterInteger(kObstacleCueEnabledCVar, 1);
+    // The family toggle and the margin are registered by ObstacleCommon_RegisterCVars.
     CVarRegisterFloat(kObstacleCueWarnDistCVar, kObstacleCueWarnDistDefault);
     CVarRegisterFloat(kObstacleCueSlowCVar, kObstacleCueSlowDefault);
     CVarRegisterFloat(kObstacleCueFastCVar, kObstacleCueFastDefault);
-    CVarRegisterFloat(kObstacleCueMarginCVar, kObstacleCueMarginDefault);
     CVarRegisterFloat(kObstacleCueBoostCVar, kObstacleCueBoostDefault);
 
     // DIRECT render mode: see the file comment. Pinned RESAMPLE pitch style even though

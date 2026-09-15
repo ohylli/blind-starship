@@ -15,7 +15,9 @@
 #include "port/mods/accessibility_cues/CueCommon.h"
 #include "port/mods/accessibility_cues/EnemyCue.h"
 #include "port/mods/accessibility_cues/AimCue.h"
+#include "port/mods/accessibility_cues/ObstacleCommon.h"
 #include "port/mods/accessibility_cues/ObstacleAheadCue.h"
+#include "port/mods/accessibility_cues/ObstacleDirectionCue.h"
 #include "port/accessibility/Cue.h"
 #include "port/accessibility/CueBench.h"
 #include "port/notification/notification.h"
@@ -415,9 +417,11 @@ void DrawSettingsMenu(){
                 .defaultValue = true
             });
             UIWidgets::CVarCheckbox("Obstacle warning", kObstacleCueEnabledCVar, {
-                .tooltip = "A low buzz that beats faster as you close on something solid on your course that you "
-                           "cannot shoot down. Works on rails and in solo all-range battles. Note: Minimal "
-                           "training removes Training's obstacles, so this cue stays silent there.",
+                .tooltip = "Obstacle cues: a low buzz that beats faster as you close on something solid on your "
+                           "course that you cannot shoot down, plus three chords that tell you the space beside, "
+                           "above or below you is closed. The buzz works on rails and in solo all-range battles; "
+                           "the chords on rails. Note: Minimal training removes Training's obstacles, so these "
+                           "cues stay silent there.",
                 .defaultValue = true
             });
             if (UIWidgets::BeginMenu("Cue volumes")) {
@@ -1246,6 +1250,62 @@ void DrawDebugMenu() {
                                            kObstacleCueBoostDefault, {
                     .tooltip = "Loudness boost for the buzz relative to the other cues, applied under the "
                                "volume sliders.",
+                    .flags = ImGuiSliderFlags_AlwaysClamp,
+                    .format = "%.2fx",
+                    .step = 0.25f,
+                });
+                ImGui::EndMenu();
+            }
+            if (UIWidgets::BeginMenu("Obstacle direction")) {
+                // The directional obstacle cues' knobs (ObstacleDirectionCue.h,
+                // docs/accessibility-cues-tuning.md). Live CVars like the buzz's; the
+                // safety margin they share with the buzz is the slider above.
+                UIWidgets::CVarSliderFloat("Lookahead", kObstacleDirLookaheadCVar, 200.0f, kObstacleDirLookaheadMax,
+                                           kObstacleDirLookaheadDefault, {
+                    .tooltip = "How far ahead (world units) an obstacle beside, above or below your course "
+                               "starts sounding. About 1200 is one second of flight. Obstacles already "
+                               "alongside you sound regardless.",
+                    .flags = ImGuiSliderFlags_AlwaysClamp,
+                    .format = "%.0f",
+                    .step = 100.0f,
+                });
+                UIWidgets::CVarSliderFloat("Side distance", kObstacleSideDistCVar, 200.0f, 2500.0f,
+                                           kObstacleSideDistDefault, {
+                    .tooltip = "How far to the side (world units, beyond the safety margin) an obstacle "
+                               "still sounds. At this distance the chord is panned fully to its side; at "
+                               "the margin it sits near the center.",
+                    .flags = ImGuiSliderFlags_AlwaysClamp,
+                    .format = "%.0f",
+                    .step = 50.0f,
+                });
+                UIWidgets::CVarSliderFloat("Side pan floor", kObstacleSidePanFloorCVar, 0.0f, 0.8f,
+                                           kObstacleSidePanFloorDefault, {
+                    .tooltip = "How far off center the beside chord stays for the closest possible "
+                               "obstacle, so left and right never merge. 0 = dead center, 1 = hard.",
+                    .flags = ImGuiSliderFlags_AlwaysClamp,
+                    .format = "%.2f",
+                    .step = 0.05f,
+                });
+                UIWidgets::CVarSliderFloat("Vertical distance", kObstacleVertDistCVar, 200.0f, 2500.0f,
+                                           kObstacleVertDistDefault, {
+                    .tooltip = "How far above or below (world units, beyond the safety margin) an obstacle "
+                               "still sounds. Loudness runs from full at the margin to the level floor here.",
+                    .flags = ImGuiSliderFlags_AlwaysClamp,
+                    .format = "%.0f",
+                    .step = 50.0f,
+                });
+                UIWidgets::CVarSliderFloat("Vertical level floor", kObstacleVertLevelFloorCVar, 0.0f, 0.8f,
+                                           kObstacleVertLevelFloorDefault, {
+                    .tooltip = "Loudness (fraction of the volume slider) of the above/below chords at the "
+                               "vertical distance, so their onset is audible rather than a fade from silence.",
+                    .flags = ImGuiSliderFlags_AlwaysClamp,
+                    .format = "%.2f",
+                    .step = 0.05f,
+                });
+                UIWidgets::CVarSliderFloat("Chord loudness", kObstacleDirBoostCVar, 0.25f, 4.0f,
+                                           kObstacleDirBoostDefault, {
+                    .tooltip = "Loudness boost shared by the three direction chords relative to the other "
+                               "cues, applied under the volume sliders.",
                     .flags = ImGuiSliderFlags_AlwaysClamp,
                     .format = "%.2fx",
                     .step = 0.25f,

@@ -4,7 +4,9 @@
 #include "accessibility_cues/RingCue.h"
 #include "accessibility_cues/EnemyCue.h"
 #include "accessibility_cues/AimCue.h"
+#include "accessibility_cues/ObstacleCommon.h"
 #include "accessibility_cues/ObstacleAheadCue.h"
+#include "accessibility_cues/ObstacleDirectionCue.h"
 
 #include "port/CGameCompat.h" // Events.h pulls the C game headers; the shim must come first
 #include "port/hooks/Events.h"
@@ -23,7 +25,9 @@ void AccessibilityCues_Init() {
     RingCue_Register();
     EnemyCue_Register();
     AimCue_Register();
+    ObstacleCommon_RegisterCVars(); // the obstacle family's shared toggle + margin, before its members
     ObstacleAheadCue_Register();
+    ObstacleDirectionCue_Register();
 
     // Registered after the per-cue listeners (same event, same priority, so registration
     // order is execution order), matching the pre-split layout: the reap then acts on the

@@ -2,32 +2,28 @@
 
 #include <stdint.h>
 
+#include "ObstacleCommon.h" // the family toggle + safety margin every obstacle cue shares
+
 // Registry id of the obstacle-ahead cue, shared by the registration in
 // ObstacleAheadCue.cpp and the debug server's policy-section match (DebugCommands.cpp).
 // "ObstacleAhead", not "Obstacle": the id names the per-cue volume CVar
-// (gAccessibilityCueVolume.<id>), and the planned directional siblings ("ObstacleSide",
-// "ObstacleHeight") must not force a rename that would silently reset saved volumes.
+// (gAccessibilityCueVolume.<id>), and the directional siblings ("ObstacleSide",
+// "ObstacleAbove", "ObstacleBelow" — ObstacleDirectionCue.h) must not force a rename that
+// would silently reset saved volumes.
 inline constexpr const char* kObstacleAheadCueId = "ObstacleAhead";
-
-// Master toggle for the OBSTACLE CUE FAMILY, not just this cue: the planned directional
-// obstacle cues read the same CVar. When the first sibling lands, this constant moves to
-// a scalar-only ObstacleCommon.h; the CVar name itself never changes, so saved configs
-// and the F1 checkbox are unaffected. Per-cue toggles, if ever wanted, arrive as
-// additions (e.g. gAccessibilityObstacleAheadCue), never renames.
-inline constexpr const char* kObstacleCueEnabledCVar = "gAccessibilityObstacleCue";
 
 // Tuning knobs: F1 sliders under Developer -> Blind Starship -> Obstacle warning, shared
 // by the mapping code in ObstacleAheadCue.cpp, the sliders in ImguiUI.cpp, and the debug
 // server's settings dump. Tuning guidance in docs/accessibility-cues-tuning.md.
-// Naming: the knobs deliberately carry the family-level ObstacleCue prefix, not
-// ObstacleAheadCue — WarnDist and MarginXY define the course band all obstacle cues
-// would share (they move to ObstacleCommon.h with the enable CVar when a sibling lands),
-// while Slow/Fast/Boost are this cue's cadence and timbre: siblings add their own under
-// the same gAccessibilityObstacleCue... prefix rather than renaming these.
+// Naming: the knobs carry the family-level ObstacleCue prefix, not ObstacleAheadCue —
+// the family toggle and the safety margin, which every obstacle cue shares, live in
+// ObstacleCommon.h; WarnDist stayed here because the directional cues got their own,
+// much shorter lookahead (kObstacleDirLookaheadCVar) rather than sharing this band.
+// Siblings add their own knobs under the same gAccessibilityObstacleCue... prefix rather
+// than renaming these.
 inline constexpr const char* kObstacleCueWarnDistCVar = "gAccessibilityObstacleCueWarnDist"; // world units
 inline constexpr const char* kObstacleCueSlowCVar = "gAccessibilityObstacleCueSlowSec"; // interval at warn start
 inline constexpr const char* kObstacleCueFastCVar = "gAccessibilityObstacleCueFastSec"; // interval at contact
-inline constexpr const char* kObstacleCueMarginCVar = "gAccessibilityObstacleCueMarginXY"; // lateral safety margin
 inline constexpr const char* kObstacleCueBoostCVar = "gAccessibilityObstacleCueBoost"; // loudness vs the other cues
 
 // Warn-start gap to the obstacle's near Z face. On rails the streaming loop spawns an
@@ -60,11 +56,6 @@ inline constexpr float kObstacleCueFastDefault = 0.04f;
 // compile time, so retuning the timbre longer without moving this fails the build
 // instead of clicking by ear.
 inline constexpr float kObstacleCueMinIntervalSec = 0.04f;
-// Lateral/vertical slack added around the hitbox footprint before asking "am I on a
-// collision course". Covers the Arwing's span (the test uses the ship's center point;
-// the engine collides four body/wing points, wings at roughly +/- 40 units) plus the
-// drift a player accumulates while reacting.
-inline constexpr float kObstacleCueMarginDefault = 150.0f;
 // The buzz is longer and lower than the aim click, so it reads louder at equal sample
 // level; start below the click's 2.0 boost.
 inline constexpr float kObstacleCueBoostDefault = 1.5f;
@@ -81,7 +72,7 @@ struct ObstacleAheadCueTargetDebug {
                                   // heightfield box the first sampled surface hit
     float gapZ = 0;               // raw distance to the near z face, world units
     float clearX = 0, clearY = 0; // footprint clearance (negative = inside)
-    float dx = 0, dy = 0, dz = 0; // signed center offsets, the directional siblings' input
+    float dx = 0, dy = 0, dz = 0; // signed center offsets
     float halfX = 0, halfY = 0, halfZ = 0;
 };
 

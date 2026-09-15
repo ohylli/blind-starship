@@ -97,6 +97,14 @@ struct CueTarget {
     float pitch = 1.0f;
     float intervalSec = 0.0f; // restart cadence, see Cue3D_SetInterval; 0 = seamless loop
     float lowPassHz = 0.0f;   // per-source muffle, see Cue3D_SetLowPass; 0 = off
+    // Per-voice attenuation UNDER the volume sliders, 0..1 (1 = the slider's full level).
+    // For cues whose loudness IS a signal (the obstacle above/below cues encode vertical
+    // clearance this way): the slider keeps meaning "the loudest this cue ever gets" and
+    // the consumer scales each voice below it. Multiplied into PushGain()'s product per
+    // voice, so it also honors the multi-voice headroom trim; previews ignore it (a
+    // preview is always the reference loudness). NaN or out-of-range values are clamped
+    // to [0, 1] with NaN pinned to 1 — "no signal" must not silence a cue by accident.
+    float level = 1.0f;
 };
 
 // Read-only state snapshots for debug tooling (the debug server's `cues` command). Value
@@ -112,7 +120,7 @@ struct CueVoiceSnapshot {
     uint64_t key = 0;      // meaningful only when keyed
     CueTarget target;      // last pushed position/pitch/interval/low-pass
     float effectivePitch = 1.0f; // target.pitch x the voice slot's identity pitch, as pushed
-    float gain = 0.0f;           // baseGain x headroom trim while playing; 0 when silent
+    float gain = 0.0f;           // baseGain x headroom trim x target.level while playing; 0 when silent
 };
 
 struct CueSnapshot {
@@ -231,9 +239,11 @@ class Cue {
     Cue(const char* id, const char* name, const char* description, const CueSpec& spec);
 
     // The gain formula and the multi-voice headroom trim, shared by PushGain() and
-    // Snapshot() so the reported gain can never drift from the pushed gain.
+    // Snapshot() so the reported gain can never drift from the pushed gain. The per-voice
+    // level (CueTarget::level) is the third factor, sanitized in one place for both.
     float ComputeGain() const;
     static float HeadroomTrim(int playingCount);
+    static float VoiceLevel(const Voice& voice);
 
     bool EnsureVoiceLoaded(Voice& voice);
     Voice* AcquireVoice(uint64_t key);

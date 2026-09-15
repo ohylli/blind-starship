@@ -147,6 +147,16 @@ float Cue::ComputeGain() const {
            CVarGetFloat(mVolumeCVar.c_str(), 1.0f) * mGainBoost;
 }
 
+float Cue::VoiceLevel(const Voice& voice) {
+    // See CueTarget::level: clamp to [0, 1], NaN pins to 1 (a missing signal must not
+    // silence the cue).
+    float level = voice.target.level;
+    if (!(level <= 1.0f)) {
+        return 1.0f; // above 1 or NaN
+    }
+    return (level > 0.0f) ? level : 0.0f;
+}
+
 float Cue::HeadroomTrim(int playingCount) {
     // Headroom for simultaneous copies of the same loop: equal-power 1/sqrt(N), the
     // standard cheap guard against N near-coherent sources summing hot. A tuning knob —
@@ -174,7 +184,7 @@ void Cue::PushGain() {
     float trim = HeadroomTrim(playing);
     for (const Voice& voice : mVoices) {
         if (voice.playing) {
-            Cue3D_SetGain(voice.source, gain * trim);
+            Cue3D_SetGain(voice.source, gain * trim * VoiceLevel(voice));
         }
     }
 }
@@ -212,7 +222,7 @@ CueSnapshot Cue::Snapshot() const {
             // untrimmed, whatever its (suspended) gameplay bookkeeping says.
             vs.gain = snap.baseGain;
         } else if (voice.playing) {
-            vs.gain = snap.baseGain * trim;
+            vs.gain = snap.baseGain * trim * VoiceLevel(voice);
         }
         snap.voices.push_back(vs);
     }

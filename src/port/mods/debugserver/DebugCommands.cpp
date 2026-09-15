@@ -21,7 +21,9 @@
 #include "port/mods/accessibility_cues/RingCue.h"
 #include "port/mods/accessibility_cues/EnemyCue.h"
 #include "port/mods/accessibility_cues/AimCue.h"
+#include "port/mods/accessibility_cues/ObstacleCommon.h"
 #include "port/mods/accessibility_cues/ObstacleAheadCue.h"
+#include "port/mods/accessibility_cues/ObstacleDirectionCue.h"
 #include "port/mods/accessibility_cues/ObstacleScan.h"
 #include "port/mods/ObjectSpawnLog.h"
 
@@ -1348,6 +1350,74 @@ static nlohmann::json CueObstacleAheadPolicyJson(const ObstacleAheadCueDebug& d)
     return j;
 }
 
+static nlohmann::json CueObstacleDirectionTargetJson(const ObstacleDirectionTargetDebug& t, bool side) {
+    nlohmann::json j;
+    j["active"] = t.active;
+    j["candidates"] = t.candidates;
+    if (!t.active) {
+        return j;
+    }
+    j["array"] = CueObstacleArrayJson(t.array);
+    j["slot"] = t.slot;
+    j["objId"] = t.objId;
+    j["record"] = t.record;
+    j["recordKind"] = ObstacleScan_RecordKind(t.record);
+    j["heightfield"] = t.heightfield;
+    j["upcoming"] = t.upcoming;
+    j["clear"] = t.clear;
+    j["gapZ"] = t.gapZ;
+    j["delta"] = { { "x", t.dx }, { "y", t.dy }, { "z", t.dz } };
+    j["half"] = { { "x", t.halfX }, { "y", t.halfY }, { "z", t.halfZ } };
+    if (side) {
+        j["pan"] = t.pan;
+    } else {
+        j["level"] = t.level;
+    }
+    return j;
+}
+
+// The directional cues share one listener and one debug mirror (ObstacleDirectionCue.h);
+// each of the three cues reports the common part plus only the direction(s) it renders,
+// so a dump reads per cue without repeating the winners under every id.
+static nlohmann::json CueObstacleDirectionPolicyJson(const ObstacleDirectionCueDebug& d, const char* cueId) {
+    nlohmann::json j;
+    j["frame"] = d.frame;
+    j["fresh"] = CuePolicyFresh(d.frame);
+    j["scanned"] = d.scanned;
+    j["gates"] = { { "enabled", d.enabled },
+                   { "obstacleEnabled", d.obstacleEnabled },
+                   { "modeOk", d.modeOk },
+                   { "control", d.control },
+                   { "railsOnly", !d.allRange } };
+    j["allRange"] = d.allRange;
+    if (d.scanned) {
+        j["scan"] = { { "active", d.scanActive }, { "obstacles", d.scanObstacles }, { "boxes", d.scanBoxes } };
+        j["inWindow"] = d.inWindow;
+        j["aheadClaimed"] = d.aheadClaimed;
+        j["lookahead"] = d.lookahead;
+        j["margin"] = d.margin;
+    }
+    std::string id = cueId;
+    if (id == kObstacleSideCueId) {
+        if (d.scanned) {
+            j["sideDist"] = d.sideDist;
+            j["panFloor"] = d.panFloor;
+        }
+        j["active"] = d.dir[OBSTACLE_DIR_LEFT].active || d.dir[OBSTACLE_DIR_RIGHT].active;
+        j["left"] = CueObstacleDirectionTargetJson(d.dir[OBSTACLE_DIR_LEFT], true);
+        j["right"] = CueObstacleDirectionTargetJson(d.dir[OBSTACLE_DIR_RIGHT], true);
+    } else {
+        ObstacleDirection dir = (id == kObstacleAboveCueId) ? OBSTACLE_DIR_ABOVE : OBSTACLE_DIR_BELOW;
+        if (d.scanned) {
+            j["vertDist"] = d.vertDist;
+            j["levelFloor"] = d.levelFloor;
+        }
+        j["active"] = d.dir[dir].active;
+        j[ObstacleDirection_Name(dir)] = CueObstacleDirectionTargetJson(d.dir[dir], false);
+    }
+    return j;
+}
+
 // The effective tuning around the cues, so one dump captures the whole configuration.
 // Names and defaults come from the shared constants in Cue.h / accessibility_cues/.
 static nlohmann::json CueSettingsJson() {
@@ -1379,6 +1449,14 @@ static nlohmann::json CueSettingsJson() {
                       { "fastSec", CVarGetFloat(kObstacleCueFastCVar, kObstacleCueFastDefault) },
                       { "marginXY", CVarGetFloat(kObstacleCueMarginCVar, kObstacleCueMarginDefault) },
                       { "boost", CVarGetFloat(kObstacleCueBoostCVar, kObstacleCueBoostDefault) } };
+    j["obstacleDirection"] = {
+        { "lookahead", CVarGetFloat(kObstacleDirLookaheadCVar, kObstacleDirLookaheadDefault) },
+        { "sideDist", CVarGetFloat(kObstacleSideDistCVar, kObstacleSideDistDefault) },
+        { "sidePanFloor", CVarGetFloat(kObstacleSidePanFloorCVar, kObstacleSidePanFloorDefault) },
+        { "vertDist", CVarGetFloat(kObstacleVertDistCVar, kObstacleVertDistDefault) },
+        { "vertLevelFloor", CVarGetFloat(kObstacleVertLevelFloorCVar, kObstacleVertLevelFloorDefault) },
+        { "boost", CVarGetFloat(kObstacleDirBoostCVar, kObstacleDirBoostDefault) }
+    };
     return j;
 }
 
@@ -1421,6 +1499,7 @@ static nlohmann::json DumpCue(const Cue& cue) {
         v["effectivePitch"] = vs.effectivePitch;
         v["intervalSec"] = vs.target.intervalSec;
         v["lowPassHz"] = vs.target.lowPassHz;
+        v["level"] = vs.target.level; // per-voice attenuation under the sliders (CueTarget::level)
         v["gain"] = vs.gain;
         voices.push_back(std::move(v));
     }
@@ -1468,6 +1547,8 @@ static int32_t CuesHandler(std::shared_ptr<Ship::Console> console, const std::ve
             c["policy"] = CueAimPolicyJson(AimCue_DebugState());
         } else if (id == kObstacleAheadCueId) {
             c["policy"] = CueObstacleAheadPolicyJson(ObstacleAheadCue_DebugState());
+        } else if (id == kObstacleSideCueId || id == kObstacleAboveCueId || id == kObstacleBelowCueId) {
+            c["policy"] = CueObstacleDirectionPolicyJson(ObstacleDirectionCue_DebugState(), cue->Id());
         }
         cues.push_back(std::move(c));
     }
