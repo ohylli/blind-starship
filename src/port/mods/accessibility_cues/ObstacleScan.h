@@ -24,6 +24,16 @@
 //     eventType == EVID_TEAMMATE that fly the rest of an on-rails level (their event
 //     row installs gCubeHitbox100, fox_enmy2.c's sEventActorInfo). OBJ_ACTOR_TEAM_ARWING
 //     needs no entry — it has gNoHitbox and never passes the predicate.
+//   - Actors whose timer_0C2 is running are skipped, mirroring the engine's own gate:
+//     Player_CollisionCheck's actor loop tests only actors with timer_0C2 == 0. The
+//     engine uses that timer as a no-collide window (freshly hit or dying actors, the
+//     all-range supplies drop) and, permanently, on the all-range EVENT HANDLER: every
+//     all-range arena reserves gActors[0] for an invisible AI360_EVENT_HANDLER actor at
+//     the world origin that runs the arena's event script (fox_360.c). It is given the
+//     generic OBJ_ACTOR_ALLRANGE info, so it carries a fighter's 40-unit hitbox and
+//     passes the predicate, but it re-arms timer_0C2 every tick and never collides. On
+//     Katina it shares the origin with the base, so before this gate the cue buzzed at
+//     "the base" — which as a boss is not scanned at all.
 //
 // Three collision mechanisms, one box shape (ObstacleScan_RecordKind names them):
 //   - Hitbox objects yield one box per solid record (Object_ReadSolidHitboxes).
@@ -163,6 +173,11 @@ inline void EmitBoxes(ObjectEventType type, T* entry, ObstacleArray array, s32 s
     }
     if (IsTeammate(entry)) {
         return; // wingmates are not obstacles — see the header comment
+    }
+    if constexpr (std::is_same_v<T, Actor>) {
+        if (entry->timer_0C2 != 0) {
+            return; // the engine's own no-collide gate (Player_CollisionCheck) — see the header comment
+        }
     }
     if (stats != nullptr) {
         stats->obstacles++;

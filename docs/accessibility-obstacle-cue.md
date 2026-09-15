@@ -206,7 +206,8 @@ hold whoosh records only; the poly box is what warns now), and
 Venom-Andross its 29 tunnel passages. **Katina places no spawn-list scenery at all** —
 its base and mothership are boss/poly geometry — so the only obstacles there are the
 non-lockable allied fighters (below): near-silence, an accepted consequence of what the
-arena contains rather than a gap in the cue.
+arena contains rather than a gap in the cue. (A buzz that *sounded* like the base was
+the all-range event-handler phantom — see "Fixed defects".)
 
 One consequence of the classification, observed live: in all-range dogfights the
 **allied fighters** (non-lockable `OBJ_ACTOR_ALLRANGE` craft — lockable ones are
@@ -281,6 +282,20 @@ Unlike the catalogue above, entries here are *not* deliberate and are meant to b
 None open at the moment.
 
 ## Fixed defects
+
+- **The all-range event-handler phantom buzzed at the world origin** (fixed
+  2026-09-15). Every all-range arena reserves `gActors[0]` for an invisible
+  `AI360_EVENT_HANDLER` actor parked at the origin that runs the arena's event script
+  (`fox_360.c`). It is initialised with the generic `OBJ_ACTOR_ALLRANGE` info, so it
+  carries a fighter's 40-unit hitbox with `targetOffset` 0 and passed the obstacle
+  predicate; the engine never collides with it because it re-arms `timer_0C2` every
+  tick and `Player_CollisionCheck`'s actor loop only tests actors with that timer at
+  zero. First noticed on Katina, where the phantom shares the origin with the base and
+  the buzz was mistaken for base detection (the base is a boss and is not scanned).
+  Fixed in the shared scan (`ObstacleScan.h`) by mirroring the engine's gate: actors
+  with a running `timer_0C2` yield no boxes. That also drops the brief no-collide window
+  the engine grants freshly hit or dying actors — faithful, since the player cannot
+  crash into them then either.
 
 - **Heightfield meshes over-warned** (introduced with the poly-mesh boxes on
   2026-09-11 and fixed the same day as the planned second step). The `CollisionHeader2`
