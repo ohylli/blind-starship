@@ -18,7 +18,7 @@ inline constexpr const char* kObstacleAheadCueId = "ObstacleAhead";
 // Naming: the knobs carry the family-level ObstacleCue prefix, not ObstacleAheadCue —
 // the family toggle and the safety margin, which every obstacle cue shares, live in
 // ObstacleCommon.h; WarnDist stayed here because the directional cues got their own,
-// much shorter lookahead (kObstacleDirLookaheadCVar) rather than sharing this band.
+// much shorter lookahead (kObstacleCueDirLookaheadCVar) rather than sharing this band.
 // Siblings add their own knobs under the same gAccessibilityObstacleCue... prefix rather
 // than renaming these.
 inline constexpr const char* kObstacleCueWarnDistCVar = "gAccessibilityObstacleCueWarnDist"; // world units

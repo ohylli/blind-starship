@@ -1450,12 +1450,12 @@ static nlohmann::json CueSettingsJson() {
                       { "marginXY", CVarGetFloat(kObstacleCueMarginCVar, kObstacleCueMarginDefault) },
                       { "boost", CVarGetFloat(kObstacleCueBoostCVar, kObstacleCueBoostDefault) } };
     j["obstacleDirection"] = {
-        { "lookahead", CVarGetFloat(kObstacleDirLookaheadCVar, kObstacleDirLookaheadDefault) },
-        { "sideDist", CVarGetFloat(kObstacleSideDistCVar, kObstacleSideDistDefault) },
-        { "sidePanFloor", CVarGetFloat(kObstacleSidePanFloorCVar, kObstacleSidePanFloorDefault) },
-        { "vertDist", CVarGetFloat(kObstacleVertDistCVar, kObstacleVertDistDefault) },
-        { "vertLevelFloor", CVarGetFloat(kObstacleVertLevelFloorCVar, kObstacleVertLevelFloorDefault) },
-        { "boost", CVarGetFloat(kObstacleDirBoostCVar, kObstacleDirBoostDefault) }
+        { "lookahead", CVarGetFloat(kObstacleCueDirLookaheadCVar, kObstacleCueDirLookaheadDefault) },
+        { "sideDist", CVarGetFloat(kObstacleCueDirSideDistCVar, kObstacleCueDirSideDistDefault) },
+        { "sidePanFloor", CVarGetFloat(kObstacleCueDirSidePanFloorCVar, kObstacleCueDirSidePanFloorDefault) },
+        { "vertDist", CVarGetFloat(kObstacleCueDirVertDistCVar, kObstacleCueDirVertDistDefault) },
+        { "vertLevelFloor", CVarGetFloat(kObstacleCueDirVertLevelFloorCVar, kObstacleCueDirVertLevelFloorDefault) },
+        { "boost", CVarGetFloat(kObstacleCueDirBoostCVar, kObstacleCueDirBoostDefault) }
     };
     return j;
 }

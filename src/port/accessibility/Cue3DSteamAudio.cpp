@@ -149,12 +149,15 @@ float SanitizeParam(float value, float lo, float hi, float fallback) {
     return value < lo ? lo : (value > hi ? hi : value);
 }
 
-// Fixed pool of sources. Cues are few (today: a ring cue + an enemy cue); 16 gives
-// generous headroom for future cue types while keeping the per-block scan trivial.
-// A fixed array means slot addresses never move, so a Cue3DSource* handed to a
-// caller stays valid for the whole Cue3D lifetime and the lock-free publish below
-// is safe.
-constexpr int kMaxSources = 16;
+// Fixed pool of sources. Slots are claimed lazily, one per Cue voice on its first
+// sound (plus the test bench's two raw sources), and a claim that finds no free slot
+// latches that cue silent for the session (Cue::EnsureVoiceLoaded) — so the pool must
+// stay comfortably above the registered voice count, not just above the number of
+// cues sounding at once. Today's cues register 13 voices; 32 leaves room for the
+// next few families while the per-block scan over idle slots stays trivial. A fixed
+// array means slot addresses never move, so a Cue3DSource* handed to a caller stays
+// valid for the whole Cue3D lifetime and the lock-free publish below is safe.
+constexpr int kMaxSources = 32;
 
 } // namespace
 
@@ -996,8 +999,14 @@ extern "C" void Cue3D_SetLowPass(Cue3DSource* source, float cutoffHz) {
 }
 
 extern "C" void Cue3D_SetGain(Cue3DSource* source, float gain) {
+    // Sanitized like every other setter: the Cue layer's gain is a product of unchecked
+    // CVars (and now a per-voice level that can be exactly 0), and a non-finite value
+    // would poison the per-source low-pass state on the audio thread for as long as the
+    // source stays loaded. The ceiling only bounds a runaway boost; the output trim and
+    // clip in ProduceBlock still do the real limiting.
+    constexpr float kMaxGain = 16.0f;
     if (source != nullptr) {
-        source->gain.store(gain, std::memory_order_relaxed);
+        source->gain.store(SanitizeParam(gain, 0.0f, kMaxGain, 1.0f), std::memory_order_relaxed);
     }
 }
 

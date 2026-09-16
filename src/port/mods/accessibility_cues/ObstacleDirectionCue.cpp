@@ -17,35 +17,48 @@
 // closed" half of the obstacle family; the ahead cue (ObstacleAheadCue.cpp) is the
 // "how soon" half, and the two never claim the same box.
 //
-// The rule, asked of every box the shared scan yields (ObstacleScan.h), on rails:
-//   1. Is it the ahead cue's? A box the ship's position is inside, widened by the safety
-//      margin, on BOTH lateral axes is on course and belongs to the ahead cue alone.
-//      Skipped here — the ahead cue never says which edge is nearest, and this cue never
-//      says "the wall ahead is more to your left"; the split keeps each sound's meaning
-//      single. (A corner box, outside the margin on both axes, is nobody's in v1.)
-//   2. Which direction, and how close? Outside the margin on exactly one axis: that axis
-//      names the pair (X -> beside, Y -> above/below) and the sign of the center offset
-//      picks the member; the clearance beyond the box face on that axis is the signal.
-//      It must be under that pair's band distance (side / vertical dist) to count.
-//   3. Is it alongside me now, or about to be? The near face within the lookahead ahead
-//      of the ship, or the ship already between the near and far faces. Past the far
-//      face it is dropped. Unlike the ahead cue's "past the near face -> silent" rule,
-//      a wall alongside still matters — drifting into it is the whole risk.
+// The rule, asked of every box the shared scan yields (ObstacleScan.h), on rails, in the
+// same order as the design record:
+//   1. Is it alongside me now, or about to be? The near face within the lookahead ahead
+//      of the ship ("upcoming"), or the ship already between the near and far faces
+//      ("alongside"). Past the far face it is dropped. Unlike the ahead cue's "past the
+//      near face -> silent" rule, a wall alongside still matters — drifting into it is
+//      the whole risk.
+//   2. Is it the ahead cue's? An UPCOMING box the ship's position is inside, widened by
+//      the safety margin, on BOTH lateral axes is on course and the ahead cue is warning
+//      about it. Skipped here — the ahead cue never says which edge is nearest, and this
+//      cue never says "the wall ahead is more to your left"; the split keeps each sound's
+//      meaning single. An alongside box is never the ahead cue's (it drops a box at its
+//      near face), so it is classified below however close it is.
+//   3. Which direction, and how close? The ship must be outside the box's footprint on
+//      an axis (clearance > 0) and within the margin of it on the other: the outside
+//      axis names the pair (X -> beside, Y -> above/below) and the sign of the center
+//      offset picks the member; the clearance beyond the box face on that axis is the
+//      signal, and it must be under that pair's band distance (side / vertical dist).
+//      For an upcoming box that outside clearance is at least the margin (question 2
+//      took the rest); an alongside box can be closer, and pins at the band's near end.
+//      A box outside on both axes beyond the margin is a corner, nobody's in v1; one
+//      within the margin on both (only possible alongside, hugging a corner) goes to the
+//      nearer face. A box the ship is inside on both axes is the engine's, not ours.
 // Per direction the box with the smallest clearance wins. The side cue has two voices,
 // keyed left and right, so a corridor sounds both; above and below are separate cues.
 //
 // How each pair renders (the user's choices, docs/accessibility-obstacle-direction-cues.md):
-//   - Beside: CUE3D_MODE_PAN at the unity-gain radius, constant loudness; the pan
-//     magnitude is the signal, REVERSED from the naive mapping — a box at the band's
-//     edge is panned hard to its side, one at the margin sits near the center (floored,
-//     so left and right never merge). "The closer the sound to center, the closer it
-//     is to you", the same convention the aim cue uses for where things are.
+//   - Beside: CUE3D_MODE_PAN at the unity-gain radius; the pan magnitude is the signal,
+//     REVERSED from the naive mapping — a box at the band's edge is panned hard to its
+//     side, one at the margin (or closer) sits near the center (floored, so left and
+//     right never merge). "The closer the sound to center, the closer it is to you" is
+//     the user's by-ear preference. Loudness is not a signal here, but it is not quite
+//     constant either: the Cue layer's 1/sqrt(N) headroom trim (Cue::HeadroomTrim)
+//     lowers both voices ~3 dB while the second wall sounds. Accepted for now; opting
+//     the side cue out of the trim is the fix if the step reads as "closer" by ear.
 //   - Above / below: CUE3D_MODE_DIRECT, centered, the loudness (CueTarget::level under
-//     the slider) is the signal — full at the margin, the level floor at the band's edge.
-// Timbre: each is a two-sine chord a just perfect fourth apart (4:3), rooted an octave
-// apart in pitch order low/middle/high = below/beside/above — C3, G3, C4 — so the
-// three are told apart by register, and all sit under the aim click's 1500 Hz. The
-// shared 300 Hz buzz is a damped pulse, a different shape entirely.
+//     the slider) is the signal — full at the margin (or closer), the level floor at
+//     the band's edge.
+// Timbre: each is a two-sine chord a just perfect fourth apart (4:3), on equal-tempered
+// roots in pitch order low/middle/high = below/beside/above — C3, G3 (a fifth up), C4
+// (the octave) — so the three are told apart by register, and all sit under the aim
+// click's 1500 Hz. The shared 300 Hz buzz is a damped pulse, a different shape entirely.
 //
 // v1 scope (docs/accessibility-obstacle-direction-cues.md): rails only — in all-range
 // "left" is heading-relative and needs the offsets rotated into the aim frame, the ahead
@@ -78,7 +91,7 @@ const char* ObstacleDirection_Name(ObstacleDirection dir) {
     }
 }
 
-// Just-intonation roots: C3, G3, C4 (A4 = 440). See the file comment for the ordering.
+// Equal-tempered roots: C3, G3, C4 (A4 = 440). See the file comment for the ordering.
 static constexpr float kBelowRootHz = 130.8128f;
 static constexpr float kSideRootHz = 195.9977f;
 static constexpr float kAboveRootHz = 261.6256f;
@@ -188,7 +201,7 @@ static void ObstacleDirectionCue_OnPostUpdate(IEvent* event) {
 
     // Loudness normalization, pushed before the gate like the other synthesized cues:
     // the settings-menu previews must honor the boost even when gameplay is gated off.
-    const f32 boost = CVarGetFloat(kObstacleDirBoostCVar, kObstacleDirBoostDefault);
+    const f32 boost = CVarGetFloat(kObstacleCueDirBoostCVar, kObstacleCueDirBoostDefault);
     sSideCue->SetGainBoost(boost);
     sAboveCue->SetGainBoost(boost);
     sBelowCue->SetGainBoost(boost);
@@ -211,20 +224,24 @@ static void ObstacleDirectionCue_OnPostUpdate(IEvent* event) {
     }
 
     const f32 margin = ObstacleCommon_Margin();
-    const f32 lookahead = ObstacleDirectionCue_ReadPositive(kObstacleDirLookaheadCVar, kObstacleDirLookaheadDefault,
-                                                            kObstacleDirLookaheadMax);
+    const f32 lookahead = ObstacleDirectionCue_ReadPositive(
+        kObstacleCueDirLookaheadCVar, kObstacleCueDirLookaheadDefault, kObstacleCueDirLookaheadMax);
     // The bands must reach past the margin or the mapping divides by zero; a band the
     // margin has swallowed (someone dragged the margin above it) is widened to one unit.
-    f32 sideDist = ObstacleDirectionCue_ReadPositive(kObstacleSideDistCVar, kObstacleSideDistDefault, INFINITY);
+    f32 sideDist =
+        ObstacleDirectionCue_ReadPositive(kObstacleCueDirSideDistCVar, kObstacleCueDirSideDistDefault, INFINITY);
     if (sideDist <= margin) {
         sideDist = margin + 1.0f;
     }
-    f32 vertDist = ObstacleDirectionCue_ReadPositive(kObstacleVertDistCVar, kObstacleVertDistDefault, INFINITY);
+    f32 vertDist =
+        ObstacleDirectionCue_ReadPositive(kObstacleCueDirVertDistCVar, kObstacleCueDirVertDistDefault, INFINITY);
     if (vertDist <= margin) {
         vertDist = margin + 1.0f;
     }
-    const f32 panFloor = ObstacleDirectionCue_ReadFloor(kObstacleSidePanFloorCVar, kObstacleSidePanFloorDefault);
-    const f32 levelFloor = ObstacleDirectionCue_ReadFloor(kObstacleVertLevelFloorCVar, kObstacleVertLevelFloorDefault);
+    const f32 panFloor =
+        ObstacleDirectionCue_ReadFloor(kObstacleCueDirSidePanFloorCVar, kObstacleCueDirSidePanFloorDefault);
+    const f32 levelFloor =
+        ObstacleDirectionCue_ReadFloor(kObstacleCueDirVertLevelFloorCVar, kObstacleCueDirVertLevelFloorDefault);
     dbg.margin = margin;
     dbg.lookahead = lookahead;
     dbg.sideDist = sideDist;
@@ -237,8 +254,8 @@ static void ObstacleDirectionCue_OnPostUpdate(IEvent* event) {
     ObstacleScanStats stats;
     DirectionWinner winners[OBSTACLE_DIR_COUNT];
     ObstacleScan_ForEachBox(player, &stats, [&](const ObstacleBox& box) {
-        // Question 3 first, since it is the cheapest to fail: the Z window. gapZ is the
-        // near face (positive = still ahead); the far face is 2 * half.z further back.
+        // Question 1: the Z window. gapZ is the near face (positive = still ahead); the
+        // far face is 2 * half.z further back.
         const f32 farGap = box.gapZ + 2.0f * box.half.z;
         const bool upcoming = (box.gapZ > 0.0f) && (box.gapZ < lookahead);
         const bool alongside = !(box.gapZ > 0.0f) && (farGap > 0.0f);
@@ -246,30 +263,28 @@ static void ObstacleDirectionCue_OnPostUpdate(IEvent* event) {
             return;
         }
         dbg.inWindow++;
-        // Question 1: the ahead cue's box (inside the margin on both lateral axes).
-        const bool insideX = box.clearX < margin;
-        const bool insideY = box.clearY < margin;
-        if (insideX && insideY) {
+        // Question 2: the ahead cue's box — on course (within the margin on both lateral
+        // axes) AND still upcoming. The ahead cue drops a box at its near face, so an
+        // alongside box is ours however close (a NaN clearance fails every test below).
+        const bool withinX = box.clearX < margin;
+        const bool withinY = box.clearY < margin;
+        if (withinX && withinY && upcoming) {
             dbg.aheadClaimed++;
             return;
         }
-        // Question 2: outside on exactly one axis; the other axis must overlap.
+        // Question 3: outside the footprint on an axis, within the margin on the other.
+        const bool sideOk = (box.clearX > 0.0f) && withinY && (box.clearX < sideDist);
+        const bool vertOk = (box.clearY > 0.0f) && withinX && (box.clearY < vertDist);
         ObstacleDirection dir;
         f32 clear;
-        if (insideY && !insideX) {
-            if (!(box.clearX < sideDist)) {
-                return;
-            }
+        if (sideOk && (!vertOk || (box.clearX <= box.clearY))) {
             dir = (box.dx < 0.0f) ? OBSTACLE_DIR_LEFT : OBSTACLE_DIR_RIGHT;
             clear = box.clearX;
-        } else if (insideX && !insideY) {
-            if (!(box.clearY < vertDist)) {
-                return;
-            }
+        } else if (vertOk) {
             dir = (box.dy > 0.0f) ? OBSTACLE_DIR_ABOVE : OBSTACLE_DIR_BELOW;
             clear = box.clearY;
         } else {
-            return; // a corner box: outside the margin on both axes — nobody's in v1
+            return; // a corner beyond the margin, or inside the footprint on both axes
         }
         DirectionWinner& w = winners[dir];
         dbg.dir[dir].candidates++;
@@ -287,8 +302,11 @@ static void ObstacleDirectionCue_OnPostUpdate(IEvent* event) {
 
     f32 radius = Cue3D_GetUnityGainDistance();
     if (!(radius > 0.0f)) {
-        radius = 100.0f; // backend not up yet; PAN/DIRECT gain does not depend on it
+        radius = 100.0f; // only the stub backend (nothing plays) reports no radius
     }
+    // Every voice below sits EXACTLY on the unity-gain radius: PAN mode still applies the
+    // backend's distance attenuation (only DIRECT drops it), so moving a voice off the
+    // radius would turn distance into an unintended loudness signal.
 
     // Beside: one keyed voice per side. The backend pans by the sine of the azimuth
     // (dx / horizontal distance), so a source at (m * r, 0, sqrt(1 - m^2) * r) yields a
@@ -337,12 +355,12 @@ static void ObstacleDirectionCue_OnPostUpdate(IEvent* event) {
 
 void ObstacleDirectionCue_Register() {
     // The family toggle and the margin are registered by ObstacleCommon_RegisterCVars.
-    CVarRegisterFloat(kObstacleDirLookaheadCVar, kObstacleDirLookaheadDefault);
-    CVarRegisterFloat(kObstacleSideDistCVar, kObstacleSideDistDefault);
-    CVarRegisterFloat(kObstacleSidePanFloorCVar, kObstacleSidePanFloorDefault);
-    CVarRegisterFloat(kObstacleVertDistCVar, kObstacleVertDistDefault);
-    CVarRegisterFloat(kObstacleVertLevelFloorCVar, kObstacleVertLevelFloorDefault);
-    CVarRegisterFloat(kObstacleDirBoostCVar, kObstacleDirBoostDefault);
+    CVarRegisterFloat(kObstacleCueDirLookaheadCVar, kObstacleCueDirLookaheadDefault);
+    CVarRegisterFloat(kObstacleCueDirSideDistCVar, kObstacleCueDirSideDistDefault);
+    CVarRegisterFloat(kObstacleCueDirSidePanFloorCVar, kObstacleCueDirSidePanFloorDefault);
+    CVarRegisterFloat(kObstacleCueDirVertDistCVar, kObstacleCueDirVertDistDefault);
+    CVarRegisterFloat(kObstacleCueDirVertLevelFloorCVar, kObstacleCueDirVertLevelFloorDefault);
+    CVarRegisterFloat(kObstacleCueDirBoostCVar, kObstacleCueDirBoostDefault);
 
     // Pinned RESAMPLE pitch style on all three, like the buzz: none of them pitches, and
     // the spectral shifter would only add latency and CPU to a sustained sine pair.

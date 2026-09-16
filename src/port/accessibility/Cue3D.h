@@ -112,7 +112,8 @@ void Cue3D_SetPosition(Cue3DSource* source, float x, float y, float z);
 // The Cue layer (Cue.h) drives this every tick with game master x cue master x
 // per-cue volume; it is also the lever a future TTS-ducking pass would use. BGM
 // ducking (SFX_FLAG_19) still does not reach this second audio device — see
-// docs/accessibility-hrtf-cues.md "Known limitations".
+// docs/accessibility-hrtf-cues.md "Known limitations". Non-finite gain falls back to
+// 1.0 and the value is clamped to a generous ceiling, like the other setters.
 void Cue3D_SetGain(Cue3DSource* source, float gain);
 
 // Set a pitch multiplier on the source (1.0 = native pitch / no shift,

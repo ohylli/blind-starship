@@ -16,8 +16,9 @@ half of the obstacle family; the ahead cue is the "how soon" half. The two never
 the same box, so each sound keeps a single meaning.
 
 - **Obstacle beside** (`ObstacleSide`) — one chord, two voices keyed left and right, so a
-  corridor sounds both walls at once. Rendered in plain stereo pan (`CUE3D_MODE_PAN`) at
-  constant loudness; **the pan magnitude is the signal**.
+  corridor sounds both walls at once. Rendered in plain stereo pan (`CUE3D_MODE_PAN`);
+  **the pan magnitude is the signal**, loudness is not (see the trim note under "The
+  mappings").
 - **Obstacle above** (`ObstacleAbove`) and **Obstacle below** (`ObstacleBelow`) —
   separate chords, centered (`CUE3D_MODE_DIRECT`); **the loudness is the signal**.
 
@@ -40,34 +41,49 @@ warn-worthy obstacle) is asked three questions, on rails, in
    must already be between the near and far faces. Past the far face the box is dropped.
    This deliberately differs from the ahead cue's "past the near face, the engine owns
    it" rule: a wall alongside still matters, since drifting into it is the whole risk.
-2. **Is it the ahead cue's?** A box the ship's position is inside, widened by the shared
-   **safety margin**, on both lateral axes is on course and belongs to the ahead cue
-   alone. These cues skip it. The ahead cue never says which edge is nearest, and these
-   never say "the wall ahead is more to your left".
-3. **Which direction, and how close?** The box must be outside the margin on exactly one
-   axis and inside it on the other. The outside axis names the pair (X for beside, Y for
-   above/below); the sign of the box center's offset from the ship picks the member; the
-   clearance beyond the box face on that axis is the signal, and it must be under that
-   pair's band distance (**side distance**, default 800; **vertical distance**, default
-   600) to count. A corner box, outside the margin on both axes, is nobody's in v1.
+2. **Is it the ahead cue's?** An *upcoming* box the ship's position is inside, widened by
+   the shared **safety margin**, on both lateral axes is on course and the ahead cue is
+   warning about it. These cues skip it. The ahead cue never says which edge is nearest,
+   and these never say "the wall ahead is more to your left". A box already alongside is
+   never the ahead cue's — it drops a box the moment the ship reaches its near face — so
+   an alongside box is classified next however close it is. (v1 as first committed
+   skipped every on-course box, upcoming or not, which left the nearest wall of a pair
+   the ship was between silent in every cue; fixed the same day.)
+3. **Which direction, and how close?** The ship must be outside the box's footprint on an
+   axis and within the margin of it on the other. The outside axis names the pair (X for
+   beside, Y for above/below); the sign of the box center's offset from the ship picks
+   the member; the clearance beyond the box face on that axis is the signal, and it must
+   be under that pair's band distance (**side distance**, default 800; **vertical
+   distance**, default 600) to count. For an upcoming box that clearance is at least the
+   margin (anything closer was question 2's); an alongside box can be closer and pins at
+   the band's near end. A box outside on both axes beyond the margin is a corner and
+   nobody's in v1; one within the margin on both (only possible alongside, hugging a
+   corner) goes to the nearer face; one the ship is inside on both axes is the engine's.
 
 Per direction the box with the smallest clearance wins. Ties and multiple candidates are
 not blended: one box per direction per tick.
 
 ## The mappings
 
-Both bands run from the margin (clearance equal to the margin: as close as a box can be
-without being the ahead cue's) to the band distance.
+Both bands run from the margin (clearance equal to the margin: as close as an upcoming
+box can be without being the ahead cue's) to the band distance. An alongside box closer
+than the margin pins at the band's near end.
 
 - **Beside: pan, reversed.** A box at the band's edge is panned hard to its side; a box at
   the margin sits near the center. "The closer the sound is to center, the closer the
-  obstacle is to you" was chosen by ear over the naive mapping and matches how the aim
-  cue places things. A **pan floor** (default 0.2 of full pan) keeps the closest possible
-  wall off dead center, where left and right would be indistinguishable at exactly the
-  moment they matter most. Implementation note: the backend pans by the sine of the
-  source's azimuth, so the voice is placed at `(m·r, 0, sqrt(1 − m²)·r)` for pan
-  magnitude `m` at the unity-gain radius `r`, and the distance never changes across the
-  band.
+  obstacle is to you" was chosen by ear over the naive mapping; it stands on its own as a
+  preference (the aim cue's pan encodes the player's own offset, not a target's distance,
+  so there is no convention being inherited). A **pan floor** (default 0.2 of full pan)
+  keeps the closest possible wall off dead center, where left and right would be
+  indistinguishable at exactly the moment they matter most. Implementation note: the
+  backend pans by the sine of the source's azimuth, so the voice is placed at
+  `(m·r, 0, sqrt(1 − m²)·r)` for pan magnitude `m` at the unity-gain radius `r`, and the
+  distance never changes across the band. Loudness is not a signal here, but it is not
+  perfectly constant either: the Cue layer's multi-voice headroom trim
+  (`Cue::HeadroomTrim`, 1/sqrt(N)) lowers both side voices by about 3 dB while the
+  second wall sounds and lifts the survivor back when one leaves the band. Accepted for
+  now since the step is shared by both voices and pan carries the meaning; if it reads
+  as "closer" by ear, opting the side cue out of the trim is the fix.
 - **Above / below: loudness.** Full at the margin, the **level floor** (default 0.15 of
   the volume slider) at the band's edge, so the onset is audible rather than a fade-in the
   player cannot place. This uses the Cue layer's per-voice `CueTarget::level`, added for
@@ -113,11 +129,14 @@ direction(s) that id renders.
 
 - **Minimal training silences these cues in Training by design**, like the ahead cue.
   Tune on Corneria from the `obstacle-scout` debug checkpoint (`tools/checkpoints.json`).
-  Verified live 2026-09-15, stepping from the checkpoint with every knob at its default:
-  the checkpoint sits *inside* the Z span of a rock-wall pair (`OBJ_SCENERY_CO_ROCKWALL`,
-  hitbox half-extents 169/433/898) — the left wall is on course (clearance 123 under the
-  150 margin) and belongs to the ahead cue, the right wall is alongside 238 units to the
-  right and is the side cue's winner at pan 0.31. Bump 4 (`OBJ_SCENERY_CO_BUMP_4`, the
+  Verified live 2026-09-16 (paused warp, one step, every knob at its default): the
+  checkpoint sits *inside* the Z span of a rock-wall pair (`OBJ_SCENERY_CO_ROCKWALL`,
+  hitbox half-extents 169/433/898) with a third wall coming up. The alongside left wall,
+  47 units to the left (under the 150 margin), is the side cue's left winner pinned at
+  the pan floor 0.2 — this is the box the first-committed v1 left silent in every cue
+  (the question-2 gap above). The alongside right wall, 238 units to the right, is the
+  right winner at pan 0.31. The upcoming left wall (clearance 123, near face 335 ahead)
+  is the ahead cue's, and the direction cues skip exactly that one (`aheadClaimed` 1). Bump 4 (`OBJ_SCENERY_CO_BUMP_4`, the
   heightfield poly box) is the below winner at clearance 176, level 0.95 — the box-only
   over-report described above. About 130 frames on, `OBJ_SCENERY_CO_BUILDING_1` becomes
   the above winner at clearance 491 (level 0.36) closing to 317 (0.68): flying under an

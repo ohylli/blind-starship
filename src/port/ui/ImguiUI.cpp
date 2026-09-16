@@ -1260,8 +1260,8 @@ void DrawDebugMenu() {
                 // The directional obstacle cues' knobs (ObstacleDirectionCue.h,
                 // docs/accessibility-cues-tuning.md). Live CVars like the buzz's; the
                 // safety margin they share with the buzz is the slider above.
-                UIWidgets::CVarSliderFloat("Lookahead", kObstacleDirLookaheadCVar, 200.0f, kObstacleDirLookaheadMax,
-                                           kObstacleDirLookaheadDefault, {
+                UIWidgets::CVarSliderFloat("Lookahead", kObstacleCueDirLookaheadCVar, 200.0f,
+                                           kObstacleCueDirLookaheadMax, kObstacleCueDirLookaheadDefault, {
                     .tooltip = "How far ahead (world units) an obstacle beside, above or below your course "
                                "starts sounding. About 1200 is one second of flight. Obstacles already "
                                "alongside you sound regardless.",
@@ -1269,8 +1269,8 @@ void DrawDebugMenu() {
                     .format = "%.0f",
                     .step = 100.0f,
                 });
-                UIWidgets::CVarSliderFloat("Side distance", kObstacleSideDistCVar, 200.0f, 2500.0f,
-                                           kObstacleSideDistDefault, {
+                UIWidgets::CVarSliderFloat("Side distance", kObstacleCueDirSideDistCVar, 200.0f, 2500.0f,
+                                           kObstacleCueDirSideDistDefault, {
                     .tooltip = "How far to the side (world units, beyond the safety margin) an obstacle "
                                "still sounds. At this distance the chord is panned fully to its side; at "
                                "the margin it sits near the center.",
@@ -1278,32 +1278,32 @@ void DrawDebugMenu() {
                     .format = "%.0f",
                     .step = 50.0f,
                 });
-                UIWidgets::CVarSliderFloat("Side pan floor", kObstacleSidePanFloorCVar, 0.0f, 0.8f,
-                                           kObstacleSidePanFloorDefault, {
+                UIWidgets::CVarSliderFloat("Side pan floor", kObstacleCueDirSidePanFloorCVar, 0.0f, 0.8f,
+                                           kObstacleCueDirSidePanFloorDefault, {
                     .tooltip = "How far off center the beside chord stays for the closest possible "
                                "obstacle, so left and right never merge. 0 = dead center, 1 = hard.",
                     .flags = ImGuiSliderFlags_AlwaysClamp,
                     .format = "%.2f",
                     .step = 0.05f,
                 });
-                UIWidgets::CVarSliderFloat("Vertical distance", kObstacleVertDistCVar, 200.0f, 2500.0f,
-                                           kObstacleVertDistDefault, {
+                UIWidgets::CVarSliderFloat("Vertical distance", kObstacleCueDirVertDistCVar, 200.0f, 2500.0f,
+                                           kObstacleCueDirVertDistDefault, {
                     .tooltip = "How far above or below (world units, beyond the safety margin) an obstacle "
                                "still sounds. Loudness runs from full at the margin to the level floor here.",
                     .flags = ImGuiSliderFlags_AlwaysClamp,
                     .format = "%.0f",
                     .step = 50.0f,
                 });
-                UIWidgets::CVarSliderFloat("Vertical level floor", kObstacleVertLevelFloorCVar, 0.0f, 0.8f,
-                                           kObstacleVertLevelFloorDefault, {
+                UIWidgets::CVarSliderFloat("Vertical level floor", kObstacleCueDirVertLevelFloorCVar, 0.0f, 0.8f,
+                                           kObstacleCueDirVertLevelFloorDefault, {
                     .tooltip = "Loudness (fraction of the volume slider) of the above/below chords at the "
                                "vertical distance, so their onset is audible rather than a fade from silence.",
                     .flags = ImGuiSliderFlags_AlwaysClamp,
                     .format = "%.2f",
                     .step = 0.05f,
                 });
-                UIWidgets::CVarSliderFloat("Chord loudness", kObstacleDirBoostCVar, 0.25f, 4.0f,
-                                           kObstacleDirBoostDefault, {
+                UIWidgets::CVarSliderFloat("Chord loudness", kObstacleCueDirBoostCVar, 0.25f, 4.0f,
+                                           kObstacleCueDirBoostDefault, {
                     .tooltip = "Loudness boost shared by the three direction chords relative to the other "
                                "cues, applied under the volume sliders.",
                     .flags = ImGuiSliderFlags_AlwaysClamp,
