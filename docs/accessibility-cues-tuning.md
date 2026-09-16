@@ -138,9 +138,9 @@ Three sustained two-sine chords (a just perfect fourth each, rooted C3 for below
 Knobs, all live CVars with sliders under **F1 → Developer → Blind Starship → Obstacle direction** (the safety margin is shared with the buzz and lives under Obstacle warning):
 
 - **Lookahead** — `gAccessibilityObstacleCueDirLookahead` (default 1200): how far ahead a box's near face may be to count. About one second of cruise flight; deliberately far shorter than the buzz's warning distance so corridor walls do not drone from 4000 units out. A box already alongside counts regardless.
-- **Side distance** — `gAccessibilityObstacleCueDirSideDist` (default 800): the beside band's outer edge, as clearance beyond the box face. At this distance the chord is panned fully to its side. Clamped to exceed the margin.
+- **Side distance** — `gAccessibilityObstacleCueDirSideDist` (default 800): the beside band's outer edge, as clearance beyond the box face. At this distance the chord is panned fully to its side. Clamped to exceed the margin and capped at the slider's ceiling.
 - **Side pan floor** — `gAccessibilityObstacleCueDirSidePanFloor` (default 0.2): pan magnitude at the margin, so the closest wall stays off dead center and left/right never merge.
-- **Vertical distance** — `gAccessibilityObstacleCueDirVertDist` (default 600): the above/below band's outer edge. Narrower than the side band because rails corridors are shorter than they are wide.
+- **Vertical distance** — `gAccessibilityObstacleCueDirVertDist` (default 600): the above/below band's outer edge. Narrower than the side band because rails corridors are shorter than they are wide. Same clamps as the side distance.
 - **Vertical level floor** — `gAccessibilityObstacleCueDirVertLevelFloor` (default 0.15): loudness, as a fraction of the volume slider, at the vertical distance, so the onset is audible rather than a fade from silence.
 - **Chord loudness** — `gAccessibilityObstacleCueDirBoost` (default 1.0): one gain boost shared by the three chords (`Cue::SetGainBoost`), applied under the volume sliders. Sustained sines read loud at equal sample level, so it starts at unity.
 

@@ -1,4 +1,5 @@
 #include "ObstacleCommon.h"
+#include "CueCommon.h"
 
 #include <libultraship/libultraship.h>
 
@@ -12,9 +13,5 @@ bool ObstacleCommon_IsEnabled() {
 }
 
 float ObstacleCommon_Margin() {
-    float margin = CVarGetFloat(kObstacleCueMarginCVar, kObstacleCueMarginDefault);
-    if (!(margin >= 0.0f)) {
-        margin = kObstacleCueMarginDefault; // negative or NaN
-    }
-    return margin;
+    return CueCommon_ReadFloat(kObstacleCueMarginCVar, kObstacleCueMarginDefault, 0.0f);
 }

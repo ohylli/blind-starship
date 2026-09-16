@@ -140,32 +140,12 @@ static f32 ObstacleDirectionCue_BandT(f32 clear, f32 margin, f32 dist) {
     return (t < 1.0f) ? t : 1.0f;
 }
 
-// A sanitized positive float knob: non-positive or NaN falls back to the default, and
-// an optional ceiling clamps what a hand-edited config or the debug server stored.
-static f32 ObstacleDirectionCue_ReadPositive(const char* cvar, f32 def, f32 max) {
-    f32 v = CVarGetFloat(cvar, def);
-    if (!(v > 0.0f)) {
-        v = def;
-    }
-    if (v > max) {
-        v = max;
-    }
-    return v;
-}
-
-// A sanitized [0, 1) fraction knob (the pan and level floors): NaN or negative -> the
-// default, and capped just under 1 so the band always has somewhere to go.
-static f32 ObstacleDirectionCue_ReadFloor(const char* cvar, f32 def) {
-    f32 v = CVarGetFloat(cvar, def);
-    if (!(v >= 0.0f)) {
-        v = def;
-    }
-    constexpr f32 kFloorMax = 0.95f;
-    return (v < kFloorMax) ? v : kFloorMax;
-}
+// The pan and level floors are [0, 1) fraction knobs, capped just under 1 so the band
+// always has somewhere to go.
+static constexpr f32 kFloorMax = 0.95f;
 
 // Per-direction winner bookkeeping for one tick.
-struct DirectionWinner {
+struct ObstacleDirectionWinner {
     bool found = false;
     f32 clear = INFINITY;
     bool upcoming = false;
@@ -178,7 +158,8 @@ static void ObstacleDirectionCue_StopAll() {
     sBelowCue->Stop();
 }
 
-static void ObstacleDirectionCue_FillTargetDebug(ObstacleDirectionTargetDebug& d, const DirectionWinner& w) {
+static void ObstacleDirectionCue_FillTargetDebug(ObstacleDirectionTargetDebug& d,
+                                                 const ObstacleDirectionWinner& w) {
     d.active = true;
     d.array = (int32_t) w.box.array;
     d.slot = w.box.slot;
@@ -224,24 +205,24 @@ static void ObstacleDirectionCue_OnPostUpdate(IEvent* event) {
     }
 
     const f32 margin = ObstacleCommon_Margin();
-    const f32 lookahead = ObstacleDirectionCue_ReadPositive(
-        kObstacleCueDirLookaheadCVar, kObstacleCueDirLookaheadDefault, kObstacleCueDirLookaheadMax);
+    const f32 lookahead = CueCommon_ReadPositiveFloat(kObstacleCueDirLookaheadCVar, kObstacleCueDirLookaheadDefault,
+                                                      kObstacleCueDirLookaheadMax);
     // The bands must reach past the margin or the mapping divides by zero; a band the
     // margin has swallowed (someone dragged the margin above it) is widened to one unit.
-    f32 sideDist =
-        ObstacleDirectionCue_ReadPositive(kObstacleCueDirSideDistCVar, kObstacleCueDirSideDistDefault, INFINITY);
+    f32 sideDist = CueCommon_ReadPositiveFloat(kObstacleCueDirSideDistCVar, kObstacleCueDirSideDistDefault,
+                                               kObstacleCueDirSideDistMax);
     if (sideDist <= margin) {
         sideDist = margin + 1.0f;
     }
-    f32 vertDist =
-        ObstacleDirectionCue_ReadPositive(kObstacleCueDirVertDistCVar, kObstacleCueDirVertDistDefault, INFINITY);
+    f32 vertDist = CueCommon_ReadPositiveFloat(kObstacleCueDirVertDistCVar, kObstacleCueDirVertDistDefault,
+                                               kObstacleCueDirVertDistMax);
     if (vertDist <= margin) {
         vertDist = margin + 1.0f;
     }
     const f32 panFloor =
-        ObstacleDirectionCue_ReadFloor(kObstacleCueDirSidePanFloorCVar, kObstacleCueDirSidePanFloorDefault);
+        CueCommon_ReadFloat(kObstacleCueDirSidePanFloorCVar, kObstacleCueDirSidePanFloorDefault, 0.0f, kFloorMax);
     const f32 levelFloor =
-        ObstacleDirectionCue_ReadFloor(kObstacleCueDirVertLevelFloorCVar, kObstacleCueDirVertLevelFloorDefault);
+        CueCommon_ReadFloat(kObstacleCueDirVertLevelFloorCVar, kObstacleCueDirVertLevelFloorDefault, 0.0f, kFloorMax);
     dbg.margin = margin;
     dbg.lookahead = lookahead;
     dbg.sideDist = sideDist;
@@ -252,7 +233,7 @@ static void ObstacleDirectionCue_OnPostUpdate(IEvent* event) {
     Player* player = &gPlayer[0];
 
     ObstacleScanStats stats;
-    DirectionWinner winners[OBSTACLE_DIR_COUNT];
+    ObstacleDirectionWinner winners[OBSTACLE_DIR_COUNT];
     ObstacleScan_ForEachBox(player, &stats, [&](const ObstacleBox& box) {
         // Question 1: the Z window. gapZ is the near face (positive = still ahead); the
         // far face is 2 * half.z further back.
@@ -286,7 +267,7 @@ static void ObstacleDirectionCue_OnPostUpdate(IEvent* event) {
         } else {
             return; // a corner beyond the margin, or inside the footprint on both axes
         }
-        DirectionWinner& w = winners[dir];
+        ObstacleDirectionWinner& w = winners[dir];
         dbg.dir[dir].candidates++;
         if (clear < w.clear) {
             w.found = true;
@@ -300,21 +281,14 @@ static void ObstacleDirectionCue_OnPostUpdate(IEvent* event) {
     dbg.scanObstacles = stats.obstacles;
     dbg.scanBoxes = stats.boxes;
 
-    f32 radius = Cue3D_GetUnityGainDistance();
-    if (!(radius > 0.0f)) {
-        radius = 100.0f; // only the stub backend (nothing plays) reports no radius
-    }
-    // Every voice below sits EXACTLY on the unity-gain radius: PAN mode still applies the
-    // backend's distance attenuation (only DIRECT drops it), so moving a voice off the
-    // radius would turn distance into an unintended loudness signal.
+    // Every voice below sits on the unity-gain arc (CueCommon_PlaceOnPanArc), so the
+    // backend's distance attenuation never becomes a second loudness signal.
 
-    // Beside: one keyed voice per side. The backend pans by the sine of the azimuth
-    // (dx / horizontal distance), so a source at (m * r, 0, sqrt(1 - m^2) * r) yields a
-    // pan magnitude of exactly m at distance r — no attenuation change across the band.
+    // Beside: one keyed voice per side, placed at a pan magnitude of exactly `pan`.
     // Refresh-or-stop: a side not targeted this tick is reaped by CueRegistry_Tick.
     static const ObstacleDirection kSides[2] = { OBSTACLE_DIR_LEFT, OBSTACLE_DIR_RIGHT };
     for (ObstacleDirection dir : kSides) {
-        const DirectionWinner& w = winners[dir];
+        const ObstacleDirectionWinner& w = winners[dir];
         if (!w.found) {
             continue;
         }
@@ -322,9 +296,7 @@ static void ObstacleDirectionCue_OnPostUpdate(IEvent* event) {
         const f32 pan = panFloor + (1.0f - panFloor) * t; // reversed: far = hard, near = floor
         const f32 sign = (dir == OBSTACLE_DIR_LEFT) ? -1.0f : 1.0f;
         CueTarget target;
-        target.x = sign * pan * radius;
-        target.y = 0.0f;
-        target.z = sqrtf(1.0f - pan * pan) * radius;
+        CueCommon_PlaceOnPanArc(target, sign * pan);
         sSideCue->TargetVoice((uint64_t) dir, target); // the direction is the sticky key
         ObstacleDirectionCue_FillTargetDebug(dbg.dir[dir], w);
         dbg.dir[dir].pan = pan;
@@ -334,7 +306,7 @@ static void ObstacleDirectionCue_OnPostUpdate(IEvent* event) {
     static const ObstacleDirection kVerticals[2] = { OBSTACLE_DIR_ABOVE, OBSTACLE_DIR_BELOW };
     for (ObstacleDirection dir : kVerticals) {
         Cue* cue = (dir == OBSTACLE_DIR_ABOVE) ? sAboveCue : sBelowCue;
-        const DirectionWinner& w = winners[dir];
+        const ObstacleDirectionWinner& w = winners[dir];
         if (!w.found) {
             cue->Stop();
             continue;
@@ -342,9 +314,7 @@ static void ObstacleDirectionCue_OnPostUpdate(IEvent* event) {
         const f32 t = ObstacleDirectionCue_BandT(w.clear, margin, vertDist);
         const f32 level = 1.0f - (1.0f - levelFloor) * t; // full at the margin, floor at the edge
         CueTarget target;
-        target.x = 0.0f;
-        target.y = 0.0f;
-        target.z = radius;
+        CueCommon_PlaceOnPanArc(target, 0.0f);
         target.level = level;
         cue->SetTarget(target);
         cue->Start();

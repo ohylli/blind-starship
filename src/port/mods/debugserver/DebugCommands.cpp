@@ -1377,9 +1377,10 @@ static nlohmann::json CueObstacleDirectionTargetJson(const ObstacleDirectionTarg
 }
 
 // The directional cues share one listener and one debug mirror (ObstacleDirectionCue.h);
-// each of the three cues reports the common part plus only the direction(s) it renders,
-// so a dump reads per cue without repeating the winners under every id.
-static nlohmann::json CueObstacleDirectionPolicyJson(const ObstacleDirectionCueDebug& d, const char* cueId) {
+// each of the three cues reports this common part plus only the direction(s) it renders
+// (the two functions below), so a dump reads per cue without repeating the winners under
+// every id.
+static nlohmann::json CueObstacleDirectionCommonJson(const ObstacleDirectionCueDebug& d) {
     nlohmann::json j;
     j["frame"] = d.frame;
     j["fresh"] = CuePolicyFresh(d.frame);
@@ -1397,24 +1398,32 @@ static nlohmann::json CueObstacleDirectionPolicyJson(const ObstacleDirectionCueD
         j["lookahead"] = d.lookahead;
         j["margin"] = d.margin;
     }
-    std::string id = cueId;
-    if (id == kObstacleSideCueId) {
-        if (d.scanned) {
-            j["sideDist"] = d.sideDist;
-            j["panFloor"] = d.panFloor;
-        }
-        j["active"] = d.dir[OBSTACLE_DIR_LEFT].active || d.dir[OBSTACLE_DIR_RIGHT].active;
-        j["left"] = CueObstacleDirectionTargetJson(d.dir[OBSTACLE_DIR_LEFT], true);
-        j["right"] = CueObstacleDirectionTargetJson(d.dir[OBSTACLE_DIR_RIGHT], true);
-    } else {
-        ObstacleDirection dir = (id == kObstacleAboveCueId) ? OBSTACLE_DIR_ABOVE : OBSTACLE_DIR_BELOW;
-        if (d.scanned) {
-            j["vertDist"] = d.vertDist;
-            j["levelFloor"] = d.levelFloor;
-        }
-        j["active"] = d.dir[dir].active;
-        j[ObstacleDirection_Name(dir)] = CueObstacleDirectionTargetJson(d.dir[dir], false);
+    return j;
+}
+
+// The side cue: both of its voices, left and right.
+static nlohmann::json CueObstacleSidePolicyJson(const ObstacleDirectionCueDebug& d) {
+    nlohmann::json j = CueObstacleDirectionCommonJson(d);
+    if (d.scanned) {
+        j["sideDist"] = d.sideDist;
+        j["panFloor"] = d.panFloor;
     }
+    j["active"] = d.dir[OBSTACLE_DIR_LEFT].active || d.dir[OBSTACLE_DIR_RIGHT].active;
+    j["left"] = CueObstacleDirectionTargetJson(d.dir[OBSTACLE_DIR_LEFT], true);
+    j["right"] = CueObstacleDirectionTargetJson(d.dir[OBSTACLE_DIR_RIGHT], true);
+    return j;
+}
+
+// The above or the below cue: `dir` is which, and the caller passes it from the id it
+// already matched.
+static nlohmann::json CueObstacleVerticalPolicyJson(const ObstacleDirectionCueDebug& d, ObstacleDirection dir) {
+    nlohmann::json j = CueObstacleDirectionCommonJson(d);
+    if (d.scanned) {
+        j["vertDist"] = d.vertDist;
+        j["levelFloor"] = d.levelFloor;
+    }
+    j["active"] = d.dir[dir].active;
+    j[ObstacleDirection_Name(dir)] = CueObstacleDirectionTargetJson(d.dir[dir], false);
     return j;
 }
 
@@ -1547,8 +1556,12 @@ static int32_t CuesHandler(std::shared_ptr<Ship::Console> console, const std::ve
             c["policy"] = CueAimPolicyJson(AimCue_DebugState());
         } else if (id == kObstacleAheadCueId) {
             c["policy"] = CueObstacleAheadPolicyJson(ObstacleAheadCue_DebugState());
-        } else if (id == kObstacleSideCueId || id == kObstacleAboveCueId || id == kObstacleBelowCueId) {
-            c["policy"] = CueObstacleDirectionPolicyJson(ObstacleDirectionCue_DebugState(), cue->Id());
+        } else if (id == kObstacleSideCueId) {
+            c["policy"] = CueObstacleSidePolicyJson(ObstacleDirectionCue_DebugState());
+        } else if (id == kObstacleAboveCueId) {
+            c["policy"] = CueObstacleVerticalPolicyJson(ObstacleDirectionCue_DebugState(), OBSTACLE_DIR_ABOVE);
+        } else if (id == kObstacleBelowCueId) {
+            c["policy"] = CueObstacleVerticalPolicyJson(ObstacleDirectionCue_DebugState(), OBSTACLE_DIR_BELOW);
         }
         cues.push_back(std::move(c));
     }

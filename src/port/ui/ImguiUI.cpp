@@ -1269,8 +1269,8 @@ void DrawDebugMenu() {
                     .format = "%.0f",
                     .step = 100.0f,
                 });
-                UIWidgets::CVarSliderFloat("Side distance", kObstacleCueDirSideDistCVar, 200.0f, 2500.0f,
-                                           kObstacleCueDirSideDistDefault, {
+                UIWidgets::CVarSliderFloat("Side distance", kObstacleCueDirSideDistCVar, 200.0f,
+                                           kObstacleCueDirSideDistMax, kObstacleCueDirSideDistDefault, {
                     .tooltip = "How far to the side (world units, beyond the safety margin) an obstacle "
                                "still sounds. At this distance the chord is panned fully to its side; at "
                                "the margin it sits near the center.",
@@ -1286,8 +1286,8 @@ void DrawDebugMenu() {
                     .format = "%.2f",
                     .step = 0.05f,
                 });
-                UIWidgets::CVarSliderFloat("Vertical distance", kObstacleCueDirVertDistCVar, 200.0f, 2500.0f,
-                                           kObstacleCueDirVertDistDefault, {
+                UIWidgets::CVarSliderFloat("Vertical distance", kObstacleCueDirVertDistCVar, 200.0f,
+                                           kObstacleCueDirVertDistMax, kObstacleCueDirVertDistDefault, {
                     .tooltip = "How far above or below (world units, beyond the safety margin) an obstacle "
                                "still sounds. Loudness runs from full at the margin to the level floor here.",
                     .flags = ImGuiSliderFlags_AlwaysClamp,

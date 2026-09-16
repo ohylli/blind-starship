@@ -55,30 +55,17 @@ static std::vector<float> AimCue_GenerateClick(int sampleRate) {
 // conveying the vertical even when the height-to-pitch toggle is off (in PAN mode pitch
 // is the only vertical channel there is).
 static f32 AimCue_Pitch(f32 n) {
-    f32 octaves = CVarGetFloat(kAimCueOctavesCVar, kAimCueOctavesDefault);
-    if (!(octaves >= 0.0f)) {
-        octaves = kAimCueOctavesDefault; // negative or NaN
-    }
+    const f32 octaves = CueCommon_ReadFloat(kAimCueOctavesCVar, kAimCueOctavesDefault, 0.0f);
     return powf(2.0f, CueCommon_ClampUnit(n) * octaves);
 }
 
 // Smallest aim-to-enemy angle -> click repeat interval, linear in angle: at or past the max
 // angle — and when no enemy is in scope (angle = INFINITY) — the click idles at the slow
-// interval; dead on a target it reaches the fast one. NaN-guarded in the usual
-// !(x >= lo) style (see CueCommon_ComputeFreqModFromY for the rationale).
+// interval; dead on a target it reaches the fast one.
 static f32 AimCue_Interval(f32 angleRad) {
-    f32 maxAngle = CVarGetFloat(kAimCueGeigerAngleCVar, kAimCueGeigerAngleDefault) * M_DTOR;
-    f32 slow = CVarGetFloat(kAimCueGeigerSlowCVar, kAimCueGeigerSlowDefault);
-    f32 fast = CVarGetFloat(kAimCueGeigerFastCVar, kAimCueGeigerFastDefault);
-    if (!(maxAngle > 0.0f)) {
-        maxAngle = kAimCueGeigerAngleDefault * M_DTOR;
-    }
-    if (!(slow > 0.0f)) {
-        slow = kAimCueGeigerSlowDefault;
-    }
-    if (!(fast > 0.0f)) {
-        fast = kAimCueGeigerFastDefault;
-    }
+    const f32 maxAngle = CueCommon_ReadPositiveFloat(kAimCueGeigerAngleCVar, kAimCueGeigerAngleDefault) * M_DTOR;
+    const f32 slow = CueCommon_ReadPositiveFloat(kAimCueGeigerSlowCVar, kAimCueGeigerSlowDefault);
+    const f32 fast = CueCommon_ReadPositiveFloat(kAimCueGeigerFastCVar, kAimCueGeigerFastDefault);
     if (!(angleRad < maxAngle)) {
         return slow; // no target (INFINITY), NaN, or wider than the max angle
     }
@@ -145,21 +132,13 @@ static void AimCue_OnPostUpdate(IEvent* event) {
     f32 nx;
     f32 ny;
     if (allRange) {
-        f32 yawRange = CVarGetFloat(kAimCueYawRangeCVar, kAimCueYawRangeDefault);
-        if (!(yawRange >= 1.0f)) {
-            yawRange = kAimCueYawRangeDefault; // tiny, negative, or NaN
-        }
-        f32 pitchRange = CVarGetFloat(kAimCuePitchRangeDegCVar, kAimCuePitchRangeDegDefault);
-        if (!(pitchRange >= 1.0f)) {
-            pitchRange = kAimCuePitchRangeDegDefault;
-        }
+        // Divisors: at least one degree so a tiny range cannot blow the signal up.
+        const f32 yawRange = CueCommon_ReadFloat(kAimCueYawRangeCVar, kAimCueYawRangeDefault, 1.0f);
+        const f32 pitchRange = CueCommon_ReadFloat(kAimCuePitchRangeDegCVar, kAimCuePitchRangeDegDefault, 1.0f);
         nx = CueCommon_ClampUnit(-player->rot.y / yawRange);
         ny = CueCommon_ClampUnit(Player_AimPitch(*player) / pitchRange);
     } else {
-        f32 dist = CVarGetFloat(kAimCueProjDistCVar, kAimCueProjDistDefault);
-        if (!(dist >= 0.0f)) {
-            dist = kAimCueProjDistDefault; // negative or NaN
-        }
+        const f32 dist = CueCommon_ReadFloat(kAimCueProjDistCVar, kAimCueProjDistDefault, 0.0f);
         // Projected aim point relative to the corridor center: lateral drift plus the
         // stick deflection carried `dist` units ahead. xRot_120/yRot_114 (the path's own
         // direction) stay out of the deflection — the path forward IS the neutral center.
@@ -173,18 +152,10 @@ static void AimCue_OnPostUpdate(IEvent* event) {
     f32 minAngle = AimCue_MinEnemyAimAngle(player, allRange);
     f32 interval = AimCue_Interval(minAngle);
 
-    // Place the source on the unity-gain arc: PAN mode derives its pan purely from the
-    // horizontal direction (x over the x/z length), so radius * (nx, 0, sqrt(1 - nx^2))
-    // renders a constant-power pan of exactly nx with distance attenuation pinned at
-    // unity. Y is irrelevant to PAN; the vertical is carried by pitch instead.
-    f32 radius = Cue3D_GetUnityGainDistance();
-    if (!(radius > 0.0f)) {
-        radius = 100.0f; // backend not up yet; any positive radius pans the same
-    }
+    // On the unity-gain arc at a pan of exactly nx (CueCommon_PlaceOnPanArc); the
+    // vertical is carried by pitch instead.
     CueTarget target;
-    target.x = radius * nx;
-    target.y = 0.0f;
-    target.z = radius * sqrtf(1.0f - nx * nx);
+    CueCommon_PlaceOnPanArc(target, nx);
     target.pitch = AimCue_Pitch(ny);
     target.intervalSec = interval;
     sAimCue->SetTarget(target);

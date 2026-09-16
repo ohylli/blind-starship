@@ -3,6 +3,7 @@
 #include <math.h>
 
 #include "port/CGameCompat.h"
+#include "port/accessibility/Cue.h"
 
 void CueCommon_RegisterCVars() {
     CVarRegisterInteger(kAudioCuesEnabledCVar, 1);
@@ -25,20 +26,8 @@ float CueCommon_ComputeFreqModFromY(float y) {
     if (CVarGetInteger(kCuePitchForHeightCVar, 1) != 1) {
         return 1.0f; // effect off: native pitch, height not conveyed
     }
-    // The guards below are written as !(x >= lo) rather than (x < lo) on purpose: every
-    // comparison against NaN is false, so the natural spelling would wave a NaN straight
-    // through. These CVars are reachable from the console and a hand-edited config, and a
-    // NaN here would ride out as a NaN playback rate, which used to be an out-of-bounds
-    // read on the audio thread. Cue3D_SetPitch validates too — this just keeps the bad
-    // value from ever being built.
-    f32 scale = CVarGetFloat(kCuePitchScaleCVar, kCuePitchScaleDefault);
-    if (!(scale >= 1.0f)) {
-        scale = kCuePitchScaleDefault; // divide-by-tiny, negative, or NaN
-    }
-    f32 range = CVarGetFloat(kCuePitchRangeOctavesCVar, kCuePitchRangeOctavesDefault);
-    if (!(range >= 0.0f)) {
-        range = kCuePitchRangeOctavesDefault; // negative or NaN
-    }
+    const f32 scale = CueCommon_ReadFloat(kCuePitchScaleCVar, kCuePitchScaleDefault, 1.0f); // a divisor
+    const f32 range = CueCommon_ReadFloat(kCuePitchRangeOctavesCVar, kCuePitchRangeOctavesDefault, 0.0f);
     f32 octaves = y / scale;
     if (octaves > range) {
         octaves = range;
@@ -103,4 +92,34 @@ float CueCommon_ClampUnit(float v) {
         return -1.0f;
     }
     return (v == v) ? v : 0.0f;
+}
+
+// See the header for why the guards are spelled !(v >= lo).
+float CueCommon_ReadFloat(const char* cvar, float def, float lo, float hi) {
+    float v = CVarGetFloat(cvar, def);
+    if (!(v >= lo)) {
+        v = def; // below the floor, or NaN
+    }
+    return (v > hi) ? hi : v;
+}
+
+float CueCommon_ReadPositiveFloat(const char* cvar, float def, float hi) {
+    float v = CVarGetFloat(cvar, def);
+    if (!(v > 0.0f)) {
+        v = def; // zero, negative, or NaN
+    }
+    return (v > hi) ? hi : v;
+}
+
+float CueCommon_UnityRadius() {
+    const float radius = Cue3D_GetUnityGainDistance();
+    return (radius > 0.0f) ? radius : 100.0f; // any positive radius pans (and centers) the same
+}
+
+void CueCommon_PlaceOnPanArc(CueTarget& target, float pan) {
+    const float radius = CueCommon_UnityRadius();
+    pan = CueCommon_ClampUnit(pan);
+    target.x = radius * pan;
+    target.y = 0.0f;
+    target.z = radius * sqrtf(1.0f - pan * pan);
 }

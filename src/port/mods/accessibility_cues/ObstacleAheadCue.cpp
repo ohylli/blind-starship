@@ -61,17 +61,10 @@ static std::vector<float> ObstacleAheadCue_GenerateBuzz(int sampleRate) {
 // equal-sounding tempo steps per unit of distance closed. A linear-in-interval ramp
 // packed nearly all audible urgency into the last half second of the approach (rate is
 // 1/interval, so it crawled early and exploded at contact); the geometric ramp spreads
-// it across the whole warning distance. NaN-guarded in the usual !(x > lo) style (see
-// CueCommon_ComputeFreqModFromY for the rationale); warnDist is sanitized by the caller.
+// it across the whole warning distance. warnDist is sanitized by the caller.
 static f32 ObstacleAheadCue_Interval(f32 gap, f32 warnDist) {
-    f32 slow = CVarGetFloat(kObstacleCueSlowCVar, kObstacleCueSlowDefault);
-    f32 fast = CVarGetFloat(kObstacleCueFastCVar, kObstacleCueFastDefault);
-    if (!(slow > 0.0f)) {
-        slow = kObstacleCueSlowDefault;
-    }
-    if (!(fast > 0.0f)) {
-        fast = kObstacleCueFastDefault;
-    }
+    const f32 slow = CueCommon_ReadPositiveFloat(kObstacleCueSlowCVar, kObstacleCueSlowDefault);
+    const f32 fast = CueCommon_ReadPositiveFloat(kObstacleCueFastCVar, kObstacleCueFastDefault);
     f32 t = gap / warnDist;
     if (!(t > 0.0f)) {
         t = 0.0f; // contact or NaN
@@ -290,15 +283,10 @@ static void ObstacleAheadCue_OnPostUpdate(IEvent* event) {
         return;
     }
 
-    f32 warnDist = CVarGetFloat(kObstacleCueWarnDistCVar, kObstacleCueWarnDistDefault);
-    if (!(warnDist > 0.0f)) {
-        warnDist = kObstacleCueWarnDistDefault; // zero, negative, or NaN
-    }
-    if (warnDist > kObstacleCueWarnDistMax) {
-        warnDist = kObstacleCueWarnDistMax; // the slider's ceiling; a hand-edited config or the
-                                            // debug server can store more, and the heightfield
-                                            // walk's step cap is sized to this (see the assert)
-    }
+    // Capped at the slider's ceiling: the heightfield walk's step cap is sized to it (see
+    // the assert).
+    const f32 warnDist =
+        CueCommon_ReadPositiveFloat(kObstacleCueWarnDistCVar, kObstacleCueWarnDistDefault, kObstacleCueWarnDistMax);
     const f32 margin = ObstacleCommon_Margin();
     dbg.warnDist = warnDist;
     dbg.margin = margin;
@@ -401,17 +389,11 @@ static void ObstacleAheadCue_OnPostUpdate(IEvent* event) {
         return;
     }
 
-    // DIRECT mode ignores the position for rendering; a sane straight-ahead one at the
-    // unity-gain radius keeps the `cues` voice dump readable. Pitch stays 1.0: the
-    // interval is the whole signal.
-    f32 radius = Cue3D_GetUnityGainDistance();
-    if (!(radius > 0.0f)) {
-        radius = 100.0f; // backend not up yet; DIRECT renders the same regardless
-    }
+    // DIRECT mode ignores the position for rendering; straight ahead on the unity-gain
+    // arc keeps the `cues` voice dump readable. Pitch stays 1.0: the interval is the
+    // whole signal.
     CueTarget target;
-    target.x = 0.0f;
-    target.y = 0.0f;
-    target.z = radius;
+    CueCommon_PlaceOnPanArc(target, 0.0f);
     target.intervalSec = ObstacleAheadCue_Interval(bestGap, warnDist);
     sObstacleCue->SetTarget(target);
     sObstacleCue->Start();
