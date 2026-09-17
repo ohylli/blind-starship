@@ -195,6 +195,42 @@ static inline bool Object_PolyHeightfieldHit(const PolyHeightfield* hf, const Ve
     return Col2_CheckSurface(&probe, &objPos, hf->header, hf->polys, hf->mesh, &hitData);
 }
 
+// The heightfield's surface height under a world-space X/Z, in ONE probe: the world Y at
+// or below which Object_PolyHeightfieldHit reports a hit there. Col2_CheckSurface
+// computes that height on the way to its verdict — it finds the triangle under the
+// point, evaluates the triangle's plane at the point's X/Z into hitData.y, and only then
+// compares the point's Y against it — and writes it whether or not the point is low
+// enough to hit (the engine's own Player_FloorCheck reads the same output to seat the
+// ship's shadow on a bump). So the probe's own Y only has to pass
+// the bounds check: it is placed mid-box, and worldPoint->y is ignored.
+//
+// The value is the engine's crash threshold, not the drawn surface: hitData.y is in the
+// mesh's LOCAL frame and the engine compares the WORLD Y against it without adding
+// obj.pos.y back (a quirk invisible for the bumps, which sit at y = 0, and up to 80 units
+// on Zoness's islands), and it is truncated to an integer (func_col1_800988B4 returns
+// s32). Both are deliberate here — "how far above a crash am I" wants the number the
+// crash test uses.
+//
+// False when no triangle lies under the point (outside the mesh's outline or its box):
+// hitData.y is preset to NaN, which the range test below rejects along with a garbage
+// height from a degenerate (vertical) triangle, whose plane formula divides by zero.
+static inline bool Object_PolyHeightfieldSurfaceY(const PolyHeightfield* hf, const Vec3f* worldPoint, f32* surfaceY) {
+    f32 rx = worldPoint->x - hf->objPos.x;
+    f32 rz = worldPoint->z - hf->objPos.z;
+    Vec3f probe = { hf->objPos.x + hf->cs * rx + hf->sn * rz,
+                    hf->objPos.y + 0.5f * (hf->header->min.y + hf->header->max.y),
+                    hf->objPos.z - hf->sn * rx + hf->cs * rz };
+    Vec3f objPos = hf->objPos; // the engine API takes non-const pointers
+    Vec3f hitData = { 0.0f, NAN, 0.0f };
+    Col2_CheckSurface(&probe, &objPos, hf->header, hf->polys, hf->mesh, &hitData);
+    // One unit of slack for the integer truncation at the box's faces.
+    if (!((hitData.y >= hf->header->min.y - 1.0f) && (hitData.y <= hf->header->max.y + 1.0f))) {
+        return false;
+    }
+    *surfaceY = hitData.y;
+    return true;
+}
+
 // The engine's THIRD collision mechanism, beside hitbox records and poly meshes: a few
 // actor-event types carry gNoHitbox and are instead collided by a hand-written sphere
 // test keyed on eventType, with the radius a literal in the collision loop rather than

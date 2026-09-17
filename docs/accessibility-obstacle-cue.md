@@ -31,7 +31,9 @@ way is closed" half; this cue is the "how soon" half. Covers on-rails levels (an
   plus `Object_GetPolyCollider`/`Object_GetPolyBounds` (the poly-mesh dispatch lists and
   each mesh's stored bounding box — the engine's second collision mechanism),
   `Object_ResolvePolyHeightfield`/`Object_PolyHeightfieldHit` (the engine's heightfield
-  surface test on a mesh resolved once, for a consumer probing many points) and
+  surface test on a mesh resolved once, for a consumer probing many points),
+  `Object_PolyHeightfieldSurfaceY` (the surface height that test compares against, read
+  in one probe — the below cue's terrain walk) and
   `Object_GetSphereCollider` (the event-type → radius
   table for the engine's third collision mechanism, the hand-written sphere test; see
   "What is included").

@@ -80,11 +80,19 @@ struct ObstacleDirectionTargetDebug {
     int32_t candidates = 0; // boxes classified into this direction this tick
     int32_t array = -1;   // ObstacleArray; the debug server resolves the name
     int32_t slot = -1, objId = -1, record = -1;
-    bool heightfield = false; // a heightfield mesh box (box-only in v1: over-reports)
-    bool upcoming = false;    // near face still ahead (vs already alongside)
+    bool heightfield = false; // a heightfield mesh box (box-only for the side pair, which
+                              // over-reports; see `terrain` for below)
+    bool terrain = false;     // below only: `clear` is a surface clearance from the terrain
+                              // walk (ObstacleDirectionCue_TerrainBelow), not the box top's
+    float surfaceY = 0;       // terrain: the winning sample's surface height (the engine's
+                              // crash threshold, Object_PolyHeightfieldSurfaceY)
+    float sampleT = 0;        // terrain: course distance of the winning sample (0 = beneath
+                              // the ship)
+    bool upcoming = false;    // near face still ahead (vs already alongside); for a terrain
+                              // winner, the winning sample is ahead (vs beneath the ship)
     float clear = 0;          // the winning clearance on the cue's axis (> 0; under the
-                              // margin only for a box already alongside, pinned at the
-                              // band's near end)
+                              // margin only for a box already alongside / the terrain
+                              // sample beneath the ship, pinned at the band's near end)
     float gapZ = 0;           // raw distance to the near z face, world units
     float dx = 0, dy = 0, dz = 0;
     float halfX = 0, halfY = 0, halfZ = 0;
@@ -102,6 +110,10 @@ struct ObstacleDirectionCueDebug {
     int32_t aheadClaimed = 0; // boxes skipped because the ahead cue is warning about them
                               // (on course AND still upcoming)
     int32_t inWindow = 0;     // boxes inside the Z window (upcoming or alongside)
+    // The below cue's terrain walk: heightfield boxes walked, engine surface reads spent
+    // on them (the cost line), and boxes with at least one upcoming sample left to the
+    // ahead cue (surface within the margin of the course).
+    int32_t terrainTested = 0, terrainProbes = 0, terrainClaimed = 0;
     float lookahead = 0, margin = 0, sideDist = 0, panFloor = 0, vertDist = 0,
           levelFloor = 0; // effective (post-guard) knob values used this tick
     ObstacleDirectionTargetDebug dir[OBSTACLE_DIR_COUNT];

@@ -68,10 +68,13 @@
 //
 // v1 scope (docs/accessibility-obstacle-direction-cues.md): rails only — in all-range
 // "left" is heading-relative and needs the offsets rotated into the aim frame, the ahead
-// cue's own second step. Terrain is box-only: a heightfield bump's box spans the whole
-// hill, so the below cue over-reports over Corneria's bumps until the surface-distance
-// refinement lands. The engine's poly range gate is not applied: a mesh inside the side
-// band is inside the gate anyway. Ground, water and lava are not objects and stay out.
+// cue's own second step. Terrain (a heightfield poly box, whose box spans the whole hill)
+// is refined for BELOW only: the box top is replaced by the engine's own surface height
+// sampled along the course (ObstacleDirectionCue_TerrainBelow). The side pair still reads
+// a terrain box as a box, and so over-reports a hill flown beside near its peak height.
+// The engine's poly range gate is applied to the terrain walk and nowhere else: a solid
+// mesh inside the side band is inside the gate anyway. Ground, water and lava are not
+// objects and stay out.
 static Cue* sSideCue = nullptr;
 static Cue* sAboveCue = nullptr;
 static Cue* sBelowCue = nullptr;
@@ -189,8 +192,123 @@ struct ObstacleDirectionWinner {
     bool found = false;
     f32 clear = INFINITY;
     bool upcoming = false;
+    bool terrain = false; // clear came from the terrain walk; surfaceY / sampleT are valid
+    f32 surfaceY = 0.0f;
+    f32 sampleT = 0.0f;
     ObstacleBox box{};
 };
+
+// The terrain walk's step and step cap, the ahead cue's heightfield walk restated for the
+// lookahead: a mesh triangle is hundreds of units across, so 100 units cannot step over a
+// ridge, and the cap only guards a NaN or absurd span (the assert keeps a real one under it).
+static constexpr f32 kTerrainStep = 100.0f;
+static constexpr s32 kTerrainMaxSteps = 64;
+static_assert((f32) kTerrainMaxSteps * kTerrainStep >= kObstacleCueDirLookaheadMax,
+              "the terrain walk must reach the far end of the longest lookahead");
+
+struct ObstacleTerrainBelow {
+    bool found = false;   // a sample qualified; the fields below describe the closest one
+    f32 clear = INFINITY; // ship Y minus the surface height there
+    f32 surfaceY = 0.0f;
+    f32 t = 0.0f;         // its course distance; 0 = beneath the ship
+    bool claimed = false; // at least one upcoming sample was left to the ahead cue
+};
+
+// "Below" for a heightfield poly box (box.polyHeightfield — the terrain bumps, reefs,
+// the island, the mountains). The engine hits such a mesh only when the ship is at or
+// below the surface under it, so the box top — the hill's PEAK — says nothing about the
+// ground under a ship over the outer slope, and the box rule droned over most of
+// Corneria. This asks the engine for the surface height instead
+// (Object_PolyHeightfieldSurfaceY, one read per point, the number its crash test
+// compares against) along the stretch of course the box rule's Z window covers: from
+// beneath the ship — or the box's near face, if that is still ahead — to the far face or
+// the lookahead, whichever is nearer, in kTerrainStep steps. Each step reads the surface
+// under the course and `margin` to either side (the box rule's "within the margin on
+// the other axis", and the same three points the ahead cue's walk probes) and keeps the
+// highest; the clearance is the ship's Y above it.
+//
+// Ownership is decided per SAMPLE, not per box (one hill is both "ground 300 below me"
+// and "a slope rising into my course"): an upcoming sample whose surface is within the
+// margin of the course is the ahead cue's — the same threshold its walk hits at — and is
+// skipped, while the rest still compete, so a rising slope sounds as the buzz plus a
+// loud below chord: "the thing ahead is ground, climb". The sample beneath the ship is
+// the "alongside" case and pins at the band's near end however close. (The ahead cue's
+// walk starts beneath the ship too, so skimming within the margin sounds both — a known,
+// accepted overlap: the chord is what says the buzz is about the ground.) A sample at or
+// below the surface is the engine's.
+//
+// A sample is dropped when the ship there would be outside the engine's XZ range gate
+// (box.polyRangeXZ): Player_CollisionCheck never tests the mesh from out there, and a
+// bump's box is deep enough for its far end to lie beyond the gate.
+static ObstacleTerrainBelow ObstacleDirectionCue_TerrainBelow(const ObstacleBox& box, const Player* player,
+                                                              bool alongside, f32 lookahead, f32 margin,
+                                                              int32_t* probes) {
+    ObstacleTerrainBelow out;
+    PolyHeightfield hf;
+    if (!Object_ResolvePolyHeightfield(box.polyColId, &box.objPos, box.rotY, &hf)) {
+        return out; // not a tabled mesh — unreachable for a scan-produced box
+    }
+    const f32 tStart = alongside ? 0.0f : box.gapZ;
+    f32 tEnd = box.gapZ + 2.0f * box.half.z;
+    if (tEnd > lookahead) {
+        tEnd = lookahead;
+    }
+    // Bounded as a float before the integer cast (see ObstacleAheadCue_HeightfieldGap).
+    const f32 span = tEnd - tStart;
+    if (!(span >= 0.0f)) {
+        return out; // NaN or a reversed span
+    }
+    s32 steps = kTerrainMaxSteps;
+    if (span < (f32) kTerrainMaxSteps * kTerrainStep) {
+        steps = (s32) ceilf(span / kTerrainStep);
+    }
+    const s32 lateral = (margin > 0.0f) ? 1 : 0;
+    const f32 rangeSq = box.polyRangeXZ * box.polyRangeXZ;
+    for (s32 i = 0; i <= steps; i++) {
+        f32 t = tStart + (f32) i * kTerrainStep;
+        if (t > tEnd) {
+            t = tEnd;
+        }
+        const f32 z = player->trueZpos - t; // the rails course is -z
+        if (box.polyRangeXZ > 0.0f) {
+            const f32 rx = player->pos.x - box.objPos.x;
+            const f32 rz = z - box.objPos.z;
+            if ((rx * rx + rz * rz) > rangeSq) {
+                continue;
+            }
+        }
+        bool any = false;
+        f32 top = 0.0f;
+        for (s32 k = -lateral; k <= lateral; k++) {
+            const Vec3f point = { player->pos.x + (f32) k * margin, 0.0f, z };
+            f32 surfaceY;
+            (*probes)++;
+            if (Object_PolyHeightfieldSurfaceY(&hf, &point, &surfaceY) && (!any || (surfaceY > top))) {
+                any = true;
+                top = surfaceY;
+            }
+        }
+        if (!any) {
+            continue; // no surface under this stretch (outside the mesh's outline)
+        }
+        const f32 clear = player->pos.y - top;
+        const bool beneath = alongside && (i == 0);
+        if (!beneath && (clear < margin)) {
+            out.claimed = true; // the ahead cue's walk hits here
+            continue;
+        }
+        if (!(clear > 0.0f)) {
+            continue; // at or below the surface: the engine's
+        }
+        if (clear < out.clear) {
+            out.found = true;
+            out.clear = clear;
+            out.surfaceY = top;
+            out.t = t;
+        }
+    }
+    return out;
+}
 
 static void ObstacleDirectionCue_StopAll() {
     sSideCue->StopAllVoices();
@@ -206,6 +324,9 @@ static void ObstacleDirectionCue_FillTargetDebug(ObstacleDirectionTargetDebug& d
     d.objId = w.box.objId;
     d.record = w.box.record;
     d.heightfield = w.box.polyHeightfield;
+    d.terrain = w.terrain;
+    d.surfaceY = w.surfaceY;
+    d.sampleT = w.sampleT;
     d.upcoming = w.upcoming;
     d.clear = w.clear;
     d.gapZ = w.box.gapZ;
@@ -271,6 +392,10 @@ static void ObstacleDirectionCue_OnPostUpdate(IEvent* event) {
     dbg.levelFloor = levelFloor;
 
     Player* player = &gPlayer[0];
+    // For the ground vehicles a heightfield is the FLOOR, not a crash: the engine seats
+    // them on the surface (Player_CheckPolyCollision's Landmaster / on-foot branch), so
+    // "terrain below" would pin at full for the whole of Macbeth's terrain bumps.
+    const bool groundForm = (player->form == FORM_LANDMASTER) || (player->form == FORM_ON_FOOT);
 
     ObstacleScanStats stats;
     ObstacleDirectionWinner winners[OBSTACLE_DIR_COUNT];
@@ -289,30 +414,52 @@ static void ObstacleDirectionCue_OnPostUpdate(IEvent* event) {
         // alongside box is ours however close (a NaN clearance fails every test below).
         const bool withinX = box.clearX < margin;
         const bool withinY = box.clearY < margin;
-        if (withinX && withinY && upcoming) {
+        const bool boxOnCourse = withinX && withinY && upcoming;
+        // Terrain: for a heightfield box the vertical question is answered by the
+        // surface under the course, not the box top, and the ahead cue's claim is
+        // settled per sample inside the walk (ObstacleDirectionCue_TerrainBelow). The
+        // side question below still reads it as a box, box claim included.
+        ObstacleTerrainBelow terrain;
+        if (box.polyHeightfield) {
+            if (withinX && !groundForm) {
+                dbg.terrainTested++;
+                terrain = ObstacleDirectionCue_TerrainBelow(box, player, alongside, lookahead, margin,
+                                                            &dbg.terrainProbes);
+                if (terrain.claimed) {
+                    dbg.terrainClaimed++;
+                }
+            }
+        } else if (boxOnCourse) {
             dbg.aheadClaimed++;
             return;
         }
         // Question 3: outside the footprint on an axis, within the margin on the other.
-        const bool sideOk = (box.clearX > 0.0f) && withinY && (box.clearX < sideDist);
-        const bool vertOk = (box.clearY > 0.0f) && withinX && (box.clearY < vertDist);
+        const f32 vertClear = box.polyHeightfield ? terrain.clear : box.clearY;
+        const bool sideOk = (box.clearX > 0.0f) && withinY && (box.clearX < sideDist) && !boxOnCourse;
+        const bool vertOk = box.polyHeightfield ? (terrain.found && (vertClear < vertDist))
+                                                : ((vertClear > 0.0f) && withinX && (vertClear < vertDist));
         ObstacleDirection dir;
         f32 clear;
-        if (sideOk && (!vertOk || (box.clearX <= box.clearY))) {
+        if (sideOk && (!vertOk || (box.clearX <= vertClear))) {
             dir = (box.dx < 0.0f) ? OBSTACLE_DIR_LEFT : OBSTACLE_DIR_RIGHT;
             clear = box.clearX;
         } else if (vertOk) {
-            dir = (box.dy > 0.0f) ? OBSTACLE_DIR_ABOVE : OBSTACLE_DIR_BELOW;
-            clear = box.clearY;
+            // A heightfield is only ever hit from above, so its surface is always "below".
+            dir = (!box.polyHeightfield && (box.dy > 0.0f)) ? OBSTACLE_DIR_ABOVE : OBSTACLE_DIR_BELOW;
+            clear = vertClear;
         } else {
             return; // a corner beyond the margin, or inside the footprint on both axes
         }
         ObstacleDirectionWinner& w = winners[dir];
         dbg.dir[dir].candidates++;
         if (clear < w.clear) {
+            const bool terrainWin = box.polyHeightfield && (dir == OBSTACLE_DIR_BELOW);
             w.found = true;
             w.clear = clear;
-            w.upcoming = upcoming;
+            w.upcoming = terrainWin ? (terrain.t > 0.0f) : upcoming;
+            w.terrain = terrainWin;
+            w.surfaceY = terrainWin ? terrain.surfaceY : 0.0f;
+            w.sampleT = terrainWin ? terrain.t : 0.0f;
             w.box = box;
         }
     });
