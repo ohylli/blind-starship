@@ -26,8 +26,15 @@ Each is a two-sine chord a just perfect fourth apart (4:3), rooted an octave apa
 pitch order low, middle, high for below, beside, above: C3, G3, C4. The register tells the
 three apart; the shared buzz is a damped pulse and a different shape entirely. The
 generator (`ObstacleDirectionCue_GenerateChord`) snaps the root by a few cents so the loop
-buffer holds a whole number of cycles of both partials and loops without a click. Nothing
-pulses: the ahead buzz stays the only pulsing cue, so pulse rate keeps its one meaning.
+buffer holds a whole number of cycles of both partials and loops without a click.
+
+The beside chord is pulsed at a **fixed** rate (`kSidePulseHz`, 5 Hz, one pulse per loop
+buffer: a few-ms attack from a floor, then a decay back to it). Reason: a constant-power
+pan is only a level difference between the ears, and a steady low tone is the sound the
+ear places worst from level alone, so the drone read as a vaguer "how far left" than the
+aim click by ear (2026-09-16). Each pulse is a fresh onset to localize. The rate never
+varies, so it is not a signal and the ahead buzz's varying pulse rate keeps its one
+meaning; above and below stay drones, there is nothing to localize dead-center.
 
 ## The rule
 
@@ -149,5 +156,6 @@ direction(s) that id renders.
   the candidate count and the winner (array/slot/objId/record, `upcoming`, the winning
   `clear`, `gapZ`, delta and half-extents, and the pushed `pan` or `level`). Join `slot`
   against `objects scenery` to cross-check positions.
-- The F1 volume-slider previews play each chord as a seamless drone at reference loudness,
-  which is exactly what the chord is: the previews are the timbre check.
+- The F1 volume-slider previews play each chord at reference loudness exactly as it
+  sounds in play (the above/below drones, the pulsed beside chord): the previews are the
+  timbre check.

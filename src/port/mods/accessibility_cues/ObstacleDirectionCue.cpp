@@ -59,6 +59,12 @@
 // roots in pitch order low/middle/high = below/beside/above — C3, G3 (a fifth up), C4
 // (the octave) — so the three are told apart by register, and all sit under the aim
 // click's 1500 Hz. The shared 300 Hz buzz is a damped pulse, a different shape entirely.
+// The side chord alone is pulsed, at a FIXED rate (kSidePulseHz): a constant-power pan is
+// only a level difference between the ears, and a steady low tone is the hardest sound to
+// place from level alone (the ear wants onsets and timing), so the aim click read as a
+// clearer "how far left" than the drone did. Each pulse is a fresh onset the ear localizes
+// anew. The rate never varies — it is not a signal — so the buzz's varying pulse rate keeps
+// its one meaning; above/below stay drones (centered, nothing to localize).
 //
 // v1 scope (docs/accessibility-obstacle-direction-cues.md): rails only — in all-range
 // "left" is heading-relative and needs the offsets rotated into the aim frame, the ahead
@@ -96,38 +102,72 @@ static constexpr float kBelowRootHz = 130.8128f;
 static constexpr float kSideRootHz = 195.9977f;
 static constexpr float kAboveRootHz = 261.6256f;
 
+// The side chord's pulse: rate, attack, and the floor the decay settles on (the chord
+// never fully gates off, so the pan stays audible between onsets). The attack is a few
+// ms — long enough not to click, short enough to be an onset.
+static constexpr float kSidePulseHz = 5.0f;
+static constexpr float kSidePulseAttackSec = 0.004f;
+static constexpr float kSidePulseFloor = 0.25f;
+// Makeup gain for the pulse, on the side cue only, multiplied into the shared chord boost:
+// the envelope above averages to an RMS of ~0.45 of the drone's (about -7 dB), so the
+// pulsed chord sat under the other cues by ear. 2.2 restores the drone's average level;
+// retune it together with the floor / rate, which change that average.
+static constexpr float kSidePulseMakeupGain = 2.2f;
+
 // Synthesized chord: two sines, the root and a just perfect fourth above it (4:3),
 // looped seamlessly (interval 0). The loop is click-free because the buffer holds an
-// exact whole number of cycles of BOTH partials: kRootCycles is a multiple of 3, so the
+// exact whole number of cycles of BOTH partials: rootCycles is a multiple of 3, so the
 // fourth completes 4/3 as many, and the root is snapped (by a few cents at most) to
 // whatever frequency makes that cycle count land on an integer sample count. Each sine
-// at 0.45 keeps the summed peak under 0.9.
-static std::vector<float> ObstacleDirectionCue_GenerateChord(int sampleRate, float rootHz) {
-    constexpr int kRootCycles = 30;
+// at 0.45 keeps the summed peak under 0.9. A pulsed chord (pulseHz > 0) holds exactly
+// one pulse per loop, so rootCycles is chosen as the multiple of 3 nearest rootHz /
+// pulseHz and the pulse rate is snapped along with the root; the envelope starts at the
+// floor, ramps to full over the attack, and decays back to (within 1% of) the floor by
+// the end of the buffer, so the loop seam is at the quietest, flattest point.
+static std::vector<float> ObstacleDirectionCue_GenerateChord(int sampleRate, float rootHz, float pulseHz) {
+    constexpr int kDroneRootCycles = 30;
     constexpr float kTwoPi = 6.2831853f;
     constexpr float kPartialAmplitude = 0.45f;
-    int samples = (int) lroundf((float) kRootCycles * (float) sampleRate / rootHz);
+    int rootCycles = kDroneRootCycles;
+    if (pulseHz > 0.0f) {
+        rootCycles = 3 * (int) lroundf(rootHz / pulseHz / 3.0f);
+        if (rootCycles < 3) {
+            rootCycles = 3;
+        }
+    }
+    int samples = (int) lroundf((float) rootCycles * (float) sampleRate / rootHz);
     if (samples < 2) {
         samples = 2;
     }
-    const float root = (float) kRootCycles * (float) sampleRate / (float) samples;
+    const float root = (float) rootCycles * (float) sampleRate / (float) samples;
     const float fourth = root * (4.0f / 3.0f);
+    const float duration = (float) samples / (float) sampleRate;
+    const float attack = (kSidePulseAttackSec < duration * 0.5f) ? kSidePulseAttackSec : duration * 0.5f;
+    const float decayRate = logf(100.0f) / (duration - attack); // 1% of the swing left at the seam
     std::vector<float> pcm((size_t) samples, 0.0f);
     for (int i = 0; i < samples; i++) {
         const float t = (float) i / (float) sampleRate;
-        pcm[(size_t) i] = kPartialAmplitude * (sinf(kTwoPi * root * t) + sinf(kTwoPi * fourth * t));
+        float env = 1.0f;
+        if (pulseHz > 0.0f) {
+            if (t < attack) {
+                env = kSidePulseFloor + (1.0f - kSidePulseFloor) * (t / attack);
+            } else {
+                env = kSidePulseFloor + (1.0f - kSidePulseFloor) * expf(-decayRate * (t - attack));
+            }
+        }
+        pcm[(size_t) i] = env * kPartialAmplitude * (sinf(kTwoPi * root * t) + sinf(kTwoPi * fourth * t));
     }
     return pcm;
 }
 
 static std::vector<float> ObstacleDirectionCue_GenerateSide(int sampleRate) {
-    return ObstacleDirectionCue_GenerateChord(sampleRate, kSideRootHz);
+    return ObstacleDirectionCue_GenerateChord(sampleRate, kSideRootHz, kSidePulseHz);
 }
 static std::vector<float> ObstacleDirectionCue_GenerateAbove(int sampleRate) {
-    return ObstacleDirectionCue_GenerateChord(sampleRate, kAboveRootHz);
+    return ObstacleDirectionCue_GenerateChord(sampleRate, kAboveRootHz, 0.0f);
 }
 static std::vector<float> ObstacleDirectionCue_GenerateBelow(int sampleRate) {
-    return ObstacleDirectionCue_GenerateChord(sampleRate, kBelowRootHz);
+    return ObstacleDirectionCue_GenerateChord(sampleRate, kBelowRootHz, 0.0f);
 }
 
 // Clearance -> position in the band, 0 at the margin, 1 at the band's edge. The band
@@ -183,7 +223,7 @@ static void ObstacleDirectionCue_OnPostUpdate(IEvent* event) {
     // Loudness normalization, pushed before the gate like the other synthesized cues:
     // the settings-menu previews must honor the boost even when gameplay is gated off.
     const f32 boost = CVarGetFloat(kObstacleCueDirBoostCVar, kObstacleCueDirBoostDefault);
-    sSideCue->SetGainBoost(boost);
+    sSideCue->SetGainBoost(boost * kSidePulseMakeupGain); // the pulse's average-level makeup
     sAboveCue->SetGainBoost(boost);
     sBelowCue->SetGainBoost(boost);
 
@@ -335,7 +375,7 @@ void ObstacleDirectionCue_Register() {
     // Pinned RESAMPLE pitch style on all three, like the buzz: none of them pitches, and
     // the spectral shifter would only add latency and CPU to a sustained sine pair.
     sSideCue = CueRegistry_Register(kObstacleSideCueId, "Obstacle beside",
-                                    "A mid chord panned toward something solid beside you that you would hit "
+                                    "A pulsing mid chord panned toward something solid beside you that you would hit "
                                     "by steering that way. The closer it is, the nearer the center it sounds.",
                                     { .generator = ObstacleDirectionCue_GenerateSide,
                                       .maxVoices = 2,
