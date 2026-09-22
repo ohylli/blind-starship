@@ -271,7 +271,10 @@ Each of these is a deliberate v1 decision with a known attach point, not an over
   loop) because the tank handles them separately;
   the cue does not, so those levels may buzz about the floor being driven on. Untested in
   v1. Remedies if it bites: replicate that id skip-list in the cue's filter, or gate the
-  cue by vehicle form.
+  cue by vehicle form. The heightfield walk is already form-gated: for the Landmaster and
+  on foot a heightfield is the floor the engine seats them on, so the walk is skipped
+  through the family's shared predicate (`ObstacleCommon_TerrainIsFloor`) — a forward
+  guard, since none of those ids is a heightfield on the rails dispatch list.
 - **Corridor-wide hitboxes could drone.** A wall spanning the whole flyable corridor
   passes the footprint test wherever the player flies. The debug mirror reports the
   winning record's half-extents precisely so this is diagnosable from one `cues` dump;

@@ -89,7 +89,10 @@ the surface itself (`ObstacleDirectionCue_TerrainBelow`):
   number.
 - **The walk.** For a terrain box in the Z window with the ship within the margin of its
   footprint in X, the course is sampled from beneath the ship (or the box's near face, if
-  still ahead) to the far face or the lookahead, whichever is nearer, every 100 units.
+  still ahead) to the far face or the lookahead, whichever is nearer, every 100 units —
+  the family's shared grid (`kObstacleWalkStep` / `ObstacleCommon_WalkSteps` in
+  `ObstacleCommon.h`), the same one the ahead cue's walk samples on, which is what makes
+  the per-sample claim below exactly the ahead cue's hit.
   Each step reads the surface under the course and one margin to either side and keeps
   the highest; the clearance is the ship's Y above it, and the smallest clearance over
   the walk is the box's candidate in the ordinary below contest. Samples the engine's XZ
@@ -156,15 +159,21 @@ direction(s) that id renders.
   below" above.
 - **Ground vehicles get no terrain below.** For the Landmaster and on foot the engine
   seats the player on a heightfield rather than crashing them
-  (`Player_CheckPolyCollision`), so the terrain walk is skipped for those forms.
+  (`Player_CheckPolyCollision`), so both terrain walks — this cue's and the ahead cue's —
+  are skipped for those forms, through the family's one predicate
+  (`ObstacleCommon_TerrainIsFloor`). A forward guard rather than an observed fix: no
+  rails level pairs a ground form with a heightfield box today (Macbeth's terrain bump is
+  outside the poly dispatch), and on foot exists only in Versus.
 - **The engine's poly range gate is applied only to the terrain walk** (the ahead cue
   clips its course to it). For the box tests a mesh inside the side or vertical band is
   inside the engine's XZ gate anyway, and the bands are far shorter than the gate radii.
 - **Ground, water, and lava stay out** — they are not objects (`docs/game-world.md` §8);
   the user chose to leave the ground plane out of the below cue for now.
 - **A future "upcoming vs alongside" split** is already classified: the debug mirror's
-  `upcoming` flag says whether the winning box's near face is still ahead. A second cue
-  distinguishing the two would read the same classification, not re-derive it.
+  `upcoming` flag says whether the winning box's near face is still ahead — or, for a
+  terrain walk winner, whether the winning *sample* is ahead rather than beneath the
+  ship, the per-sample restatement of the same question. A second cue distinguishing
+  the two would read the same classification, not re-derive it.
 - Everything in the ahead cue's catalogue of intentional misses (rotated boxes used
   unrotated, sprites not scanned, lockable actors never counted, bosses and wingmates
   excluded) applies here through the shared scan.
@@ -188,23 +197,25 @@ direction(s) that id renders.
   the closer at pan 0.25, the farther at 0.71), and the reversed pan mapping reads
   correctly in the dump — a wall at clearance 158 sits at 0.21, one at 748 at 0.94.
 - **Terrain below** (verified live 2026-09-17, same checkpoint, defaults, flying straight
-  at Y 350): bump 4 (`gScenery` slot 9) wins through the walk (`terrain: true`) at
+  at Y 350): bump 4 (`gScenery` slot 9) wins through the walk (`fromTerrainWalk: true`) at
   clearance 181 against its peak (`surfaceY` 169) with `sampleT` counting down from 1200
   to 0 as the peak approaches, then the clearance opens 203, 229, 265, 302, 339 down the
   back slope (level 0.89 falling to 0.60) where the box-top rule held 176 / 0.95 the whole
-  way; the next bump (slot 12) fades in from 315. `terrain.probes` peaks at 39. Diving
+  way; the next bump (slot 12) fades in from 315. `terrainWalk.probes` peaks at 39. Diving
   (`input stick 0 60 12`): once the course comes within the margin of the slope ahead the
-  ahead cue takes the bump (`heightfield: true`, gap 700 closing to 0), `terrain.claimed`
+  ahead cue takes the bump (`heightfield: true`, gap 700 closing to 0), `terrainWalk.claimed`
   goes to 1, and the below chord holds near full on the nearest unclaimed sample, then
   pins at 1.0 on the sample beneath the ship (clearance down to 24) until the climb-out.
 - The debug server's `cues` command reports, under each of the three ids, the gates
   (`railsOnly` among them), the scan counters plus `inWindow` (boxes inside the Z window)
-  and `aheadClaimed` (boxes the ahead cue owns), the effective knobs, and per direction
-  the candidate count and the winner (array/slot/objId/record, `upcoming`, the winning
-  `clear`, `gapZ`, delta and half-extents, and the pushed `pan` or `level`; a terrain
-  winner adds `terrain`, `surfaceY` and `sampleT`, the winning sample's course distance),
-  plus the terrain walk's `terrain.tested/claimed/probes` counters. Join `slot`
-  against `objects scenery` to cross-check positions.
+  and `aheadClaimed` (solid boxes the ahead cue owns whole; a heightfield box is never
+  claimed whole, its claim being per sample, so it never counts here), the effective
+  knobs, and per direction the candidate count and the winner (array/slot/objId/record,
+  `upcoming`, the winning `clear`, `gapZ`, delta and half-extents, and the pushed `pan`
+  or `level`; a terrain walk winner adds `fromTerrainWalk`, `surfaceY` and `sampleT`, the
+  winning sample's course distance), plus the terrain walk's
+  `terrainWalk.tested/claimed/probes` counters. Join `slot` against `objects scenery` to
+  cross-check positions.
 - The F1 volume-slider previews play each chord at reference loudness exactly as it
   sounds in play (the above/below drones, the pulsed beside chord): the previews are the
   timbre check.

@@ -1363,8 +1363,8 @@ static nlohmann::json CueObstacleDirectionTargetJson(const ObstacleDirectionTarg
     j["record"] = t.record;
     j["recordKind"] = ObstacleScan_RecordKind(t.record);
     j["heightfield"] = t.heightfield;
-    j["terrain"] = t.terrain;
-    if (t.terrain) {
+    j["fromTerrainWalk"] = t.fromTerrainWalk;
+    if (t.fromTerrainWalk) {
         j["surfaceY"] = t.surfaceY;
         j["sampleT"] = t.sampleT;
     }
@@ -1400,9 +1400,9 @@ static nlohmann::json CueObstacleDirectionCommonJson(const ObstacleDirectionCueD
         j["scan"] = { { "active", d.scanActive }, { "obstacles", d.scanObstacles }, { "boxes", d.scanBoxes } };
         j["inWindow"] = d.inWindow;
         j["aheadClaimed"] = d.aheadClaimed;
-        j["terrain"] = { { "tested", d.terrainTested },
-                         { "claimed", d.terrainClaimed },
-                         { "probes", d.terrainProbes } };
+        j["terrainWalk"] = { { "tested", d.terrainWalkTested },
+                             { "claimed", d.terrainWalkClaimed },
+                             { "probes", d.terrainWalkProbes } };
         j["lookahead"] = d.lookahead;
         j["margin"] = d.margin;
     }

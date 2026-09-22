@@ -122,16 +122,12 @@ static bool ObstacleAheadCue_RaySpan(const ObstacleBox& box, const Vec3f& fwd, f
     return true;
 }
 
-// Sampling step of the heightfield walk, world units along the course: two to three
-// play frames at cruise speed, and a mesh triangle is hundreds of units across, so a
-// finer step buys nothing while a much coarser one could step over a narrow ridge.
-static constexpr f32 kHeightfieldStep = 100.0f;
-// Cap on steps per box per tick. The walk never spans more than the warn distance, and
-// warnDist is clamped to kObstacleCueWarnDistMax, so no real span reaches this (the
-// assert keeps it so — a walk cut short would leave a slope past the cap unwarned);
-// it guards a NaN or absurd input, not a mesh.
-static constexpr s32 kHeightfieldMaxSteps = 64;
-static_assert((f32) kHeightfieldMaxSteps * kHeightfieldStep >= kObstacleCueWarnDistMax,
+// The heightfield walk samples on the family's shared grid (ObstacleCommon.h:
+// kObstacleWalkStep / kObstacleWalkMaxSteps, the grid the below cue's terrain walk shares).
+// The walk never spans more than the warn distance, and warnDist is clamped to
+// kObstacleCueWarnDistMax, so no real span reaches the cap — the assert keeps it so, since
+// a walk cut short would leave a slope past the cap unwarned.
+static_assert((f32) kObstacleWalkMaxSteps * kObstacleWalkStep >= kObstacleCueWarnDistMax,
               "the heightfield walk must reach the far end of the widest warn band");
 
 // The engine's XZ range gate (box.polyRangeXZ, Object_GetPolyCollisionRangeXZ) applied
@@ -193,7 +189,10 @@ static bool ObstacleAheadCue_ClipToPolyRange(const ObstacleBox& box, const Vec3f
 // either side. That is the slack the box test already grants (the player inside the
 // footprint expanded by margin) restated for a surface hit from above — a slope that
 // rises to within the margin of the course warns, one the course clears by more stays
-// silent.
+// silent. The below cue's terrain walk (ObstacleDirectionCue_TerrainBelow) depends on
+// exactly this geometry — it leaves a sample to this cue when the surface is within the
+// margin under the course, and probes the same three points — so a change to the probe
+// offsets here is a two-cue change.
 //
 // Returns the course distance of the first hit — 0 when the ship is already at or
 // below the surface — or a negative value when every probe clears. `probes` counts
@@ -225,19 +224,12 @@ static f32 ObstacleAheadCue_HeightfieldGap(const ObstacleBox& box, const Vec3f& 
     // answers. (Verified live: with an 800 margin every bump cleared until this clamp.)
     const f32 floorY = box.center.y - box.half.y;
 
-    // The span is bounded as a float BEFORE the integer cast: converting a non-finite
-    // or out-of-range float to s32 is undefined, so the old "cast, then test the int"
-    // order only worked by what x86 and ARM happen to produce.
-    const f32 span = tEnd - tStart;
-    if (!(span >= 0.0f)) {
+    int steps;
+    if (!ObstacleCommon_WalkSteps(tEnd - tStart, &steps)) {
         return -1.0f; // NaN or a reversed span
     }
-    s32 steps = kHeightfieldMaxSteps;
-    if (span < (f32) kHeightfieldMaxSteps * kHeightfieldStep) {
-        steps = (s32) ceilf(span / kHeightfieldStep);
-    }
-    for (s32 i = 0; i <= steps; i++) {
-        f32 t = tStart + (f32) i * kHeightfieldStep;
+    for (int i = 0; i <= steps; i++) {
+        f32 t = tStart + (f32) i * kObstacleWalkStep;
         if (t > tEnd) {
             t = tEnd;
         }
@@ -290,6 +282,8 @@ static void ObstacleAheadCue_OnPostUpdate(IEvent* event) {
     const f32 margin = ObstacleCommon_Margin();
     dbg.warnDist = warnDist;
     dbg.margin = margin;
+    // A heightfield is the floor, not a crash, for the ground vehicles (ObstacleCommon.h).
+    const bool terrainIsFloor = ObstacleCommon_TerrainIsFloor();
 
     Player* player = &gPlayer[0];
 
@@ -353,7 +347,7 @@ static void ObstacleAheadCue_OnPostUpdate(IEvent* event) {
             // slope may still rise ahead — so the walk starts at the ship when it is
             // already inside, stops at the warn band's edge, and only a far face
             // behind the ship (or a near face beyond the band) drops the box outright.
-            if (!(tFar > 0.0f) || !(tNear < warnDist)) {
+            if (!(tFar > 0.0f) || !(tNear < warnDist) || terrainIsFloor) {
                 return;
             }
             dbg.heightfieldTested++;

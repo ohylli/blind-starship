@@ -201,8 +201,8 @@ static inline bool Object_PolyHeightfieldHit(const PolyHeightfield* hf, const Ve
 // point, evaluates the triangle's plane at the point's X/Z into hitData.y, and only then
 // compares the point's Y against it — and writes it whether or not the point is low
 // enough to hit (the engine's own Player_FloorCheck reads the same output to seat the
-// ship's shadow on a bump). So the probe's own Y only has to pass
-// the bounds check: it is placed mid-box, and worldPoint->y is ignored.
+// ship's shadow on a bump). So the caller supplies no Y: the probe's own Y only has to
+// pass the bounds check, and it is placed mid-box.
 //
 // The value is the engine's crash threshold, not the drawn surface: hitData.y is in the
 // mesh's LOCAL frame and the engine compares the WORLD Y against it without adding
@@ -212,11 +212,16 @@ static inline bool Object_PolyHeightfieldHit(const PolyHeightfield* hf, const Ve
 // crash test uses.
 //
 // False when no triangle lies under the point (outside the mesh's outline or its box):
-// hitData.y is preset to NaN, which the range test below rejects along with a garbage
-// height from a degenerate (vertical) triangle, whose plane formula divides by zero.
-static inline bool Object_PolyHeightfieldSurfaceY(const PolyHeightfield* hf, const Vec3f* worldPoint, f32* surfaceY) {
-    f32 rx = worldPoint->x - hf->objPos.x;
-    f32 rz = worldPoint->z - hf->objPos.z;
+// hitData.y is preset to NaN, which the range test below rejects. A degenerate (vertical)
+// triangle, whose plane formula divides by zero, yields a NaN the engine's s32 return
+// converts with undefined behaviour — INT_MIN on x86, which the range test also rejects,
+// but 0 on AArch64, which it would accept for a mesh whose box straddles y = 0. Reaching
+// it takes the probe's X/Z landing exactly on the triangle's projected line, and the
+// conversion is the engine's own (Object_PolyHeightfieldHit runs the same code), so it is
+// noted, not guarded.
+static inline bool Object_PolyHeightfieldSurfaceY(const PolyHeightfield* hf, f32 worldX, f32 worldZ, f32* surfaceY) {
+    f32 rx = worldX - hf->objPos.x;
+    f32 rz = worldZ - hf->objPos.z;
     Vec3f probe = { hf->objPos.x + hf->cs * rx + hf->sn * rz,
                     hf->objPos.y + 0.5f * (hf->header->min.y + hf->header->max.y),
                     hf->objPos.z - hf->sn * rx + hf->cs * rz };
