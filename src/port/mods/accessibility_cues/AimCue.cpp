@@ -182,13 +182,12 @@ void AimCue_Register() {
 
     // PAN render mode: the pan/pitch ARE the signal, so no HRTF; pinned RESAMPLE pitch: the
     // spectral shifter's latency and transient softening would smear the click's attack.
-    sAimCue = CueRegistry_Register(kAimCueId, "Aim guide",
-                                   "A repeating click that tells you where you are aiming: pan for "
-                                   "left/right, pitch for up/down; it clicks faster as your aim nears "
-                                   "a lockable enemy.",
-                                   { .generator = AimCue_GenerateClick,
-                                     .mode = CUE3D_MODE_PAN,
-                                     .pitchStyle = CUE3D_SOURCE_PITCH_RESAMPLE });
+    sAimCue = CueRegistry_Register(
+        kAimCueId, "Aim guide",
+        "A repeating click that tells you where you are aiming: pan for "
+        "left/right, pitch for up/down; it clicks faster as your aim nears "
+        "a lockable enemy.",
+        { .generator = AimCue_GenerateClick, .mode = CUE3D_MODE_PAN, .pitchStyle = CUE3D_SOURCE_PITCH_RESAMPLE });
 
     REGISTER_LISTENER(GamePostUpdateEvent, AimCue_OnPostUpdate, EVENT_PRIORITY_NORMAL);
 }

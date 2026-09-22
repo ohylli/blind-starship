@@ -43,11 +43,11 @@ static bool EnemyCue_IsLogEnabled() {
     return CVarGetInteger(kEnemyCueLogCVar, 0) == 1;
 }
 
-#define ENEMY_CUE_TRACE(...)              \
-    do {                                  \
-        if (EnemyCue_IsLogEnabled()) {    \
-            SPDLOG_TRACE(__VA_ARGS__);    \
-        }                                 \
+#define ENEMY_CUE_TRACE(...)           \
+    do {                               \
+        if (EnemyCue_IsLogEnabled()) { \
+            SPDLOG_TRACE(__VA_ARGS__); \
+        }                              \
     } while (0)
 
 // One chosen enemy: what the cue voice needs (body-frame delta) plus what the sticky
@@ -177,11 +177,11 @@ void EnemyCue_Register() {
     CVarRegisterInteger(kEnemyCueVoicesCVar, kAccessibilityEnemyCueDefaultVoices);
     CVarRegisterInteger(kEnemyCueLogCVar, 0);
 
-    sEnemyCue = CueRegistry_Register(kEnemyCueId, "Enemy locator",
-                                     "Tracks the closest lockable enemies: ahead of your aim on rails, "
-                                     "all around you in all-range mode.",
-                                     { .wavPath = "assets/accessibility/enemy.wav",
-                                       .maxVoices = kAccessibilityEnemyCueMaxVoices });
+    sEnemyCue = CueRegistry_Register(
+        kEnemyCueId, "Enemy locator",
+        "Tracks the closest lockable enemies: ahead of your aim on rails, "
+        "all around you in all-range mode.",
+        { .wavPath = "assets/accessibility/enemy.wav", .maxVoices = kAccessibilityEnemyCueMaxVoices });
 
     REGISTER_LISTENER(GamePostUpdateEvent, EnemyCue_OnPostUpdate, EVENT_PRIORITY_NORMAL);
 }

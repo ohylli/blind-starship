@@ -76,9 +76,9 @@ const char* ObstacleDirection_Name(ObstacleDirection dir); // "left" / "right" /
 // documented in CueCommon.h. Plain scalars only. One section per direction; the debug
 // server reports left+right under the side cue and the other two under their own cue.
 struct ObstacleDirectionTargetDebug {
-    bool active = false;  // a box won this direction and its voice was driven
+    bool active = false;    // a box won this direction and its voice was driven
     int32_t candidates = 0; // boxes classified into this direction this tick
-    int32_t array = -1;   // ObstacleArray; the debug server resolves the name
+    int32_t array = -1;     // ObstacleArray; the debug server resolves the name
     int32_t slot = -1, objId = -1, record = -1;
     bool heightfield = false;     // a heightfield mesh box (box-only for the side pair, which
                                   // over-reports; see `fromTerrainWalk` for below)
@@ -95,7 +95,7 @@ struct ObstacleDirectionTargetDebug {
     float clear = 0;              // the winning clearance on the cue's axis (> 0; under the
                                   // margin only for a box already alongside / the terrain
                                   // sample beneath the ship, pinned at the band's near end)
-    float gapZ = 0;           // raw distance to the near z face, world units
+    float gapZ = 0;               // raw distance to the near z face, world units
     float dx = 0, dy = 0, dz = 0;
     float halfX = 0, halfY = 0, halfZ = 0;
     float pan = 0;   // side directions: pan magnitude pushed (0 center .. 1 hard)
@@ -106,8 +106,8 @@ struct ObstacleDirectionCueDebug {
     int32_t frame = -1;
     bool scanned = false; // the scan ran; every direction inactive means nothing qualified
     bool enabled = false, obstacleEnabled = false, control = false;
-    bool modeOk = false, allRange = false; // CueScan_ModeInScope result + mode flag; v1 is
-                                           // rails-only, so allRange true is itself a gate
+    bool modeOk = false, allRange = false;                    // CueScan_ModeInScope result + mode flag; v1 is
+                                                              // rails-only, so allRange true is itself a gate
     int32_t scanActive = 0, scanObstacles = 0, scanBoxes = 0; // ObstacleScanStats
     int32_t aheadClaimed = 0; // solid boxes skipped whole because the ahead cue is warning
                               // about them (on course AND still upcoming); a heightfield

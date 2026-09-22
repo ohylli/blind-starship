@@ -187,9 +187,10 @@ struct Cue3DSource {
     int shiftLatencyFrames = 0;  // shifter input+output latency, frames (immutable after publish)
     int shiftTail = 0;           // shifter tail left to drain after stop/EOF, frames (audio-thread-only)
     bool shiftWasActive = false; // previous block took the shift path (audio-thread-only) — style-flip reset detector
-    double intervalCounter = 0.0; // wall-clock frames since the last (re)start, for interval cadence (audio-thread-only)
-    uint32_t lastGen = 0;    // last startGen the callback adopted (audio-thread-only, like cursor)
-    bool ended = false;      // one-shot reached EOF; render gate, cleared on gen bump (audio-thread-only, like cursor)
+    double intervalCounter =
+        0.0;              // wall-clock frames since the last (re)start, for interval cadence (audio-thread-only)
+    uint32_t lastGen = 0; // last startGen the callback adopted (audio-thread-only, like cursor)
+    bool ended = false;   // one-shot reached EOF; render gate, cleared on gen bump (audio-thread-only, like cursor)
     bool loop = false;
 
     // Cross-thread: game thread writes, audio callback reads. Read once per block.
@@ -197,10 +198,10 @@ struct Cue3DSource {
     std::atomic<float> y{ 0.0f }; //                  +y up
     std::atomic<float> z{ 1.0f }; //                  +z ahead
     std::atomic<float> gain{ 1.0f };
-    std::atomic<float> rate{ 1.0f };        // playback-rate multiplier (pitch); 1.0 = native
-    std::atomic<float> intervalSec{ 0.0f }; // restart cadence, seconds; 0 = seamless loop (looping sources only)
+    std::atomic<float> rate{ 1.0f };          // playback-rate multiplier (pitch); 1.0 = native
+    std::atomic<float> intervalSec{ 0.0f };   // restart cadence, seconds; 0 = seamless loop (looping sources only)
     std::atomic<int> mode{ CUE3D_MODE_HRTF }; // Cue3DMode render selector (HRTF / PAN / DIRECT)
-    std::atomic<float> lowPassHz{ 0.0f };   // per-source low-pass cutoff; 0 = off
+    std::atomic<float> lowPassHz{ 0.0f };     // per-source low-pass cutoff; 0 = off
     // Cue3DSourcePitchStyle: per-source pitch-realization override; GLOBAL follows g_pitchStyle.
     std::atomic<int> pitchStyleOverride{ CUE3D_SOURCE_PITCH_GLOBAL };
 
@@ -337,12 +338,12 @@ Cue3DSource* CreateSource(const float* monoPcm, int frames, bool loop) {
     s.y.store(0.0f, std::memory_order_relaxed);
     s.z.store(1.0f, std::memory_order_relaxed); // default "ahead"
     s.gain.store(1.0f, std::memory_order_relaxed);
-    s.rate.store(1.0f, std::memory_order_relaxed); // native pitch until SetPitch
+    s.rate.store(1.0f, std::memory_order_relaxed);        // native pitch until SetPitch
     s.intervalSec.store(0.0f, std::memory_order_relaxed); // seamless loop until SetInterval
     s.mode.store(CUE3D_MODE_HRTF, std::memory_order_relaxed);
     s.lowPassHz.store(0.0f, std::memory_order_relaxed); // no per-source muffle until SetLowPass
     s.pitchStyleOverride.store(CUE3D_SOURCE_PITCH_GLOBAL, std::memory_order_relaxed);
-    s.playing.store(false, std::memory_order_relaxed);  // silent until Cue3D_Play
+    s.playing.store(false, std::memory_order_relaxed); // silent until Cue3D_Play
     // lastGen (0 above) matches this fresh startGen, so the first block does not spuriously
     // "restart" — the first real restart comes from Cue3D_Play bumping startGen to 1.
     s.startGen.store(0, std::memory_order_relaxed);
@@ -643,8 +644,8 @@ void ProduceBlock() {
             // Latency drain bookkeeping for the skip gate above: while rendering, the
             // shifter always holds ~latency frames of signal; once stopped/ended, count
             // that tail down block by block as silence flushes it out.
-            s.shiftTail = shouldRender ? s.shiftLatencyFrames
-                                       : (s.shiftTail > kFrameSize ? s.shiftTail - kFrameSize : 0);
+            s.shiftTail =
+                shouldRender ? s.shiftLatencyFrames : (s.shiftTail > kFrameSize ? s.shiftTail - kFrameSize : 0);
         }
         s.shiftWasActive = shiftPath;
 
@@ -1055,11 +1056,9 @@ extern "C" void Cue3D_SetPosition(Cue3DSource* source, float x, float y, float z
 extern "C" void Cue3D_SetRearEffect(float cutoffHz, float gainDip, float tremoloDepth, float tremoloHz) {
     // Sanitize here, on the game thread, so the audio callback can trust these values:
     // it runs the filter per sample and has no cheap way to recover once its state is NaN.
-    g_rearCutoffHz.store(
-        SanitizeParam(cutoffHz, kRearCutoffMinHz, kRearCutoffMaxHz, CUE3D_REAR_CUTOFF_HZ_DEFAULT),
-        std::memory_order_relaxed);
-    g_rearGainDip.store(SanitizeParam(gainDip, 0.0f, 1.0f, CUE3D_REAR_GAIN_DIP_DEFAULT),
-                        std::memory_order_relaxed);
+    g_rearCutoffHz.store(SanitizeParam(cutoffHz, kRearCutoffMinHz, kRearCutoffMaxHz, CUE3D_REAR_CUTOFF_HZ_DEFAULT),
+                         std::memory_order_relaxed);
+    g_rearGainDip.store(SanitizeParam(gainDip, 0.0f, 1.0f, CUE3D_REAR_GAIN_DIP_DEFAULT), std::memory_order_relaxed);
     g_rearTremoloDepth.store(SanitizeParam(tremoloDepth, 0.0f, 1.0f, CUE3D_REAR_TREMOLO_DEPTH_DEFAULT),
                              std::memory_order_relaxed);
     g_rearTremoloHz.store(SanitizeParam(tremoloHz, 0.0f, kRearTremoloMaxHz, CUE3D_REAR_TREMOLO_HZ_DEFAULT),
@@ -1068,8 +1067,10 @@ extern "C" void Cue3D_SetRearEffect(float cutoffHz, float gainDip, float tremolo
 
 #else // HAVE_STEAM_AUDIO not defined — no-op stubs
 
-extern "C" void Cue3D_Init(void) {}
-extern "C" void Cue3D_Shutdown(void) {}
+extern "C" void Cue3D_Init(void) {
+}
+extern "C" void Cue3D_Shutdown(void) {
+}
 extern "C" bool Cue3D_IsActive(void) {
     return false;
 }

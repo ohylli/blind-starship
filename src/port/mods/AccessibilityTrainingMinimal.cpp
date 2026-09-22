@@ -61,8 +61,7 @@ static bool AccessibilityTrainingMinimal_IsEnabled() {
 }
 
 static bool AccessibilityTrainingMinimal_ScopeActive() {
-    return AccessibilityTrainingMinimal_IsEnabled() &&
-           (gCurrentLevel == LEVEL_TRAINING);
+    return AccessibilityTrainingMinimal_IsEnabled() && (gCurrentLevel == LEVEL_TRAINING);
 }
 
 static bool AccessibilityTrainingMinimal_ShouldFilter(ObjectEventType type, void* object) {

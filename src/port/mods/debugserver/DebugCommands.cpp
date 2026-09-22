@@ -41,83 +41,135 @@ static constexpr int kProtocolVersion = 1;
 
 static const char* GameStateName(s32 state) {
     switch (state) {
-        case GSTATE_NONE:       return "GSTATE_NONE";
-        case GSTATE_INIT:       return "GSTATE_INIT";
-        case GSTATE_TITLE:      return "GSTATE_TITLE";
-        case GSTATE_MENU:       return "GSTATE_MENU";
-        case GSTATE_MAP:        return "GSTATE_MAP";
-        case GSTATE_GAME_OVER:  return "GSTATE_GAME_OVER";
-        case GSTATE_VS_INIT:    return "GSTATE_VS_INIT";
-        case GSTATE_PLAY:       return "GSTATE_PLAY";
-        case GSTATE_ENDING:     return "GSTATE_ENDING";
-        case GSTATE_BOOT:       return "GSTATE_BOOT";
-        case GSTATE_BOOT_WAIT:  return "GSTATE_BOOT_WAIT";
-        case GSTATE_SHOW_LOGO:  return "GSTATE_SHOW_LOGO";
-        case GSTATE_CHECK_SAVE: return "GSTATE_CHECK_SAVE";
-        case GSTATE_LOGO_WAIT:  return "GSTATE_LOGO_WAIT";
-        case GSTATE_START:      return "GSTATE_START";
-        default:                return "GSTATE_UNKNOWN";
+        case GSTATE_NONE:
+            return "GSTATE_NONE";
+        case GSTATE_INIT:
+            return "GSTATE_INIT";
+        case GSTATE_TITLE:
+            return "GSTATE_TITLE";
+        case GSTATE_MENU:
+            return "GSTATE_MENU";
+        case GSTATE_MAP:
+            return "GSTATE_MAP";
+        case GSTATE_GAME_OVER:
+            return "GSTATE_GAME_OVER";
+        case GSTATE_VS_INIT:
+            return "GSTATE_VS_INIT";
+        case GSTATE_PLAY:
+            return "GSTATE_PLAY";
+        case GSTATE_ENDING:
+            return "GSTATE_ENDING";
+        case GSTATE_BOOT:
+            return "GSTATE_BOOT";
+        case GSTATE_BOOT_WAIT:
+            return "GSTATE_BOOT_WAIT";
+        case GSTATE_SHOW_LOGO:
+            return "GSTATE_SHOW_LOGO";
+        case GSTATE_CHECK_SAVE:
+            return "GSTATE_CHECK_SAVE";
+        case GSTATE_LOGO_WAIT:
+            return "GSTATE_LOGO_WAIT";
+        case GSTATE_START:
+            return "GSTATE_START";
+        default:
+            return "GSTATE_UNKNOWN";
     }
 }
 
 static const char* PlayStateName(s32 state) {
     switch (state) {
-        case PLAY_STANDBY: return "PLAY_STANDBY";
-        case PLAY_INIT:    return "PLAY_INIT";
-        case PLAY_UPDATE:  return "PLAY_UPDATE";
-        case PLAY_PAUSE:   return "PLAY_PAUSE";
-        default:           return "PLAY_UNKNOWN";
+        case PLAY_STANDBY:
+            return "PLAY_STANDBY";
+        case PLAY_INIT:
+            return "PLAY_INIT";
+        case PLAY_UPDATE:
+            return "PLAY_UPDATE";
+        case PLAY_PAUSE:
+            return "PLAY_PAUSE";
+        default:
+            return "PLAY_UNKNOWN";
     }
 }
 
 static const char* PlayerStateName(s32 state) {
     switch (state) {
-        case PLAYERSTATE_STANDBY:         return "PLAYERSTATE_STANDBY";
-        case PLAYERSTATE_INIT:            return "PLAYERSTATE_INIT";
-        case PLAYERSTATE_LEVEL_INTRO:     return "PLAYERSTATE_LEVEL_INTRO";
-        case PLAYERSTATE_ACTIVE:          return "PLAYERSTATE_ACTIVE";
-        case PLAYERSTATE_DOWN:            return "PLAYERSTATE_DOWN";
-        case PLAYERSTATE_U_TURN:          return "PLAYERSTATE_U_TURN";
-        case PLAYERSTATE_NEXT:            return "PLAYERSTATE_NEXT";
-        case PLAYERSTATE_LEVEL_COMPLETE:  return "PLAYERSTATE_LEVEL_COMPLETE";
-        case PLAYERSTATE_ENTER_WARP_ZONE: return "PLAYERSTATE_ENTER_WARP_ZONE";
-        case PLAYERSTATE_START_360:       return "PLAYERSTATE_START_360";
-        case PLAYERSTATE_GFOX_REPAIR:     return "PLAYERSTATE_GFOX_REPAIR";
-        case PLAYERSTATE_ANDROSS_MOUTH:   return "PLAYERSTATE_ANDROSS_MOUTH";
-        case PLAYERSTATE_UNK_12:          return "PLAYERSTATE_UNK_12";
-        case PLAYERSTATE_VS_STANDBY:      return "PLAYERSTATE_VS_STANDBY";
-        default:                          return "PLAYERSTATE_UNKNOWN";
+        case PLAYERSTATE_STANDBY:
+            return "PLAYERSTATE_STANDBY";
+        case PLAYERSTATE_INIT:
+            return "PLAYERSTATE_INIT";
+        case PLAYERSTATE_LEVEL_INTRO:
+            return "PLAYERSTATE_LEVEL_INTRO";
+        case PLAYERSTATE_ACTIVE:
+            return "PLAYERSTATE_ACTIVE";
+        case PLAYERSTATE_DOWN:
+            return "PLAYERSTATE_DOWN";
+        case PLAYERSTATE_U_TURN:
+            return "PLAYERSTATE_U_TURN";
+        case PLAYERSTATE_NEXT:
+            return "PLAYERSTATE_NEXT";
+        case PLAYERSTATE_LEVEL_COMPLETE:
+            return "PLAYERSTATE_LEVEL_COMPLETE";
+        case PLAYERSTATE_ENTER_WARP_ZONE:
+            return "PLAYERSTATE_ENTER_WARP_ZONE";
+        case PLAYERSTATE_START_360:
+            return "PLAYERSTATE_START_360";
+        case PLAYERSTATE_GFOX_REPAIR:
+            return "PLAYERSTATE_GFOX_REPAIR";
+        case PLAYERSTATE_ANDROSS_MOUTH:
+            return "PLAYERSTATE_ANDROSS_MOUTH";
+        case PLAYERSTATE_UNK_12:
+            return "PLAYERSTATE_UNK_12";
+        case PLAYERSTATE_VS_STANDBY:
+            return "PLAYERSTATE_VS_STANDBY";
+        default:
+            return "PLAYERSTATE_UNKNOWN";
     }
 }
 
 static const char* PlayerFormName(s32 form) {
     switch (form) {
-        case FORM_ARWING:      return "FORM_ARWING";
-        case FORM_LANDMASTER:  return "FORM_LANDMASTER";
-        case FORM_BLUE_MARINE: return "FORM_BLUE_MARINE";
-        case FORM_ON_FOOT:     return "FORM_ON_FOOT";
-        case FORM_UNK_4:       return "FORM_UNK_4";
-        case FORM_NONE:        return "FORM_NONE";
-        default:               return "FORM_UNKNOWN";
+        case FORM_ARWING:
+            return "FORM_ARWING";
+        case FORM_LANDMASTER:
+            return "FORM_LANDMASTER";
+        case FORM_BLUE_MARINE:
+            return "FORM_BLUE_MARINE";
+        case FORM_ON_FOOT:
+            return "FORM_ON_FOOT";
+        case FORM_UNK_4:
+            return "FORM_UNK_4";
+        case FORM_NONE:
+            return "FORM_NONE";
+        default:
+            return "FORM_UNKNOWN";
     }
 }
 
 static const char* ObjStatusName(u8 status) {
     switch (status) {
-        case OBJ_FREE:   return "OBJ_FREE";
-        case OBJ_INIT:   return "OBJ_INIT";
-        case OBJ_ACTIVE: return "OBJ_ACTIVE";
-        case OBJ_DYING:  return "OBJ_DYING";
-        default:         return "OBJ_UNKNOWN";
+        case OBJ_FREE:
+            return "OBJ_FREE";
+        case OBJ_INIT:
+            return "OBJ_INIT";
+        case OBJ_ACTIVE:
+            return "OBJ_ACTIVE";
+        case OBJ_DYING:
+            return "OBJ_DYING";
+        default:
+            return "OBJ_UNKNOWN";
     }
 }
 
 static const char* ShotStatusName(u8 status) {
     switch (status) {
-        case SHOT_FREE:    return "SHOT_FREE";
-        case SHOT_ACTIVE:  return "SHOT_ACTIVE";
-        case SHOT_HITMARK: return "SHOT_HITMARK";
-        default:           return "SHOT_UNKNOWN";
+        case SHOT_FREE:
+            return "SHOT_FREE";
+        case SHOT_ACTIVE:
+            return "SHOT_ACTIVE";
+        case SHOT_HITMARK:
+            return "SHOT_HITMARK";
+        default:
+            return "SHOT_UNKNOWN";
     }
 }
 
@@ -225,8 +277,8 @@ static constexpr long long kMaxStepFrames = 100000;
 // finished (a new request replaces sStep, never mutates a predecessor).
 struct StepState {
     int requested = 0;
-    int remaining = 0;               // > 0 while the step is in flight
-    int run = 0;                     // play frames that actually executed
+    int remaining = 0;                // > 0 while the step is in flight
+    int run = 0;                      // play frames that actually executed
     const char* endedEarly = nullptr; // why the step stopped short, for the response note
 };
 static std::shared_ptr<StepState> sStep; // game thread only
@@ -527,8 +579,8 @@ static void WarpOnGamePostUpdate(IEvent* event) {
             // and PLAY_INIT breaks right after Play_Init, so the spec Play_InitLevel queues
             // is applied one frame before the player leaves PLAYERSTATE_INIT — testing on
             // gPlayState alone would compare against a stale spec id.
-            if (gGameState == GSTATE_PLAY && gCurrentLevel == warp.level && gPlayState > PLAY_INIT &&
-                gPlayer != NULL && gPlayer[0].state != PLAYERSTATE_INIT) {
+            if (gGameState == GSTATE_PLAY && gCurrentLevel == warp.level && gPlayState > PLAY_INIT && gPlayer != NULL &&
+                gPlayer[0].state != PLAYERSTATE_INIT) {
                 // Game_SetGameState faded every sequence player to silence, and the game
                 // only brings them back at the end of an audio-spec change (which a
                 // stock level entry always is, since it comes from the map). A warp into
@@ -587,12 +639,12 @@ struct WarpLevelName {
     s32 level;
 };
 static const WarpLevelName kWarpLevels[] = {
-    { "corneria", LEVEL_CORNERIA },      { "meteo", LEVEL_METEO },     { "sector-x", LEVEL_SECTOR_X },
-    { "area-6", LEVEL_AREA_6 },          { "beta-sb", LEVEL_UNK_4 },   { "sector-y", LEVEL_SECTOR_Y },
-    { "venom-1", LEVEL_VENOM_1 },        { "solar", LEVEL_SOLAR },     { "zoness", LEVEL_ZONESS },
-    { "andross", LEVEL_VENOM_ANDROSS },  { "training", LEVEL_TRAINING }, { "macbeth", LEVEL_MACBETH },
-    { "titania", LEVEL_TITANIA },        { "aquas", LEVEL_AQUAS },     { "fortuna", LEVEL_FORTUNA },
-    { "katina", LEVEL_KATINA },          { "bolse", LEVEL_BOLSE },     { "sector-z", LEVEL_SECTOR_Z },
+    { "corneria", LEVEL_CORNERIA },     { "meteo", LEVEL_METEO },       { "sector-x", LEVEL_SECTOR_X },
+    { "area-6", LEVEL_AREA_6 },         { "beta-sb", LEVEL_UNK_4 },     { "sector-y", LEVEL_SECTOR_Y },
+    { "venom-1", LEVEL_VENOM_1 },       { "solar", LEVEL_SOLAR },       { "zoness", LEVEL_ZONESS },
+    { "andross", LEVEL_VENOM_ANDROSS }, { "training", LEVEL_TRAINING }, { "macbeth", LEVEL_MACBETH },
+    { "titania", LEVEL_TITANIA },       { "aquas", LEVEL_AQUAS },       { "fortuna", LEVEL_FORTUNA },
+    { "katina", LEVEL_KATINA },         { "bolse", LEVEL_BOLSE },       { "sector-z", LEVEL_SECTOR_Z },
     { "venom-2", LEVEL_VENOM_2 },
 };
 
@@ -929,11 +981,14 @@ static nlohmann::json DumpPlayer(const Player& p) {
     j["boostSpeed"] = p.boostSpeed;
     j["shields"] = p.shields;
     j["damage"] = p.damage;
-    j["boost"] = { { "meter", p.boostMeter }, { "active", (bool) p.boostActive }, //
+    j["boost"] = { { "meter", p.boostMeter },
+                   { "active", (bool) p.boostActive }, //
                    { "cooldown", (bool) p.boostCooldown } };
     j["wings"] = { { "left", p.arwing.leftWingState }, { "right", p.arwing.rightWingState } };
-    j["cam"] = { { "eye", Vec3(p.cam.eye) }, { "at", Vec3(p.cam.at) }, //
-                 { "yaw", p.camYaw }, { "pitch", p.camPitch } };
+    j["cam"] = { { "eye", Vec3(p.cam.eye) },
+                 { "at", Vec3(p.cam.at) }, //
+                 { "yaw", p.camYaw },
+                 { "pitch", p.camPitch } };
     j["mercyTimer"] = p.mercyTimer;
     j["hitTimer"] = p.hitTimer;
     j["grounded"] = (bool) p.grounded;
@@ -1196,19 +1251,27 @@ static int32_t ObjectsHandler(std::shared_ptr<Ship::Console> console, const std:
 
 static const char* CueModeName(Cue3DMode mode) {
     switch (mode) {
-        case CUE3D_MODE_HRTF:   return "CUE3D_MODE_HRTF";
-        case CUE3D_MODE_PAN:    return "CUE3D_MODE_PAN";
-        case CUE3D_MODE_DIRECT: return "CUE3D_MODE_DIRECT";
-        default:                return "CUE3D_MODE_UNKNOWN";
+        case CUE3D_MODE_HRTF:
+            return "CUE3D_MODE_HRTF";
+        case CUE3D_MODE_PAN:
+            return "CUE3D_MODE_PAN";
+        case CUE3D_MODE_DIRECT:
+            return "CUE3D_MODE_DIRECT";
+        default:
+            return "CUE3D_MODE_UNKNOWN";
     }
 }
 
 static const char* CueSourcePitchStyleName(Cue3DSourcePitchStyle style) {
     switch (style) {
-        case CUE3D_SOURCE_PITCH_GLOBAL:   return "CUE3D_SOURCE_PITCH_GLOBAL";
-        case CUE3D_SOURCE_PITCH_RESAMPLE: return "CUE3D_SOURCE_PITCH_RESAMPLE";
-        case CUE3D_SOURCE_PITCH_SHIFT:    return "CUE3D_SOURCE_PITCH_SHIFT";
-        default:                          return "CUE3D_SOURCE_PITCH_UNKNOWN";
+        case CUE3D_SOURCE_PITCH_GLOBAL:
+            return "CUE3D_SOURCE_PITCH_GLOBAL";
+        case CUE3D_SOURCE_PITCH_RESAMPLE:
+            return "CUE3D_SOURCE_PITCH_RESAMPLE";
+        case CUE3D_SOURCE_PITCH_SHIFT:
+            return "CUE3D_SOURCE_PITCH_SHIFT";
+        default:
+            return "CUE3D_SOURCE_PITCH_UNKNOWN";
     }
 }
 
@@ -1588,23 +1651,20 @@ void DebugCommands_Init() {
     REGISTER_LISTENER(GamePostUpdateEvent, WarpOnGamePostUpdate, EVENT_PRIORITY_NORMAL);
 
     auto console = Ship::Context::GetInstance()->GetConsole();
-    console->AddCommand("health", { HealthHandler,
-                                    "Debug server readiness: protocol version + current game state. Safe anywhere.",
-                                    {} });
-    console->AddCommand("pause", { PauseHandler,
-                                   "Debug-pause the game (shared with the L-trigger pause). Requires play mode.",
-                                   {} });
-    console->AddCommand("resume", { ResumeHandler,
-                                    "Clear the debug pause. Safe anywhere.",
-                                    {} });
+    console->AddCommand(
+        "health",
+        { HealthHandler, "Debug server readiness: protocol version + current game state. Safe anywhere.", {} });
+    console->AddCommand(
+        "pause", { PauseHandler, "Debug-pause the game (shared with the L-trigger pause). Requires play mode.", {} });
+    console->AddCommand("resume", { ResumeHandler, "Clear the debug pause. Safe anywhere.", {} });
     console->AddCommand("step", { StepHandler,
                                   "Run exactly n play frames (default 1), then re-pause. Requires live gameplay.",
                                   { { "n", Ship::ArgumentType::NUMBER, true } } });
-    console->AddCommand("warp", { WarpHandler,
-                                  "Enter a level from anywhere: warp <level> [phase] [--no-intro] [--paused] "
-                                  "[--fresh] [--at <p> --load <n> [--ground <g>]].",
-                                  { { "level", Ship::ArgumentType::TEXT, false },
-                                    { "phase", Ship::ArgumentType::NUMBER, true } } });
+    console->AddCommand(
+        "warp", { WarpHandler,
+                  "Enter a level from anywhere: warp <level> [phase] [--no-intro] [--paused] "
+                  "[--fresh] [--at <p> --load <n> [--ground <g>]].",
+                  { { "level", Ship::ArgumentType::TEXT, false }, { "phase", Ship::ArgumentType::NUMBER, true } } });
     console->AddCommand("checkpoint", { CheckpointHandler,
                                         "Capture the current on-rails position as warp checkpoint data. "
                                         "Requires normal flight.",

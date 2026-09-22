@@ -22,8 +22,8 @@ inline constexpr const char* kObstacleAheadCueId = "ObstacleAhead";
 // Siblings add their own knobs under the same gAccessibilityObstacleCue... prefix rather
 // than renaming these.
 inline constexpr const char* kObstacleCueWarnDistCVar = "gAccessibilityObstacleCueWarnDist"; // world units
-inline constexpr const char* kObstacleCueSlowCVar = "gAccessibilityObstacleCueSlowSec"; // interval at warn start
-inline constexpr const char* kObstacleCueFastCVar = "gAccessibilityObstacleCueFastSec"; // interval at contact
+inline constexpr const char* kObstacleCueSlowCVar = "gAccessibilityObstacleCueSlowSec";      // interval at warn start
+inline constexpr const char* kObstacleCueFastCVar = "gAccessibilityObstacleCueFastSec";      // interval at contact
 inline constexpr const char* kObstacleCueBoostCVar = "gAccessibilityObstacleCueBoost"; // loudness vs the other cues
 
 // Warn-start gap to the obstacle's near Z face. On rails the streaming loop spawns an
@@ -82,21 +82,21 @@ struct ObstacleAheadCueDebug {
     bool scanned = false; // the scan ran; scanned && !active means nothing on course
     bool enabled = false, obstacleEnabled = false, control = false;
     bool modeOk = false, allRange = false; // CueScan_ModeInScope result + mode flag
-    bool aimValid = true; // the all-range form gate (Player_AimAnglesValid). Defaults
-                          // true — on rails and when an earlier gate already stopped the
-                          // tick it is never evaluated — so false always means "the
-                          // heading gate is what silenced the cue"
+    bool aimValid = true;                  // the all-range form gate (Player_AimAnglesValid). Defaults
+                                           // true — on rails and when an earlier gate already stopped the
+                                           // tick it is never evaluated — so false always means "the
+                                           // heading gate is what silenced the cue"
     int32_t scanActive = 0, scanObstacles = 0, scanBoxes = 0; // ObstacleScanStats
-    int32_t onCourse = 0;           // boxes that passed the course test this tick
+    int32_t onCourse = 0;                                     // boxes that passed the course test this tick
     // Heightfield refinement (ObstacleAheadCue_HeightfieldGap): boxes whose course
     // span was walked, how many of those the walk dropped (the course never meets the
     // surface, or meets it only at the warn band's far edge), and the engine
     // surface-test calls spent — the cost line.
     int32_t heightfieldTested = 0, heightfieldCleared = 0, heightfieldProbes = 0;
-    float warnDist = 0, margin = 0; // effective (post-guard) knob values used this tick
+    float warnDist = 0, margin = 0;     // effective (post-guard) knob values used this tick
     float fwdX = 0, fwdY = 0, fwdZ = 0; // unit heading the all-range ray test cast along;
                                         // zero on rails (the fixed -z test needs none)
-    float intervalSec = 0;          // repeat interval pushed this tick
+    float intervalSec = 0;              // repeat interval pushed this tick
     ObstacleAheadCueTargetDebug target; // the winning (nearest) box; valid when active
 };
 

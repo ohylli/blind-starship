@@ -188,8 +188,7 @@ static inline bool Object_ResolvePolyHeightfield(s32 colId, const Vec3f* objPos,
 static inline bool Object_PolyHeightfieldHit(const PolyHeightfield* hf, const Vec3f* worldPoint) {
     f32 rx = worldPoint->x - hf->objPos.x;
     f32 rz = worldPoint->z - hf->objPos.z;
-    Vec3f probe = { hf->objPos.x + hf->cs * rx + hf->sn * rz, worldPoint->y,
-                    hf->objPos.z - hf->sn * rx + hf->cs * rz };
+    Vec3f probe = { hf->objPos.x + hf->cs * rx + hf->sn * rz, worldPoint->y, hf->objPos.z - hf->sn * rx + hf->cs * rz };
     Vec3f objPos = hf->objPos; // the engine API takes non-const pointers
     Vec3f hitData;
     return Col2_CheckSurface(&probe, &objPos, hf->header, hf->polys, hf->mesh, &hitData);

@@ -157,7 +157,7 @@ void BonusText_DrawAll(void) {
             Matrix_Push(&gGfxMatrix);
             BonusText_Draw(bonus);
             Matrix_Pop(&gGfxMatrix);
-            
+
             FrameInterpolation_RecordCloseChild();
         }
     }

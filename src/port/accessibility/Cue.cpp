@@ -41,8 +41,8 @@ std::vector<Cue*>& AllCues() {
 } // namespace
 
 Cue::Cue(const char* id, const char* name, const char* description, const CueSpec& spec)
-    : mId(id), mName(name), mDescription(description),
-      mVolumeCVar(std::string("gAccessibilityCueVolume.") + id), mSpec(spec) {
+    : mId(id), mName(name), mDescription(description), mVolumeCVar(std::string("gAccessibilityCueVolume.") + id),
+      mSpec(spec) {
     CVarRegisterFloat(mVolumeCVar.c_str(), 1.0f);
     // Own the WAV path: the registrant's const char* may not outlive this call. After the
     // copy, null the raw pointer in the stored spec so nothing ever reads the (possibly
@@ -368,7 +368,7 @@ void Cue::PlayOnce(const CueTarget& t) {
         return;
     }
     chosen->target = t;
-    chosen->hasKey = false;       // un-keyed: the refresh-or-stop reap never touches one-shots
+    chosen->hasKey = false; // un-keyed: the refresh-or-stop reap never touches one-shots
     chosen->refreshed = false;
     chosen->startStamp = mNextStartStamp++;
     PushVoiceParams(*chosen);

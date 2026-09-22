@@ -199,8 +199,8 @@ static bool ObstacleAheadCue_ClipToPolyRange(const ObstacleBox& box, const Vec3f
 // the engine calls for the `cues` dump's cost line: at most (span / step + 1) * 3 per
 // box, each a bounds check plus a walk over the mesh's 13-36 triangles on the tables
 // resolved up front.
-static f32 ObstacleAheadCue_HeightfieldGap(const ObstacleBox& box, const Vec3f& origin, const Vec3f& course,
-                                           f32 tStart, f32 tEnd, f32 margin, int32_t* probes) {
+static f32 ObstacleAheadCue_HeightfieldGap(const ObstacleBox& box, const Vec3f& origin, const Vec3f& course, f32 tStart,
+                                           f32 tEnd, f32 margin, int32_t* probes) {
     PolyHeightfield hf;
     if (!Object_ResolvePolyHeightfield(box.polyColId, &box.objPos, box.rotY, &hf)) {
         return -1.0f; // not a tabled mesh — unreachable for a scan-produced box

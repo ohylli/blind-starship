@@ -50,9 +50,8 @@ inline constexpr const char* kAudioCuesEnabledCVar = "gAccessibilityAudioCues";
 // CueCommon.cpp and the F1 sliders in ImguiUI.cpp. Defaults reproduce the old
 // hard-coded mapping exactly.
 inline constexpr const char* kCuePitchForHeightCVar = "gAccessibilityCuePitchForHeight";
-inline constexpr const char* kCuePitchScaleCVar = "gAccessibilityCuePitchScale"; // world units per octave
-inline constexpr const char* kCuePitchRangeOctavesCVar =
-    "gAccessibilityCuePitchRangeOctaves"; // max octaves of bend
+inline constexpr const char* kCuePitchScaleCVar = "gAccessibilityCuePitchScale";               // world units per octave
+inline constexpr const char* kCuePitchRangeOctavesCVar = "gAccessibilityCuePitchRangeOctaves"; // max octaves of bend
 inline constexpr float kCuePitchScaleDefault = 1000.0f;
 inline constexpr float kCuePitchRangeOctavesDefault = 1.0f;
 

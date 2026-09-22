@@ -12,43 +12,75 @@ static bool ObjectSpawnLog_IsEnabled() {
 
 static const char* ObjectSpawnLog_TypeName(ObjectEventType type) {
     switch (type) {
-        case OBJECT_TYPE_ACTOR:       return "ACTOR";
-        case OBJECT_TYPE_ACTOR_EVENT: return "ACTOR_EVENT";
-        case OBJECT_TYPE_BOSS:        return "BOSS";
-        case OBJECT_TYPE_SCENERY:     return "SCENERY";
-        case OBJECT_TYPE_SCENERY360:  return "SCENERY360";
-        case OBJECT_TYPE_SPRITE:      return "SPRITE";
-        case OBJECT_TYPE_ITEM:        return "ITEM";
-        case OBJECT_TYPE_EFFECT:      return "EFFECT";
-        default:                      return "UNKNOWN";
+        case OBJECT_TYPE_ACTOR:
+            return "ACTOR";
+        case OBJECT_TYPE_ACTOR_EVENT:
+            return "ACTOR_EVENT";
+        case OBJECT_TYPE_BOSS:
+            return "BOSS";
+        case OBJECT_TYPE_SCENERY:
+            return "SCENERY";
+        case OBJECT_TYPE_SCENERY360:
+            return "SCENERY360";
+        case OBJECT_TYPE_SPRITE:
+            return "SPRITE";
+        case OBJECT_TYPE_ITEM:
+            return "ITEM";
+        case OBJECT_TYPE_EFFECT:
+            return "EFFECT";
+        default:
+            return "UNKNOWN";
     }
 }
 
 const char* Starship_LevelName(int level) {
     switch (level) {
-        case LEVEL_CORNERIA:       return "LEVEL_CORNERIA";
-        case LEVEL_METEO:          return "LEVEL_METEO";
-        case LEVEL_SECTOR_X:       return "LEVEL_SECTOR_X";
-        case LEVEL_AREA_6:         return "LEVEL_AREA_6";
-        case LEVEL_UNK_4:          return "LEVEL_UNK_4";
-        case LEVEL_SECTOR_Y:       return "LEVEL_SECTOR_Y";
-        case LEVEL_VENOM_1:        return "LEVEL_VENOM_1";
-        case LEVEL_SOLAR:          return "LEVEL_SOLAR";
-        case LEVEL_ZONESS:         return "LEVEL_ZONESS";
-        case LEVEL_VENOM_ANDROSS:  return "LEVEL_VENOM_ANDROSS";
-        case LEVEL_TRAINING:       return "LEVEL_TRAINING";
-        case LEVEL_MACBETH:        return "LEVEL_MACBETH";
-        case LEVEL_TITANIA:        return "LEVEL_TITANIA";
-        case LEVEL_AQUAS:          return "LEVEL_AQUAS";
-        case LEVEL_FORTUNA:        return "LEVEL_FORTUNA";
-        case LEVEL_UNK_15:         return "LEVEL_UNK_15";
-        case LEVEL_KATINA:         return "LEVEL_KATINA";
-        case LEVEL_BOLSE:          return "LEVEL_BOLSE";
-        case LEVEL_SECTOR_Z:       return "LEVEL_SECTOR_Z";
-        case LEVEL_VENOM_2:        return "LEVEL_VENOM_2";
-        case LEVEL_VERSUS:         return "LEVEL_VERSUS";
-        case LEVEL_WARP_ZONE:      return "LEVEL_WARP_ZONE";
-        default:                   return "LEVEL_UNKNOWN";
+        case LEVEL_CORNERIA:
+            return "LEVEL_CORNERIA";
+        case LEVEL_METEO:
+            return "LEVEL_METEO";
+        case LEVEL_SECTOR_X:
+            return "LEVEL_SECTOR_X";
+        case LEVEL_AREA_6:
+            return "LEVEL_AREA_6";
+        case LEVEL_UNK_4:
+            return "LEVEL_UNK_4";
+        case LEVEL_SECTOR_Y:
+            return "LEVEL_SECTOR_Y";
+        case LEVEL_VENOM_1:
+            return "LEVEL_VENOM_1";
+        case LEVEL_SOLAR:
+            return "LEVEL_SOLAR";
+        case LEVEL_ZONESS:
+            return "LEVEL_ZONESS";
+        case LEVEL_VENOM_ANDROSS:
+            return "LEVEL_VENOM_ANDROSS";
+        case LEVEL_TRAINING:
+            return "LEVEL_TRAINING";
+        case LEVEL_MACBETH:
+            return "LEVEL_MACBETH";
+        case LEVEL_TITANIA:
+            return "LEVEL_TITANIA";
+        case LEVEL_AQUAS:
+            return "LEVEL_AQUAS";
+        case LEVEL_FORTUNA:
+            return "LEVEL_FORTUNA";
+        case LEVEL_UNK_15:
+            return "LEVEL_UNK_15";
+        case LEVEL_KATINA:
+            return "LEVEL_KATINA";
+        case LEVEL_BOLSE:
+            return "LEVEL_BOLSE";
+        case LEVEL_SECTOR_Z:
+            return "LEVEL_SECTOR_Z";
+        case LEVEL_VENOM_2:
+            return "LEVEL_VENOM_2";
+        case LEVEL_VERSUS:
+            return "LEVEL_VERSUS";
+        case LEVEL_WARP_ZONE:
+            return "LEVEL_WARP_ZONE";
+        default:
+            return "LEVEL_UNKNOWN";
     }
 }
 
@@ -74,24 +106,16 @@ static void ObjectSpawnLog_Emit(ObjectEventType type, void* object, bool cancell
     Object* obj = (Object*) object;
     if (ObjectSpawnLog_IsActorEvent(type, obj)) {
         s16 eventType = ((Actor*) object)->eventType;
-        SPDLOG_TRACE("[spawn] type={} id={} ({}) event={}({}) pos=({:.1f},{:.1f},{:.1f}) hitbox={} level={}({}) status={}",
-                     ObjectSpawnLog_TypeName(type),
-                     obj->id,
-                     ObjectId_GetName(obj->id),
-                     EventId_GetName(eventType), eventType,
-                     obj->pos.x, obj->pos.y, obj->pos.z,
-                     ObjectSpawnLog_HitboxLabel(type, object),
-                     Starship_LevelName(gCurrentLevel), (int) gCurrentLevel,
-                     cancelled ? "FILTERED" : "PASSED");
+        SPDLOG_TRACE(
+            "[spawn] type={} id={} ({}) event={}({}) pos=({:.1f},{:.1f},{:.1f}) hitbox={} level={}({}) status={}",
+            ObjectSpawnLog_TypeName(type), obj->id, ObjectId_GetName(obj->id), EventId_GetName(eventType), eventType,
+            obj->pos.x, obj->pos.y, obj->pos.z, ObjectSpawnLog_HitboxLabel(type, object),
+            Starship_LevelName(gCurrentLevel), (int) gCurrentLevel, cancelled ? "FILTERED" : "PASSED");
         return;
     }
     SPDLOG_TRACE("[spawn] type={} id={} ({}) pos=({:.1f},{:.1f},{:.1f}) hitbox={} level={}({}) status={}",
-                 ObjectSpawnLog_TypeName(type),
-                 obj->id,
-                 ObjectId_GetName(obj->id),
-                 obj->pos.x, obj->pos.y, obj->pos.z,
-                 ObjectSpawnLog_HitboxLabel(type, object),
-                 Starship_LevelName(gCurrentLevel), (int) gCurrentLevel,
+                 ObjectSpawnLog_TypeName(type), obj->id, ObjectId_GetName(obj->id), obj->pos.x, obj->pos.y, obj->pos.z,
+                 ObjectSpawnLog_HitboxLabel(type, object), Starship_LevelName(gCurrentLevel), (int) gCurrentLevel,
                  cancelled ? "FILTERED" : "PASSED");
 }
 

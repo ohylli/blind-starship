@@ -146,8 +146,7 @@ struct ObstacleScanStats {
 namespace ObstacleScanDetail {
 // The wingmate exclusion from the header comment. Only Actor carries eventType, so the
 // event-actor half of the test is compiled in for that wrapper alone.
-template <typename T>
-inline bool IsTeammate(const T* entry) {
+template <typename T> inline bool IsTeammate(const T* entry) {
     if (entry->obj.id == OBJ_ACTOR_TEAM_BOSS) {
         return true;
     }
@@ -294,8 +293,8 @@ template <typename Fn> void ObstacleScan_ForEachBox(Player* player, ObstacleScan
     // re-zeroing its statuses (Play_Main, fox_play.c).
     if ((gLevelMode == LEVELMODE_ALL_RANGE) && (gScenery360 != nullptr)) {
         for (s32 i = 0; i < kScenery360Count; i++) {
-            ObstacleScanDetail::EmitBoxes(OBJECT_TYPE_SCENERY360, &gScenery360[i], OBSTACLE_ARRAY_SCENERY360, i,
-                                          player, stats, fn);
+            ObstacleScanDetail::EmitBoxes(OBJECT_TYPE_SCENERY360, &gScenery360[i], OBSTACLE_ARRAY_SCENERY360, i, player,
+                                          stats, fn);
         }
     }
 }

@@ -82,9 +82,9 @@ struct ButtonName {
     u16 mask;
 };
 static const ButtonName kButtons[] = {
-    { "a", A_BUTTON },        { "b", B_BUTTON },        { "z", Z_TRIG },          { "start", START_BUTTON },
-    { "l", L_TRIG },          { "r", R_TRIG },          { "c-up", U_CBUTTONS },   { "c-down", D_CBUTTONS },
-    { "c-left", L_CBUTTONS }, { "c-right", R_CBUTTONS }, { "d-up", U_JPAD },      { "d-down", D_JPAD },
+    { "a", A_BUTTON },        { "b", B_BUTTON },         { "z", Z_TRIG },        { "start", START_BUTTON },
+    { "l", L_TRIG },          { "r", R_TRIG },           { "c-up", U_CBUTTONS }, { "c-down", D_CBUTTONS },
+    { "c-left", L_CBUTTONS }, { "c-right", R_CBUTTONS }, { "d-up", U_JPAD },     { "d-down", D_JPAD },
     { "d-left", L_JPAD },     { "d-right", R_JPAD },
 };
 

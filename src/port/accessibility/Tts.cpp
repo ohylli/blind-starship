@@ -6,9 +6,9 @@
 #include <spdlog/spdlog.h>
 
 namespace {
-    PrismContext* g_ctx = nullptr;
-    PrismBackend* g_backend = nullptr;
-}
+PrismContext* g_ctx = nullptr;
+PrismBackend* g_backend = nullptr;
+} // namespace
 
 extern "C" void Tts_Init(void) {
     if (g_ctx != nullptr) {
@@ -56,14 +56,18 @@ extern "C" void Tts_Shutdown(void) {
     }
 }
 
-#else  // HAVE_PRISM not defined — no-op stubs
+#else // HAVE_PRISM not defined — no-op stubs
 
-extern "C" void Tts_Init(void) {}
+extern "C" void Tts_Init(void) {
+}
 extern "C" void Tts_Speak(const char* text, bool interrupt) {
     (void) text;
     (void) interrupt;
 }
-extern "C" bool Tts_IsAvailable(void) { return false; }
-extern "C" void Tts_Shutdown(void) {}
+extern "C" bool Tts_IsAvailable(void) {
+    return false;
+}
+extern "C" void Tts_Shutdown(void) {
+}
 
-#endif  // HAVE_PRISM
+#endif // HAVE_PRISM

@@ -204,9 +204,7 @@ void Dispatch(Request& request) {
         }
     } catch (const std::exception& e) {
         request.responseLine = ErrJson("command threw: " + std::string(e.what()));
-    } catch (...) {
-        request.responseLine = ErrJson("command threw an unknown exception");
-    }
+    } catch (...) { request.responseLine = ErrJson("command threw an unknown exception"); }
     sDispatching = false;
     sDeferredPoll = nullptr;
 }
@@ -490,9 +488,7 @@ void DebugServer_FrameTick() {
             request.responseLine = OkJson(output);
         } catch (const std::exception& e) {
             request.responseLine = ErrJson("command threw: " + std::string(e.what()));
-        } catch (...) {
-            request.responseLine = ErrJson("command threw an unknown exception");
-        }
+        } catch (...) { request.responseLine = ErrJson("command threw an unknown exception"); }
         completed.push_back(std::move(*it));
         it = sPending.erase(it);
     }

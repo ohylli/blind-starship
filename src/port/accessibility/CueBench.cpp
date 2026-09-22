@@ -33,27 +33,27 @@ namespace {
 constexpr const char* kWavAsset = "assets/accessibility/enemy.wav";
 
 constexpr float kTwoPi = 6.2831853f;
-constexpr float kOrbitHz = 0.25f;         // one circle every 4 s (front -> right -> behind -> left)
-constexpr float kGameFps = 30.0f;         // SF64 game logic ticks at 30 fps
-constexpr int kStressPeriodTicks = 12;    // start/stop stress: ~0.4 s per Play/Stop phase
-constexpr int kRapidRetriggerTicks = 6;   // rapid re-trigger: a one-shot every ~0.2 s
-constexpr float kBlipFreqHz = 660.0f;     // a clear tone, distinct from the enemy WAV
-constexpr float kBlipDurSec = 0.15f;      // short: as a one-shot it's a blip, looped it pulses
+constexpr float kOrbitHz = 0.25f;       // one circle every 4 s (front -> right -> behind -> left)
+constexpr float kGameFps = 30.0f;       // SF64 game logic ticks at 30 fps
+constexpr int kStressPeriodTicks = 12;  // start/stop stress: ~0.4 s per Play/Stop phase
+constexpr int kRapidRetriggerTicks = 6; // rapid re-trigger: a one-shot every ~0.2 s
+constexpr float kBlipFreqHz = 660.0f;   // a clear tone, distinct from the enemy WAV
+constexpr float kBlipDurSec = 0.15f;    // short: as a one-shot it's a blip, looped it pulses
 constexpr float kBlipAmplitude = 0.6f;
 constexpr float kFallbackRadius = 100.0f; // if the backend reports no unity distance yet
 
 // Bench state, game-thread only (same single-threaded assumption as the old SpatialAudioTest:
 // the game update and the ImGui draw both run on the main thread, so plain scalars are safe).
-bool sShutdown = false;         // latched by CueBench_Shutdown: the listener then no-ops forever
-bool sSourcesCreated = false;   // the two continuous sources are created exactly once
+bool sShutdown = false;       // latched by CueBench_Shutdown: the listener then no-ops forever
+bool sSourcesCreated = false; // the two continuous sources are created exactly once
 Cue3DSource* sWavSource = nullptr;
 Cue3DSource* sToneSource = nullptr;
 Cue3DSource* sPlayingSource = nullptr; // which continuous source we last called Cue3D_Play on
-float sOrbit = 0.0f;            // current orbit angle, radians
-int sStressCounter = 0;         // start/stop stress phase counter
-int sRapidCounter = 0;          // rapid-retrigger cadence counter
-int sOneShotRequests = 0;       // pending PlayOnce calls (button presses + rapid cadence)
-Cue* sHiddenCue = nullptr;      // hidden one-shot cue for the PlayOnce / generator path
+float sOrbit = 0.0f;                   // current orbit angle, radians
+int sStressCounter = 0;                // start/stop stress phase counter
+int sRapidCounter = 0;                 // rapid-retrigger cadence counter
+int sOneShotRequests = 0;              // pending PlayOnce calls (button presses + rapid cadence)
+Cue* sHiddenCue = nullptr;             // hidden one-shot cue for the PlayOnce / generator path
 
 // A short enveloped sine blip at the backend's rate. The Hann envelope is zero at both ends,
 // so it loops without a click AND stands alone as a clean one-shot. Shared by the continuous
@@ -251,8 +251,11 @@ extern "C" void CueBench_RequestOneShot(void) {
 
 #else // HAVE_STEAM_AUDIO not defined — no cue backend, so the bench is inert.
 
-extern "C" void CueBench_Init(void) {}
-extern "C" void CueBench_Shutdown(void) {}
-extern "C" void CueBench_RequestOneShot(void) {}
+extern "C" void CueBench_Init(void) {
+}
+extern "C" void CueBench_Shutdown(void) {
+}
+extern "C" void CueBench_RequestOneShot(void) {
+}
 
 #endif // HAVE_STEAM_AUDIO

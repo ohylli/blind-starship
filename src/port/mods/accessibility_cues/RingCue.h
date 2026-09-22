@@ -14,8 +14,8 @@ struct RingCueDebug {
     bool active = false;
     bool enabled = false, inTraining = false, control = false; // gate terms
     int32_t itemIndex = -1;                                    // gItems slot of the tracked ring
-    float dx = 0, dy = 0, dz = 0; // player-relative delta fed to the cue (pre-clamp)
-    float src[3] = {};            // post-clamp target actually pushed
+    float dx = 0, dy = 0, dz = 0;                              // player-relative delta fed to the cue (pre-clamp)
+    float src[3] = {};                                         // post-clamp target actually pushed
     float freq = 1;
 };
 

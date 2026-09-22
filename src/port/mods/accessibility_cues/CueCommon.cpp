@@ -58,8 +58,7 @@ void CueCommon_ComputeCueTarget(float dx, float dy, float dz, float outSrc[3], f
 // length vs the fastest interval). With harmonicMix == 0 this reproduces the original
 // aim-click math bit for bit.
 std::vector<float> CueCommon_GenerateDampedTone(int sampleRate, float leadInSec, float toneSec, float toneHz,
-                                                float harmonicMix, float decayPerSec, float amplitude,
-                                                float tailSec) {
+                                                float harmonicMix, float decayPerSec, float amplitude, float tailSec) {
     constexpr f32 kTwoPi = 6.2831853f;
     int lead = (int) (leadInSec * (f32) sampleRate);
     int frames = (int) (toneSec * (f32) sampleRate);

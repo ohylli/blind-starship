@@ -87,7 +87,7 @@ struct CueSpec {
     // Per-source pitch-realization override (see Cue3D_SetSourcePitchStyle); GLOBAL follows
     // the settings-layer A/B (kCuePitchShiftCVar). Pushed at load, like `mode`.
     Cue3DSourcePitchStyle pitchStyle = CUE3D_SOURCE_PITCH_GLOBAL;
-    bool hiddenFromSettings = false;  // bench/internal cues stay out of the volume-slider list
+    bool hiddenFromSettings = false; // bench/internal cues stay out of the volume-slider list
 };
 
 // Dynamic per-voice parameters, pushed on every SetTarget / TargetVoice / PlayOnce.
@@ -114,11 +114,11 @@ struct CueTarget {
 // unity distance), so previewing=true means "what you hear is not what you read here".
 struct CueVoiceSnapshot {
     int index = 0;
-    bool playing = false;  // Cue-layer bookkeeping; advisory for one-shots between ticks
-    bool loaded = false;   // backend source exists (lazy load has run and succeeded)
-    bool keyed = false;    // acquired via TargetVoice, subject to the refresh-or-stop reap
-    uint64_t key = 0;      // meaningful only when keyed
-    CueTarget target;      // last pushed position/pitch/interval/low-pass
+    bool playing = false;        // Cue-layer bookkeeping; advisory for one-shots between ticks
+    bool loaded = false;         // backend source exists (lazy load has run and succeeded)
+    bool keyed = false;          // acquired via TargetVoice, subject to the refresh-or-stop reap
+    uint64_t key = 0;            // meaningful only when keyed
+    CueTarget target;            // last pushed position/pitch/interval/low-pass
     float effectivePitch = 1.0f; // target.pitch x the voice slot's identity pitch, as pushed
     float gain = 0.0f;           // baseGain x headroom trim x target.level while playing; 0 when silent
 };
@@ -140,11 +140,21 @@ struct CueSnapshot {
 class Cue {
   public:
     // --- Identity, for the settings UI / glossary ---
-    const char* Id() const { return mId.c_str(); }
-    const char* Name() const { return mName.c_str(); }
-    const char* Description() const { return mDescription.c_str(); }
-    const char* VolumeCVar() const { return mVolumeCVar.c_str(); }
-    bool HiddenFromSettings() const { return mSpec.hiddenFromSettings; }
+    const char* Id() const {
+        return mId.c_str();
+    }
+    const char* Name() const {
+        return mName.c_str();
+    }
+    const char* Description() const {
+        return mDescription.c_str();
+    }
+    const char* VolumeCVar() const {
+        return mVolumeCVar.c_str();
+    }
+    bool HiddenFromSettings() const {
+        return mSpec.hiddenFromSettings;
+    }
 
     // --- Gameplay control, single-voice convenience (drives voice 0; looping cues) ---
 
@@ -199,7 +209,9 @@ class Cue {
     // Calling this again while previewing restarts the preview window.
     void StartPreview();
     void StopPreview();
-    bool IsPreviewing() const { return mPreviewing; }
+    bool IsPreviewing() const {
+        return mPreviewing;
+    }
 
     // Recompute gGameMasterVolume x cue master x per-cue volume (x gain boost, below) and
     // push it to every live voice. SetTarget/TargetVoice/Start/StartPreview already do this;
@@ -263,9 +275,9 @@ class Cue {
     CueSpec mSpec;           // registration options (wav path / generator kept alive here)
     std::string mWavPath;    // owned copy of mSpec.wavPath (the registrant's pointer may not outlive registration)
 
-    std::vector<Voice> mVoices; // fixed size (= registration maxVoices) for the cue's life
-    float mGainBoost = 1.0f;    // loudness normalization, see SetGainBoost
-    bool mLoadFailed = false;   // don't retry a failed load every frame
+    std::vector<Voice> mVoices;   // fixed size (= registration maxVoices) for the cue's life
+    float mGainBoost = 1.0f;      // loudness normalization, see SetGainBoost
+    bool mLoadFailed = false;     // don't retry a failed load every frame
     uint64_t mNextStartStamp = 1; // feeds Voice::startStamp on each PlayOnce
     bool mWarnedWrongApi = false; // one-time warn for looping-API-on-one-shot (and vice versa)
 

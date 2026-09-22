@@ -46,8 +46,8 @@ struct EnemyCueDebug {
     bool scanned = false; // the scan ran; scanned && !active means it found nothing
     bool enabled = false, modeOk = false, allRange = false, versus = false, control = false;
     int32_t scanActive = 0, scanCueable = 0, scanKept = 0; // CueScanStats
-    int32_t requestedVoices = 0; // clamped gAccessibilityEnemyCueVoices used this tick
-    int32_t count = 0;           // valid entries in targets[]
+    int32_t requestedVoices = 0;                           // clamped gAccessibilityEnemyCueVoices used this tick
+    int32_t count = 0;                                     // valid entries in targets[]
     EnemyCueTargetDebug targets[kAccessibilityEnemyCueMaxVoices];
 };
 

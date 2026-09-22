@@ -323,8 +323,7 @@ static void ObstacleDirectionCue_StopAll() {
     sBelowCue->Stop();
 }
 
-static void ObstacleDirectionCue_FillTargetDebug(ObstacleDirectionTargetDebug& d,
-                                                 const ObstacleDirectionWinner& w) {
+static void ObstacleDirectionCue_FillTargetDebug(ObstacleDirectionTargetDebug& d, const ObstacleDirectionWinner& w) {
     d.active = true;
     d.array = (int32_t) w.box.array;
     d.slot = w.box.slot;

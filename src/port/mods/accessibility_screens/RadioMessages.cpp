@@ -37,7 +37,7 @@ static bool Accessibility_EndsWith(const std::string& s, const char* suffix) {
 // phrase just produced is dropped — an icon appearing alone still speaks as
 // "C-down". Newlines are layout, not semantics, and become spaces.
 static std::string Accessibility_DecodeMessage(const u16* chars) {
-    static const char* sArrowWords[] = { "up", "left", "down", "right" };        // AUP ALF ADN ART
+    static const char* sArrowWords[] = { "up", "left", "down", "right" };           // AUP ALF ADN ART
     static const char* sCButtonWords[] = { "C-left", "C-up", "C-right", "C-down" }; // CLF CUP CRT CDN
     std::string out;
 
@@ -97,7 +97,7 @@ static std::string Accessibility_DecodeMessage(const u16* chars) {
                 case MSGCHAR_RPR: {
                     static const char sPunct[] = { '!', '?', ',', '.', ':', ')' };
                     static const u16 sPunctCode[] = { MSGCHAR_EXM, MSGCHAR_QST, MSGCHAR_CMA,
-                                                     MSGCHAR_PRD, MSGCHAR_CLN, MSGCHAR_RPR };
+                                                      MSGCHAR_PRD, MSGCHAR_CLN, MSGCHAR_RPR };
                     trimTrailingSpace(); // punctuation attaches to the word before it
                     for (s32 p = 0; p < ARRAY_COUNT(sPunctCode); p++) {
                         if (sPunctCode[p] == c) {

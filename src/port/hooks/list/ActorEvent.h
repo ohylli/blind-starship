@@ -15,27 +15,12 @@ typedef enum {
     OBJECT_TYPE_EFFECT,
 } ObjectEventType;
 
-DEFINE_EVENT(ObjectInitEvent,
-    ObjectEventType type;
-    void* object;
-);
+DEFINE_EVENT(ObjectInitEvent, ObjectEventType type; void* object;);
 
-DEFINE_EVENT(ObjectUpdateEvent,
-    ObjectEventType type;
-    void* object;
-);
+DEFINE_EVENT(ObjectUpdateEvent, ObjectEventType type; void* object;);
 
-DEFINE_EVENT(ObjectDrawPreSetupEvent,
-    ObjectEventType type;
-    void* object;
-);
+DEFINE_EVENT(ObjectDrawPreSetupEvent, ObjectEventType type; void* object;);
 
-DEFINE_EVENT(ObjectDrawPostSetupEvent,
-    ObjectEventType type;
-    void* object;
-);
+DEFINE_EVENT(ObjectDrawPostSetupEvent, ObjectEventType type; void* object;);
 
-DEFINE_EVENT(ObjectDestroyEvent,
-    ObjectEventType type;
-    void* object;
-);
+DEFINE_EVENT(ObjectDestroyEvent, ObjectEventType type; void* object;);

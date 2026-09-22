@@ -15,7 +15,7 @@ inline constexpr const char* kAimCueEnabledCVar = "gAccessibilityAimCue";
 inline constexpr const char* kAimCueProjDistCVar = "gAccessibilityAimCueProjDist"; // on-rails projection, world units
 inline constexpr const char* kAimCueYawRangeCVar = "gAccessibilityAimCueYawRangeDeg"; // all-range full-pan deflection
 inline constexpr const char* kAimCuePitchRangeDegCVar =
-    "gAccessibilityAimCuePitchRangeDeg"; // all-range full-pitch aim elevation
+    "gAccessibilityAimCuePitchRangeDeg";                                         // all-range full-pitch aim elevation
 inline constexpr const char* kAimCueOctavesCVar = "gAccessibilityAimCueOctaves"; // pitch bend at the extremes
 inline constexpr const char* kAimCueGeigerAngleCVar =
     "gAccessibilityAimCueGeigerAngleDeg"; // aim-to-enemy angle where the speed-up starts
