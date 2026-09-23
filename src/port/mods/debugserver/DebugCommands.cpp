@@ -1468,6 +1468,7 @@ static nlohmann::json CueObstacleDirectionCommonJson(const ObstacleDirectionCueD
                              { "probes", d.terrainWalkProbes } };
         j["lookahead"] = d.lookahead;
         j["margin"] = d.margin;
+        j["warnDist"] = d.warnDist;
     }
     return j;
 }

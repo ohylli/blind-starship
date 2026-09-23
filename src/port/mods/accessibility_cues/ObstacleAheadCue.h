@@ -102,5 +102,11 @@ struct ObstacleAheadCueDebug {
 
 const ObstacleAheadCueDebug& ObstacleAheadCue_DebugState();
 
+// The warn distance CVar, sanitized and capped at kObstacleCueWarnDistMax. The directional
+// cues read it through here too: the ahead cue's verdict on a box
+// (ObstacleCourse_AheadClaimsSolid / ObstacleCourse_HeightfieldWalkSpan) takes it as an
+// argument, and both halves of the family must feed it the same value.
+float ObstacleAheadCue_WarnDist();
+
 // Registers the cue, its CVars, and its listener; called once from AccessibilityCues_Init.
 void ObstacleAheadCue_Register();

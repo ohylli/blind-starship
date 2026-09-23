@@ -20,10 +20,13 @@ inline constexpr const char* kObstacleCueEnabledCVar = "gAccessibilityObstacleCu
 // asking "am I on a collision course". It covers the Arwing's span (the course tests use
 // the ship's center point; the engine collides four body/wing points, wings at roughly
 // +/- 40 units) plus the drift a player accumulates while reacting. It is also the
-// boundary between the family members: a box the ship's position is inside by less than
-// the margin on both lateral axes is the AHEAD cue's; a box outside the margin on
-// exactly one axis is a directional cue's, and its clearance beyond the margin is that
-// cue's signal. For heightfield terrain the ahead cue reads the same value as the
+// boundary between the family members: a box the course runs into, widened by the
+// margin (on rails the ship's position inside the footprint by less than the margin on
+// both lateral axes; in all-range a ray along the heading through the widened box), is
+// the AHEAD cue's while its entry is ahead and inside the warn band
+// (ObstacleCourse_AheadClaimsSolid); a box outside the margin on exactly one steering
+// axis is a directional cue's, and its clearance beyond the margin is that cue's
+// signal. For heightfield terrain the ahead cue reads the same value as the
 // vertical clearance that counts as a hit (ObstacleAheadCue_HeightfieldGap), and the
 // below cue's terrain walk (ObstacleDirectionCue_TerrainBelow) uses it twice over: as the
 // clearance under which a sample is the ahead cue's rather than its own, and as the

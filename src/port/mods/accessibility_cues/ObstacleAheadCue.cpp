@@ -1,13 +1,13 @@
 #include "ObstacleAheadCue.h"
 #include "CueCommon.h"
 #include "CueScan.h"
+#include "ObstacleCourse.h"
 #include "ObstacleScan.h"
 
 #include <math.h>
 #include <vector>
 
 #include "port/CGameCompat.h"
-#include "port/PlayerAim.h"
 #include "port/hooks/Events.h"
 #include "port/accessibility/Cue.h"
 #include "port/mods/Accessibility.h"
@@ -17,7 +17,9 @@
 // non-lockable object on their course. What "on course" means is per mode: on rails the
 // ship always travels down -z, so the test is the player's (x, y) inside the hitbox
 // footprint; in all-range the course is a ray cast along the aim heading through the
-// same boxes (the slab test below). A heightfield mesh's box (the terrain bumps and
+// same boxes. That verdict lives in ObstacleCourse.h (ObstacleCourse_AheadClaimsSolid,
+// ObstacleCourse_HeightfieldWalkSpan), shared with the directional cues so they skip
+// exactly the boxes this cue claims. A heightfield mesh's box (the terrain bumps and
 // their kin, ObstacleScan.h) is refined further: the course is walked through the box
 // and the engine's own surface test decides whether it actually meets the slope
 // (ObstacleAheadCue_HeightfieldGap). Rendered CUE3D_MODE_DIRECT (dead center, no
@@ -89,44 +91,33 @@ static_assert((f32) kObstacleWalkMaxSteps * kObstacleWalkStep >= kObstacleCueWar
 // ship's body points is at or below the surface under it (func_col2_800A36FC,
 // fox_col2.c), so the box — which spans the whole hill — over-warns whenever the ship
 // is inside the footprint below the peak on a course that clears the slope. This
-// walks the course through the box in kHeightfieldStep steps from `tStart` to `tEnd`
-// (distances along the unit `course` ray from `origin`, the ship's center — already
-// clipped to the engine's range gate by ObstacleScan_ClipToPolyRange) and asks the
-// engine's own surface test at each step (Object_PolyHeightfieldHit over the same mesh
-// the engine would consult), so "would I hit it" is answered by the code that decides
-// it. The mesh is resolved once per box (Object_ResolvePolyHeightfield), not per probe.
+// walks the course through the box on the family's grid from `tStart` to `tEnd` (the
+// stretch ObstacleCourse_HeightfieldWalkSpan yields: course distances from the ship,
+// already clipped to the engine's range gate) and asks the engine's own surface test at
+// each step (Object_PolyHeightfieldHit over the same mesh the engine would consult), so
+// "would I hit it" is answered by the code that decides it. The mesh is resolved once
+// per box (Object_ResolvePolyHeightfield), not per probe.
 //
 // The probe is not the ship's center but the BOTTOM EDGE of the margin square around
 // it: the point `margin` below the course and its two lateral neighbors `margin` to
-// either side. That is the slack the box test already grants (the player inside the
-// footprint expanded by margin) restated for a surface hit from above — a slope that
-// rises to within the margin of the course warns, one the course clears by more stays
-// silent. The below cue's terrain walk (ObstacleDirectionCue_TerrainBelow) depends on
-// exactly this geometry — it leaves a sample to this cue when the surface is within the
-// margin under the course, and probes the same three points — so a change to the probe
-// offsets here is a two-cue change.
+// either side along frame.right. That is the slack the box test already grants (the
+// player inside the footprint expanded by margin) restated for a surface hit from above
+// — a slope that rises to within the margin of the course warns, one the course clears
+// by more stays silent. The below cue's terrain walk (ObstacleDirectionCue_TerrainBelow)
+// depends on exactly this geometry — it leaves a sample to this cue when the surface is
+// within the margin under the course, and probes the same three points off the same
+// frame — so a change to the probe offsets here is a two-cue change.
 //
 // Returns the course distance of the first hit — 0 when the ship is already at or
 // below the surface — or a negative value when every probe clears. `probes` counts
 // the engine calls for the `cues` dump's cost line: at most (span / step + 1) * 3 per
 // box, each a bounds check plus a walk over the mesh's 13-36 triangles on the tables
 // resolved up front.
-static f32 ObstacleAheadCue_HeightfieldGap(const ObstacleBox& box, const Vec3f& origin, const Vec3f& course, f32 tStart,
+static f32 ObstacleAheadCue_HeightfieldGap(const ObstacleBox& box, const ObstacleCourseFrame& frame, f32 tStart,
                                            f32 tEnd, f32 margin, int32_t* probes) {
     PolyHeightfield hf;
     if (!Object_ResolvePolyHeightfield(box.polyColId, &box.objPos, box.rotY, &hf)) {
         return -1.0f; // not a tabled mesh — unreachable for a scan-produced box
-    }
-    // Horizontal unit vector perpendicular to the course: +x on rails (course is -z);
-    // falls back to +x for a near-vertical all-range heading.
-    Vec3f lateral = { -course.z, 0.0f, course.x };
-    f32 lateralLen = sqrtf(lateral.x * lateral.x + lateral.z * lateral.z);
-    if (lateralLen > 1e-3f) {
-        lateral.x /= lateralLen;
-        lateral.z /= lateralLen;
-    } else {
-        lateral.x = 1.0f;
-        lateral.z = 0.0f;
     }
     // The engine rejects a probe outside the mesh's own bounding box before it looks at
     // the surface (the bounds check at the top of Col2_CheckSurface), so a probe the
@@ -145,13 +136,15 @@ static f32 ObstacleAheadCue_HeightfieldGap(const ObstacleBox& box, const Vec3f& 
         if (t > tEnd) {
             t = tEnd;
         }
-        const Vec3f p = { origin.x + course.x * t, origin.y + course.y * t, origin.z + course.z * t };
+        const Vec3f p = { frame.origin.x + frame.fwd.x * t, frame.origin.y + frame.fwd.y * t,
+                          frame.origin.z + frame.fwd.z * t };
         f32 probeY = p.y - margin;
         if (probeY < floorY) {
             probeY = floorY;
         }
         for (s32 k = -1; k <= 1; k++) {
-            const Vec3f probe = { p.x + lateral.x * (f32) k * margin, probeY, p.z + lateral.z * (f32) k * margin };
+            const Vec3f probe = { p.x + frame.right.x * (f32) k * margin, probeY,
+                                  p.z + frame.right.z * (f32) k * margin };
             (*probes)++;
             if (Object_PolyHeightfieldHit(&hf, &probe)) {
                 return t;
@@ -159,6 +152,12 @@ static f32 ObstacleAheadCue_HeightfieldGap(const ObstacleBox& box, const Vec3f& 
         }
     }
     return -1.0f;
+}
+
+f32 ObstacleAheadCue_WarnDist() {
+    // Capped at the slider's ceiling: the heightfield walks' step cap is sized to it (see
+    // the assert above).
+    return CueCommon_ReadPositiveFloat(kObstacleCueWarnDistCVar, kObstacleCueWarnDistDefault, kObstacleCueWarnDistMax);
 }
 
 static void ObstacleAheadCue_OnPostUpdate(IEvent* event) {
@@ -187,10 +186,7 @@ static void ObstacleAheadCue_OnPostUpdate(IEvent* event) {
         return;
     }
 
-    // Capped at the slider's ceiling: the heightfield walk's step cap is sized to it (see
-    // the assert).
-    const f32 warnDist =
-        CueCommon_ReadPositiveFloat(kObstacleCueWarnDistCVar, kObstacleCueWarnDistDefault, kObstacleCueWarnDistMax);
+    const f32 warnDist = ObstacleAheadCue_WarnDist();
     const f32 margin = ObstacleCommon_Margin();
     dbg.warnDist = warnDist;
     dbg.margin = margin;
@@ -199,75 +195,44 @@ static void ObstacleAheadCue_OnPostUpdate(IEvent* event) {
 
     Player* player = &gPlayer[0];
 
-    // All-range flies by aim heading, so its course is a ray along Player_AimForward
-    // (PlayerAim.h owns the composition). The forms whose heading composes differently
-    // (Landmaster, on-foot — see PlayerAim.h) never appear in solo all-range, Versus
-    // being out of scope above; stop rather than guess if one ever does, with
-    // gates.aimValid as the `cues` dump's tell.
-    Vec3f fwd = { 0.0f, 0.0f, 0.0f };
-    if (allRange) {
-        if (!Player_AimAnglesValid(*player)) {
-            dbg.aimValid = false;
-            sObstacleCue->Stop();
-            return;
-        }
-        fwd = Player_AimForward(*player);
-        dbg.fwdX = fwd.x;
-        dbg.fwdY = fwd.y;
-        dbg.fwdZ = fwd.z;
-    }
-
     // The course as a ray from the ship's center: the fixed -z track on rails, the aim
-    // heading in all-range. trueZpos is the player's real world Z (sf64player.h).
-    const Vec3f origin = { player->pos.x, player->pos.y, player->trueZpos };
-    const Vec3f course = allRange ? fwd : Vec3f{ 0.0f, 0.0f, -1.0f };
+    // heading in all-range (ObstacleCourse_Frame, which stops the cue when the craft's
+    // heading does not compose — gates.aimValid is the `cues` dump's tell).
+    ObstacleCourseFrame frame;
+    if (!ObstacleCourse_Frame(*player, allRange, &frame)) {
+        dbg.aimValid = false;
+        sObstacleCue->Stop();
+        return;
+    }
+    if (allRange) {
+        dbg.fwdX = frame.fwd.x;
+        dbg.fwdY = frame.fwd.y;
+        dbg.fwdZ = frame.fwd.z;
+    }
 
     ObstacleScanStats stats;
     ObstacleBox best{};
     f32 bestGap = INFINITY;
     ObstacleScan_ForEachBox(player, &stats, [&](const ObstacleBox& box) {
-        // The span [tNear, tFar] of the course through the margin-expanded box: the
-        // footprint test on rails, the ray test in all-range (ObstacleScan_CourseSpan,
-        // shared so the directional cues skip exactly the boxes this cue claims).
-        f32 tNear;
-        f32 tFar;
-        if (!ObstacleScan_CourseSpan(box, allRange, course, margin, &tNear, &tFar)) {
-            return;
-        }
-        // A poly mesh of either family is only ever tested by the engine while the ship
-        // is inside its XZ range gate; clip the span to that stretch of the course, and
-        // drop the box when none of it is inside (ObstacleScan_ClipToPolyRange).
-        if ((box.record == kObstaclePolyRecord) && !ObstacleScan_ClipToPolyRange(box, origin, course, &tNear, &tFar)) {
-            return;
-        }
         f32 gap;
         if (box.polyHeightfield) {
             // A heightfield box is a candidate, not a verdict: walk the course through
-            // it and let the engine's surface test decide (ObstacleAheadCue_HeightfieldGap).
-            // Unlike a solid box, being past the near face does not hand the encounter
-            // to the engine — a terrain bump's box is up to 2600 units deep and the
-            // slope may still rise ahead — so the walk starts at the ship when it is
-            // already inside, stops at the warn band's edge, and only a far face
-            // behind the ship (or a near face beyond the band) drops the box outright.
-            if (!(tFar > 0.0f) || !(tNear < warnDist) || terrainIsFloor) {
+            // it (ObstacleCourse_HeightfieldWalkSpan owns which stretch) and let the
+            // engine's surface test decide (ObstacleAheadCue_HeightfieldGap).
+            f32 tStart;
+            f32 tEnd;
+            if (terrainIsFloor ||
+                !ObstacleCourse_HeightfieldWalkSpan(box, frame, allRange, margin, warnDist, &tStart, &tEnd)) {
                 return;
             }
             dbg.heightfieldTested++;
-            gap = ObstacleAheadCue_HeightfieldGap(box, origin, course, (tNear > 0.0f) ? tNear : 0.0f,
-                                                  (tFar < warnDist) ? tFar : warnDist, margin, &dbg.heightfieldProbes);
+            gap = ObstacleAheadCue_HeightfieldGap(box, frame, tStart, tEnd, margin, &dbg.heightfieldProbes);
             if (!(gap >= 0.0f) || (gap >= warnDist)) {
                 dbg.heightfieldCleared++;
                 return;
             }
-        } else {
-            // On course: the near face still ahead and inside the warn band. gap <= 0
-            // drops the box the moment the player is level with its near face (or, in
-            // all-range, already inside the expanded box) — past that the engine's own
-            // collision has already resolved the encounter and a warning is noise.
-            gap = tNear;
-            if (!(gap > 0.0f) || (gap >= warnDist)) {
-                return;
-            }
+        } else if (!ObstacleCourse_AheadClaimsSolid(box, frame, allRange, margin, warnDist, &gap)) {
+            return; // not on course, past the near face, or beyond the band
         }
         dbg.onCourse++;
         if (gap < bestGap) {

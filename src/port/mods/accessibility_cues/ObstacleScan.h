@@ -4,12 +4,12 @@
 // Object_IsObstacle predicate — collidable hitbox, poly mesh or sphere collider, not
 // lockable — minus the cue-side exclusions below) and their collision shapes as
 // world-space boxes with the player-relative geometry every consumer needs already
-// derived. The obstacle-ahead cue (its rails footprint test and its all-range ray test)
-// was the first consumer; the directional obstacle cues (ObstacleDirectionCue.cpp:
-// beside, above, below) are the second, and the reason the geometry is yielded raw — no
-// thresholding, no margin, no direction naming happens here. Every filter beyond "is a
-// warn-worthy obstacle with a solid box" is the caller's policy. Game-coupled by design,
-// like CueScan.h.
+// derived. The obstacle-ahead cue was the first consumer; the directional obstacle cues
+// (ObstacleDirectionCue.cpp: beside, above, below) are the second, and the reason the
+// geometry is yielded raw — no thresholding, no margin, no direction naming happens
+// here. Every filter beyond "is a warn-worthy obstacle with a solid box" is the caller's
+// policy; the tests the family shares (the course frame, the ahead cue's verdict on a
+// box) live in ObstacleCourse.h over these boxes. Game-coupled by design, like CueScan.h.
 //
 // Cue-side exclusions on top of the predicate (policy shared by every obstacle cue,
 // deliberately NOT in Object_IsObstacle, whose other consumer is
@@ -298,34 +298,3 @@ template <typename Fn> void ObstacleScan_ForEachBox(Player* player, ObstacleScan
         }
     }
 }
-
-// The obstacle-ahead cue's course test, shared so the directional cues' "is this the
-// ahead cue's box" question is answered by the very code the ahead cue runs — the two
-// halves of the family can then never both claim a box or both drop it. The span
-// [tNear, tFar] is the course's passage (distances along the unit `course` ray from the
-// ship's center) through the box widened by `margin`; false when the course misses it.
-// Either bound may be negative (entry behind or inside — the caller's call). Per mode:
-//   - Rails (`allRange` false; the course is the fixed -z track and `course` is unused):
-//     on course when the ship's (x, y) is inside the footprint widened by the margin on
-//     both lateral axes; the span is the box's own Z extent, gapZ to its far face (no
-//     margin along the track).
-//   - All-range: a ray along `course` (the aim heading, Player_AimForward) through the
-//     box widened by the margin on every axis — in all-range "lateral" is not
-//     axis-aligned, and the extra margin along the ray is noise against the warn band.
-// The engine's poly range gate is a separate step (ObstacleScan_ClipToPolyRange), since
-// not every question about a box wants it.
-bool ObstacleScan_CourseSpan(const ObstacleBox& box, bool allRange, const Vec3f& course, f32 margin, f32* tNear,
-                             f32* tFar);
-
-// The engine's XZ range gate (box.polyRangeXZ, Object_GetPolyCollisionRangeXZ) applied
-// along the course. Player_CollisionCheck tests a scenery mesh only while the SHIP is
-// within that distance of obj.pos, so along the course the mesh can only be hit on the
-// stretch where the ship will be inside that circle: this clips [tNear, tFar] (course
-// distances from `origin`, the ship) to it — a ray/circle intersection in the XZ plane —
-// and returns false when nothing of the span survives. Ungated boxes pass through.
-// Gating along the course rather than at the ship's current position is what a warning
-// needs: a big mesh's far corners the engine never tests never warn, and a solid mesh
-// the ship enters outside the circle keeps warning until the ship reaches the stretch
-// where the engine's own test takes over.
-bool ObstacleScan_ClipToPolyRange(const ObstacleBox& box, const Vec3f& origin, const Vec3f& course, f32* tNear,
-                                  f32* tFar);

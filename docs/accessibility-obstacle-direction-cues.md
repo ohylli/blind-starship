@@ -5,7 +5,7 @@ added 2026-09-17; all-range support added 2026-09-23. Companion to
 `docs/accessibility-obstacle-cue.md` (the ahead cue, whose scan these cues share and whose
 catalogue of what is and is not an obstacle applies here unchanged) and
 `docs/accessibility-cues-tuning.md` (the knobs). This file records what the three cues
-say, why they are shaped this way, and the v1 scope decisions — read it before "fixing" a
+say, why they are shaped this way, and the scope decisions — read it before "fixing" a
 silence or a drone.
 
 ## What they are
@@ -51,14 +51,21 @@ They are stated here in rails terms (the course is the −Z track, "beside" is w
    must already be between the near and far faces. Past the far face the box is dropped.
    This deliberately differs from the ahead cue's "past the near face, the engine owns
    it" rule: a wall alongside still matters, since drifting into it is the whole risk.
-2. **Is it the ahead cue's?** An *upcoming* box the ship's position is inside, widened by
-   the shared **safety margin**, on both lateral axes is on course and the ahead cue is
-   warning about it. These cues skip it. The ahead cue never says which edge is nearest,
-   and these never say "the wall ahead is more to your left". A box already alongside is
-   never the ahead cue's — it drops a box the moment the ship reaches its near face — so
-   an alongside box is classified next however close it is. (v1 as first committed
-   skipped every on-course box, upcoming or not, which left the nearest wall of a pair
-   the ship was between silent in every cue; fixed the same day.)
+2. **Is it the ahead cue's?** A box the ahead cue is warning about this tick — by the
+   ahead cue's own verdict, `ObstacleCourse_AheadClaimsSolid` in
+   `src/port/mods/accessibility_cues/ObstacleCourse.h`: an *upcoming* box the ship's
+   position is inside, widened by the shared **safety margin**, on both lateral axes, on
+   the stretch the engine's range gate lets it be hit, with the entry inside the ahead
+   cue's **warning distance**. These cues skip it. The ahead cue never says which edge is
+   nearest, and these never say "the wall ahead is more to your left". A box already
+   alongside is never the ahead cue's — it drops a box the moment the ship reaches its
+   near face — and neither is one whose entry lies beyond the warning distance or outside
+   the range gate, so all of those are classified next however close they are. (v1 as
+   first committed skipped every on-course box, upcoming or not, which left the nearest
+   wall of a pair the ship was between silent in every cue; fixed the same day. The
+   all-range extension as first committed asked only "does the course run into it",
+   which dropped from every cue a box the ahead cue then discarded for the range gate or
+   the band; sharing the whole verdict on 2026-09-23 closed that.)
 3. **Which direction, and how close?** The ship must be outside the box's footprint on an
    axis and within the margin of it on the other. The outside axis names the pair (X for
    beside, Y for above/below); the sign of the box center's offset from the ship picks
@@ -95,7 +102,8 @@ the surface itself (`ObstacleDirectionCue_TerrainBelow`):
   the family's shared grid (`kObstacleWalkStep` / `ObstacleCommon_WalkSteps` in
   `ObstacleCommon.h`), the same one the ahead cue's walk samples on, which is what makes
   the per-sample claim below exactly the ahead cue's hit. The grid is anchored where the
-  ahead cue's own walk over the box starts. On rails that is the same starting point
+  ahead cue's own walk over the box starts (`ObstacleCourse_HeightfieldWalkSpan`, the
+  one function both walks take that answer from). On rails that is the same starting point
   except when the engine's range gate pushes the ahead cue's start further in, and the
   grid then shifts to match it (an A/B trace on 2026-09-23 showed this as the only rails
   difference: one extra sample and a few units of clearance, on a dive).
@@ -144,11 +152,13 @@ onto the course. The chords and their mappings are unchanged.
 - **Question 1** uses the box's extent along the course (its center's course distance
   plus or minus the projection of its half-extents); on rails that is the near and far
   Z faces.
-- **Question 2 is the ahead cue's own test.** A box is the ahead cue's when
-  `ObstacleScan_CourseSpan`, the function the ahead cue itself calls (the footprint test
-  on rails, the ray test in all-range), has the course running into it with the entry
-  still ahead. Sharing the function is what keeps "the two never claim the same box"
-  true in a turned heading.
+- **Question 2 is the ahead cue's own verdict.** A box is the ahead cue's when
+  `ObstacleCourse_AheadClaimsSolid`, the function the ahead cue itself calls (the
+  footprint test on rails, the ray test in all-range, then the range gate and the warn
+  band), says it is warning about it. Sharing the whole verdict, not just the course
+  test, is what keeps "the two never both claim a box or both drop it" true in a turned
+  heading. For a terrain box the same module's `ObstacleCourse_HeightfieldWalkSpan` says
+  whether the ahead cue walks it and from where.
 - **Terrain below** walks the tilted course: samples along the aim ray over the box's
   footprint (widened by the margin), the clearance being the course's height above the
   engine's surface there, measured straight down. Rails keeps its own span (the box's Z

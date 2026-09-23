@@ -45,7 +45,8 @@ inline constexpr float kObstacleCueDirSideDistMax = 2500.0f;
 inline constexpr const char* kObstacleCueDirSidePanFloorCVar = "gAccessibilityObstacleCueDirSidePanFloor";
 inline constexpr float kObstacleCueDirSidePanFloorDefault = 0.2f;
 
-// Vertical cue band: same shape on the Y axis. Loudness runs over [margin, vertDist]:
+// Vertical cue band: same shape on the vertical steering axis (world Y on rails, the
+// canopy direction in all-range). Loudness runs over [margin, vertDist]:
 // full at the margin, the level floor at vertDist. Rails corridors are shorter than
 // they are wide, so the default band is narrower than the side band.
 inline constexpr const char* kObstacleCueDirVertDistCVar = "gAccessibilityObstacleCueDirVertDist";
@@ -96,7 +97,10 @@ struct ObstacleDirectionTargetDebug {
                                   // margin only for a box already alongside / the terrain
                                   // sample beneath the ship, pinned at the band's near end)
     float gap = 0;                // course distance to the box's nearest point along the
-                                  // course (rails: the near z face, gapZ); <= 0 alongside
+                                  // course (rails: the near z face, gapZ); <= 0 alongside.
+                                  // Not the ahead cue's `gap`, which is the entry into the
+                                  // MARGIN-WIDENED box; the two agree only for a solid box
+                                  // on rails
     float dx = 0, dy = 0, dz = 0;
     float halfX = 0, halfY = 0, halfZ = 0;
     float pan = 0;   // side directions: pan magnitude pushed (0 center .. 1 hard)
@@ -116,9 +120,10 @@ struct ObstacleDirectionCueDebug {
     float fwdX = 0, fwdY = 0, fwdZ = 0;                       // the course the rule reasoned along (rails: -z)
     int32_t scanActive = 0, scanObstacles = 0, scanBoxes = 0; // ObstacleScanStats
     int32_t aheadClaimed = 0;    // solid boxes skipped whole because the ahead cue is warning
-                                 // about them (on course AND still upcoming); a heightfield
-                                 // box is never claimed whole — its claim is per sample, see
-                                 // terrainWalkClaimed
+                                 // about them this tick (ObstacleCourse_AheadClaimsSolid: on
+                                 // course, inside the range gate, entry ahead and inside the
+                                 // warn band); a heightfield box is never claimed whole — its
+                                 // claim is per sample, see terrainWalkClaimed
     int32_t inWindow = 0;        // boxes inside the lookahead window (upcoming or alongside)
     int32_t fightersSkipped = 0; // non-lockable fighter boxes left out (OBJ_ACTOR_ALLRANGE:
                                  // the all-range wingmates and allied craft — moving, so
@@ -129,6 +134,7 @@ struct ObstacleDirectionCueDebug {
     int32_t terrainWalkTested = 0, terrainWalkProbes = 0, terrainWalkClaimed = 0;
     float lookahead = 0, margin = 0, sideDist = 0, panFloor = 0, vertDist = 0,
           levelFloor = 0; // effective (post-guard) knob values used this tick
+    float warnDist = 0;   // the ahead cue's band its verdict was asked with (ObstacleAheadCue_WarnDist)
     ObstacleDirectionTargetDebug dir[OBSTACLE_DIR_COUNT];
 };
 
