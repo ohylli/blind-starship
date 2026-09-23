@@ -52,6 +52,7 @@ Exit codes are trustworthy for scripting: 0 success (a warp that answered but di
 
 - `set` infers the CVar type from the value text: anything not starting with a digit — **including negative numbers like -1** — becomes a *string* CVar.
 - `get` on a nonexistent CVar reports status ok with "Could not find variable" text; test the text, not the status.
-- There is no quit command. Stop the game with `Stop-Process -Name Starship`. CVar changes made during the run are lost (config only saves on clean exit) — usually what you want for a test run.
+- There is no quit command. Stop the game with `Stop-Process -Name Starship`.
+- **CVar changes made with `set` can persist.** Stopping the process skips the exit-time save, but other code calls `CVarSave()` mid-run (controller setup, the resolution editor, ...), and that writes the whole CVar table, test values included, to `starship.cfg.json`. Changing CVars for a test is fine, but `get` each one first, note its current value, and `set` it back to that value before stopping the game. If the game is already stopped, restore the original values in the config file by hand. Either way, tell the user which CVars were changed and that they were restored.
 
 Deep detail (wire protocol, design record): `docs/debug-server-plan.md`.
