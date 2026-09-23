@@ -5,13 +5,13 @@ const char* ObstacleScan_ArrayName(ObstacleArray array) {
         case OBSTACLE_ARRAY_SCENERY:
             return "scenery";
         case OBSTACLE_ARRAY_ACTOR:
-            return "actor";
+            return "actors";
         case OBSTACLE_ARRAY_BOSS:
-            return "boss";
+            return "bosses";
         case OBSTACLE_ARRAY_SCENERY360:
             return "scenery360";
         default:
-            return "?";
+            return "unknown";
     }
 }
 

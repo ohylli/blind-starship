@@ -67,7 +67,7 @@ static bool ObstacleCourse_RaySpan(const ObstacleBox& box, const Vec3f& fwd, f32
 //     on course when the ship's (x, y) is inside the footprint widened by the margin on
 //     both lateral axes; the span is the box's own Z extent, gapZ to its far face (no
 //     margin along the track).
-//   - All-range: a ray along `course` (the aim heading, Player_AimForward) through the
+//   - All-range: a ray along `course` (the aim heading, frame.fwd from Player_AimBasis) through the
 //     box widened by the margin on every axis — in all-range "lateral" is not
 //     axis-aligned, and the extra margin along the ray is noise against the warn band.
 static bool ObstacleCourse_Span(const ObstacleBox& box, bool allRange, const Vec3f& course, f32 margin, f32* tNear,

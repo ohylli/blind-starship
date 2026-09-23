@@ -88,14 +88,16 @@ units in `Player_CollisionCheck`'s scenery loops, 4000 on Sector Y and Venom-And
 `Object_GetPolyCollisionRangeXZ`), so both mesh families get their course span clipped
 to the stretch where the ship will be inside that circle — a ray/circle intersection in
 the XZ plane, `ObstacleCourse_ClipToPolyRange` — and a box with none of its span
-inside is dropped. The whole verdict on a box (course test, range gate, warn band) is
-`ObstacleCourse_AheadClaimsSolid` / `ObstacleCourse_HeightfieldWalkSpan` in
-`src/port/mods/accessibility_cues/ObstacleCourse.h`, which the directional cues call
-too, so the two halves of the family never both claim a box or both drop it. Gating along the course rather than at the ship's current position
+inside is dropped. Gating along the course rather than at the ship's current position
 is what a warning needs: a big mesh's far corners the engine never tests never warn
 (Fortuna mountain 2's stored box reaches 1300 units out against an 1100 gate), and a
 solid mesh the ship enters outside the circle keeps warning until the ship reaches the
 stretch where the engine's own test takes over.
+
+The whole verdict on a box (course test, range gate, warn band) is
+`ObstacleCourse_AheadClaimsSolid` / `ObstacleCourse_HeightfieldWalkSpan` in
+`src/port/mods/accessibility_cues/ObstacleCourse.h`, which the directional cues call
+too, so the two halves of the family never both claim a box or both drop it.
 
 **Heightfield meshes get a second, decisive test.** A poly-mesh box of the
 `CollisionHeader2` family (every terrain bump, the reefs, the island, Fortuna mountain

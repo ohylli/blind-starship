@@ -419,6 +419,17 @@ struct ObstacleTerrainBelow {
     bool claimed = false; // at least one upcoming sample was left to the ahead cue
 };
 
+// The ahead cue's walk over a terrain box (ObstacleCourse_HeightfieldWalkSpan): the
+// stretch [start, end] it samples when `walks`, and the warn distance at which it drops
+// a hit. The below walk anchors its grid on `start` and leaves it only the samples
+// inside that stretch.
+struct ObstacleAheadWalk {
+    bool walks = false;
+    f32 start = 0.0f;
+    f32 end = 0.0f;
+    f32 warnDist = 0.0f;
+};
+
 // "Below" for a heightfield poly box (box.polyHeightfield — the terrain bumps, reefs,
 // the island, the mountains). The engine hits such a mesh only when the ship is at or
 // below the surface under it, so the box top — the hill's PEAK — says nothing about the
@@ -442,8 +453,12 @@ struct ObstacleTerrainBelow {
 // Ownership is decided per SAMPLE, not per box (one hill is both "ground 300 below me"
 // and "a slope rising into my course"): an upcoming sample whose surface is within the
 // margin of the course is the ahead cue's — the same threshold its walk hits at — and is
-// skipped, while the rest still compete, so a rising slope sounds as the buzz plus a
-// loud below chord: "the thing ahead is ground, climb". The sample beneath the ship (t 0,
+// skipped, but only where that walk actually reaches (`claim`, its span from
+// ObstacleCourse_HeightfieldWalkSpan, short of the warn distance, where it drops a
+// hit); past it, e.g. with the warn distance below the lookahead, such a sample competes
+// as an ordinary below answer rather than going silent in both cues. The rest compete
+// too, so a rising slope sounds as the buzz plus a loud below chord: "the thing ahead
+// is ground, climb". The sample beneath the ship (t 0,
 // present when the ship is already over the box) is the "alongside" case and pins at the
 // band's near end however close. (The ahead cue's walk starts beneath the ship too, so
 // skimming within the margin sounds both — a known, accepted overlap: the chord is what
@@ -453,8 +468,8 @@ struct ObstacleTerrainBelow {
 // (box.polyRangeXZ): Player_CollisionCheck never tests the mesh from out there, and a
 // bump's box is deep enough for its far end to lie beyond the gate.
 static ObstacleTerrainBelow ObstacleDirectionCue_TerrainBelow(const ObstacleBox& box, const ObstacleCourseFrame& frame,
-                                                              f32 tLo, f32 tHi, f32 anchor, f32 margin,
-                                                              int32_t* probes) {
+                                                              f32 tLo, f32 tHi, const ObstacleAheadWalk& claim,
+                                                              f32 margin, int32_t* probes) {
     ObstacleTerrainBelow out;
     PolyHeightfield hf;
     if (!Object_ResolvePolyHeightfield(box.polyColId, &box.objPos, box.rotY, &hf)) {
@@ -464,6 +479,7 @@ static ObstacleTerrainBelow ObstacleDirectionCue_TerrainBelow(const ObstacleBox&
     if (!ObstacleCommon_WalkSteps(tHi - tLo, &steps)) {
         return out; // NaN or a reversed span
     }
+    f32 anchor = claim.walks ? claim.start : tLo;
     if (!(fabsf(anchor - tLo) <= (f32) kObstacleWalkMaxSteps * kObstacleWalkStep)) {
         anchor = tLo; // NaN, or so far off the span that the grid phase is meaningless
     }
@@ -495,7 +511,8 @@ static ObstacleTerrainBelow ObstacleDirectionCue_TerrainBelow(const ObstacleBox&
             return; // no surface under this stretch (outside the mesh's outline)
         }
         const f32 clear = p.y - top;
-        if (!beneath && (clear < margin)) {
+        const bool aheadWalksHere = claim.walks && (t >= claim.start) && (t <= claim.end) && (t < claim.warnDist);
+        if (!beneath && aheadWalksHere && (clear < margin)) {
             out.claimed = true; // the ahead cue's walk hits here
             return;
         }
@@ -552,11 +569,11 @@ static bool ObstacleDirectionCue_FootprintSpan(const ObstacleBox& box, const Vec
 // laterally (`vertRange` non-empty) and terrain is a crash for the current vehicle. The
 // walk's span is this cue's own — rails the box's Z extent inside the window, all-range
 // the stretch of course over the footprint — but its grid is anchored where the ahead
-// cue's walk starts (`aheadStart`, valid when `aheadWalks`), see TerrainBelow.
+// cue's walk starts (`ahead.start`, valid when `ahead.walks`), see TerrainBelow.
 static ObstacleAxisAnswer ObstacleDirectionCue_TerrainVertical(const ObstacleBox& box, const ObstacleCourseFrame& frame,
                                                                bool allRange, const ObstacleDirectionKnobs& knobs,
                                                                const ObstacleSliceRange& vertRange, f32 nearT, f32 farT,
-                                                               bool aheadWalks, f32 aheadStart,
+                                                               const ObstacleAheadWalk& ahead,
                                                                ObstacleDirectionCueDebug& dbg) {
     ObstacleAxisAnswer vert;
     if (!vertRange.found || knobs.terrainIsFloor) {
@@ -572,10 +589,9 @@ static ObstacleAxisAnswer ObstacleDirectionCue_TerrainVertical(const ObstacleBox
         tLo = (nearT > 0.0f) ? nearT : 0.0f;
         tHi = (farT < knobs.lookahead) ? farT : knobs.lookahead;
     }
-    const f32 anchor = aheadWalks ? aheadStart : tLo;
     dbg.terrainWalkTested++;
     const ObstacleTerrainBelow terrain =
-        ObstacleDirectionCue_TerrainBelow(box, frame, tLo, tHi, anchor, knobs.margin, &dbg.terrainWalkProbes);
+        ObstacleDirectionCue_TerrainBelow(box, frame, tLo, tHi, ahead, knobs.margin, &dbg.terrainWalkProbes);
     if (terrain.claimed) {
         dbg.terrainWalkClaimed++;
     }
@@ -671,13 +687,12 @@ static void ObstacleDirectionCue_ClassifyBox(const ObstacleBox& box, const Obsta
     // decides, and the side half honors "the ahead cue walks it from ahead" as the box's
     // claim, so a hill on course never sounds beside.
     bool boxOnCourse = false;
-    bool aheadWalks = false;
-    f32 aheadStart = 0.0f;
+    ObstacleAheadWalk ahead;
+    ahead.warnDist = knobs.warnDist;
     if (box.polyHeightfield) {
-        f32 aheadEnd;
-        aheadWalks = ObstacleCourse_HeightfieldWalkSpan(box, frame, allRange, knobs.margin, knobs.warnDist, &aheadStart,
-                                                        &aheadEnd);
-        boxOnCourse = aheadWalks && (aheadStart > 0.0f);
+        ahead.walks = ObstacleCourse_HeightfieldWalkSpan(box, frame, allRange, knobs.margin, knobs.warnDist,
+                                                         &ahead.start, &ahead.end);
+        boxOnCourse = ahead.walks && (ahead.start > 0.0f);
     } else {
         f32 gap;
         if (ObstacleCourse_AheadClaimsSolid(box, frame, allRange, knobs.margin, knobs.warnDist, &gap)) {
@@ -691,8 +706,7 @@ static void ObstacleDirectionCue_ClassifyBox(const ObstacleBox& box, const Obsta
         ObstacleDirectionCue_SliceRange(box, frame.fwd, knobs.lookahead, frame.right, knobs.margin, frame.up);
     ObstacleAxisAnswer vert;
     if (box.polyHeightfield) {
-        vert = ObstacleDirectionCue_TerrainVertical(box, frame, allRange, knobs, vertRange, nearT, farT, aheadWalks,
-                                                    aheadStart, dbg);
+        vert = ObstacleDirectionCue_TerrainVertical(box, frame, allRange, knobs, vertRange, nearT, farT, ahead, dbg);
     } else {
         vert = ObstacleDirectionCue_Classify(vertRange, knobs.vertDist, OBSTACLE_DIR_ABOVE, OBSTACLE_DIR_BELOW);
         vert.upcoming = upcoming;

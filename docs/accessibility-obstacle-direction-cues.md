@@ -115,8 +115,11 @@ the surface itself (`ObstacleDirectionCue_TerrainBelow`):
 - **Ownership is per sample, not per box.** One hill is both "ground 300 below me" and "a
   slope rising into my course", so the box rule's wholesale claim does not fit. An
   *upcoming* sample whose surface is within the margin of the course is the ahead cue's —
-  the same threshold its heightfield walk hits at — and is skipped; the rest still
-  compete. A rising slope therefore sounds as the buzz plus a near-full below chord:
+  the same threshold its heightfield walk hits at — and is skipped, but only inside the
+  stretch that walk covers (its span from `ObstacleCourse_HeightfieldWalkSpan`, short of
+  the warn distance). Past it — the warn distance set below the lookahead — the sample
+  competes as an ordinary below answer instead of going silent in both cues. The rest
+  still compete. A rising slope therefore sounds as the buzz plus a near-full below chord:
   "the thing ahead is ground, climb", which the box rule cannot say. The sample beneath
   the ship is the alongside case and pins at full however close. Known, accepted
   overlap: the ahead cue's walk also starts beneath the ship, so skimming within the
