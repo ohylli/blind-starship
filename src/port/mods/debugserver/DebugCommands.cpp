@@ -1433,7 +1433,7 @@ static nlohmann::json CueObstacleDirectionTargetJson(const ObstacleDirectionTarg
     }
     j["upcoming"] = t.upcoming;
     j["clear"] = t.clear;
-    j["gapZ"] = t.gapZ;
+    j["gap"] = t.gap;
     j["delta"] = { { "x", t.dx }, { "y", t.dy }, { "z", t.dz } };
     j["half"] = { { "x", t.halfX }, { "y", t.halfY }, { "z", t.halfZ } };
     if (side) {
@@ -1453,14 +1453,14 @@ static nlohmann::json CueObstacleDirectionCommonJson(const ObstacleDirectionCueD
     j["frame"] = d.frame;
     j["fresh"] = CuePolicyFresh(d.frame);
     j["scanned"] = d.scanned;
-    j["gates"] = { { "enabled", d.enabled },
-                   { "obstacleEnabled", d.obstacleEnabled },
-                   { "modeOk", d.modeOk },
-                   { "control", d.control },
-                   { "railsOnly", !d.allRange } };
+    j["gates"] = { { "enabled", d.enabled },   { "obstacleEnabled", d.obstacleEnabled },
+                   { "modeOk", d.modeOk },     { "control", d.control },
+                   { "aimValid", d.aimValid }, { "noManeuver", d.noManeuver } };
     j["allRange"] = d.allRange;
     if (d.scanned) {
         j["scan"] = { { "active", d.scanActive }, { "obstacles", d.scanObstacles }, { "boxes", d.scanBoxes } };
+        j["forward"] = { { "x", d.fwdX }, { "y", d.fwdY }, { "z", d.fwdZ } };
+        j["fightersSkipped"] = d.fightersSkipped;
         j["inWindow"] = d.inWindow;
         j["aheadClaimed"] = d.aheadClaimed;
         j["terrainWalk"] = { { "tested", d.terrainWalkTested },

@@ -95,7 +95,8 @@ struct ObstacleDirectionTargetDebug {
     float clear = 0;              // the winning clearance on the cue's axis (> 0; under the
                                   // margin only for a box already alongside / the terrain
                                   // sample beneath the ship, pinned at the band's near end)
-    float gapZ = 0;               // raw distance to the near z face, world units
+    float gap = 0;                // course distance to the box's nearest point along the
+                                  // course (rails: the near z face, gapZ); <= 0 alongside
     float dx = 0, dy = 0, dz = 0;
     float halfX = 0, halfY = 0, halfZ = 0;
     float pan = 0;   // side directions: pan magnitude pushed (0 center .. 1 hard)
@@ -106,14 +107,22 @@ struct ObstacleDirectionCueDebug {
     int32_t frame = -1;
     bool scanned = false; // the scan ran; every direction inactive means nothing qualified
     bool enabled = false, obstacleEnabled = false, control = false;
-    bool modeOk = false, allRange = false;                    // CueScan_ModeInScope result + mode flag; v1 is
-                                                              // rails-only, so allRange true is itself a gate
+    bool modeOk = false, allRange = false; // CueScan_ModeInScope result + mode flag
+    // All-range only gates (true = pass, and left true on rails): the craft flies by the
+    // aim composition (Player_AimAnglesValid), and is not in a U-turn or somersault — a
+    // scripted maneuver the player does not steer, which also swings the heading frame
+    // (and flips it upside down) faster than a chord can say anything useful.
+    bool aimValid = true, noManeuver = true;
+    float fwdX = 0, fwdY = 0, fwdZ = 0;                       // the course the rule reasoned along (rails: -z)
     int32_t scanActive = 0, scanObstacles = 0, scanBoxes = 0; // ObstacleScanStats
-    int32_t aheadClaimed = 0; // solid boxes skipped whole because the ahead cue is warning
-                              // about them (on course AND still upcoming); a heightfield
-                              // box is never claimed whole — its claim is per sample, see
-                              // terrainWalkClaimed
-    int32_t inWindow = 0;     // boxes inside the Z window (upcoming or alongside)
+    int32_t aheadClaimed = 0;    // solid boxes skipped whole because the ahead cue is warning
+                                 // about them (on course AND still upcoming); a heightfield
+                                 // box is never claimed whole — its claim is per sample, see
+                                 // terrainWalkClaimed
+    int32_t inWindow = 0;        // boxes inside the lookahead window (upcoming or alongside)
+    int32_t fightersSkipped = 0; // non-lockable fighter boxes left out (OBJ_ACTOR_ALLRANGE:
+                                 // the all-range wingmates and allied craft — moving, so
+                                 // never "closed space"; the ahead cue still warns of them)
     // The below cue's terrain walk: heightfield boxes walked, engine surface reads spent
     // on them (the cost line), and boxes with at least one upcoming sample left to the
     // ahead cue (surface within the margin of the course).

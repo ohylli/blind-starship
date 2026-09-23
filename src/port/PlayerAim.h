@@ -53,12 +53,29 @@ inline f32 Player_AimPitch(const Player& p) {
 
 // The spherical form above, realized: the aim heading as a world-space unit vector.
 // This is the single owner of the composition — consumers (the obstacle cue's ray test,
-// the directional cues' future all-range step) call this instead of open-coding the
-// sines, so the verified signs can never drift. Gate on Player_AimAnglesValid first.
+// the directional cues' heading frame) call this instead of open-coding the sines, so
+// the verified signs can never drift. Gate on Player_AimAnglesValid first.
 inline Vec3f Player_AimForward(const Player& p) {
     f32 yaw = Player_AimYaw(p) * M_DTOR;
     f32 pitch = Player_AimPitch(p) * M_DTOR;
     return { -sinf(yaw) * cosf(pitch), sinf(pitch), -cosf(yaw) * cosf(pitch) };
+}
+
+// The full heading frame, bank ignored: `fwd` is Player_AimForward, `right` the
+// horizontal unit vector to the craft's right — the yaw rotation of +x, the same body
+// +X as CueScan_BuildWorldToBodyMatrix, (+1, 0, 0) at yaw 0 — and `up` = right x fwd, the
+// canopy direction. Pitch rotates about `right`, so `right` never depends on it and the
+// frame stays orthonormal through a loop: past 90 degrees of pitch `up` points below the
+// horizon, as the canopy does. Bank (the roll a turn adds) is left out on purpose, like
+// the enemy cue's body frame: it tilts the model, not the flight direction. Gate on
+// Player_AimAnglesValid first.
+inline void Player_AimBasis(const Player& p, Vec3f* fwd, Vec3f* right, Vec3f* up) {
+    const f32 yaw = Player_AimYaw(p) * M_DTOR;
+    const Vec3f f = Player_AimForward(p);
+    const Vec3f r = { cosf(yaw), 0.0f, -sinf(yaw) };
+    *fwd = f;
+    *right = r;
+    *up = { r.y * f.z - r.z * f.y, r.z * f.x - r.x * f.z, r.x * f.y - r.y * f.x };
 }
 
 inline f32 Player_FaceYaw(const Player& p) {

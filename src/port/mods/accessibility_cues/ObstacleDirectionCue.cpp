@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "port/CGameCompat.h"
+#include "port/PlayerAim.h"
 #include "port/hooks/Events.h"
 #include "port/accessibility/Cue.h"
 #include "port/mods/Accessibility.h"
@@ -17,29 +18,34 @@
 // closed" half of the obstacle family; the ahead cue (ObstacleAheadCue.cpp) is the
 // "how soon" half, and the two never claim the same box.
 //
-// The rule, asked of every box the shared scan yields (ObstacleScan.h), on rails, in the
-// same order as the design record:
-//   1. Is it alongside me now, or about to be? The near face within the lookahead ahead
-//      of the ship ("upcoming"), or the ship already between the near and far faces
-//      ("alongside"). Past the far face it is dropped. Unlike the ahead cue's "past the
+// The rule, asked of every box the shared scan yields (ObstacleScan.h), in the same order
+// as the design record. It is stated in the HEADING FRAME (ObstacleCourseFrame): distance
+// along the course, and offsets to the right and up off it. On rails that frame is the
+// world's (the -z track, +x, +y); in all-range it is the aim heading's, bank ignored.
+//   1. Is it alongside me now, or about to be? The box's nearest point along the course
+//      within the lookahead ("upcoming"), or the ship already level with part of it
+//      ("alongside"). Wholly behind, it is dropped. Unlike the ahead cue's "past the
 //      near face -> silent" rule, a wall alongside still matters — drifting into it is
 //      the whole risk.
-//   2. Is it the ahead cue's? An UPCOMING box the ship's position is inside, widened by
-//      the safety margin, on BOTH lateral axes is on course and the ahead cue is warning
-//      about it. Skipped here — the ahead cue never says which edge is nearest, and this
-//      cue never says "the wall ahead is more to your left"; the split keeps each sound's
-//      meaning single. An alongside box is never the ahead cue's (it drops a box at its
-//      near face), so it is classified below however close it is.
-//   3. Which direction, and how close? The ship must be outside the box's footprint on
-//      an axis (clearance > 0) and within the margin of it on the other: the outside
-//      axis names the pair (X -> beside, Y -> above/below) and the sign of the center
-//      offset picks the member; the clearance beyond the box face on that axis is the
-//      signal, and it must be under that pair's band distance (side / vertical dist).
-//      For an upcoming box that outside clearance is at least the margin (question 2
-//      took the rest); an alongside box can be closer, and pins at the band's near end.
-//      A box outside on both axes beyond the margin is a corner, nobody's in v1; one
-//      within the margin on both (only possible alongside, hugging a corner) goes to the
-//      nearer face. A box the ship is inside on both axes is the engine's, not ours.
+//   2. Is it the ahead cue's? A box the course runs into, widened by the safety margin,
+//      with the entry still ahead, is the one the ahead cue is warning about — decided by
+//      the ahead cue's own test (ObstacleScan_CourseSpan: the footprint on rails, the
+//      ray in all-range). Skipped here — the ahead cue never says which edge is nearest,
+//      and this cue never says "the wall ahead is more to your left"; the split keeps
+//      each sound's meaning single. Once the ship is level with the entry the ahead cue
+//      drops the box, so from there on it is classified below however close it is.
+//   3. Which direction, and how close? Take the part of the box inside the window and
+//      within the margin of the course on one steering axis; if all of it lies off to
+//      one side on the other axis, that axis names the pair (right -> beside, up ->
+//      above/below), the side names the member, and the distance to its nearest point is
+//      the clearance — the signal, which must be under that pair's band distance (side /
+//      vertical dist). On rails that is the box face's clearance on that axis; in a
+//      turned heading it comes from the box's corners and edges
+//      (ObstacleDirectionCue_SliceRange). For an upcoming box the clearance is at least
+//      the margin (question 2 took the rest); an alongside box can be closer, and pins
+//      at the band's near end. A box beyond the margin on both axes is a corner,
+//      nobody's in v1; one within the margin on both (only possible alongside, hugging a
+//      corner) goes to the nearer face. A box the course runs inside is the engine's.
 // Per direction the box with the smallest clearance wins. The side cue has two voices,
 // keyed left and right, so a corridor sounds both; above and below are separate cues.
 //
@@ -66,15 +72,17 @@
 // anew. The rate never varies — it is not a signal — so the buzz's varying pulse rate keeps
 // its one meaning; above/below stay drones (centered, nothing to localize).
 //
-// v1 scope (docs/accessibility-obstacle-direction-cues.md): rails only — in all-range
-// "left" is heading-relative and needs the offsets rotated into the aim frame, the ahead
-// cue's own second step. Terrain (a heightfield poly box, whose box spans the whole hill)
-// is refined for BELOW only: the box top is replaced by the engine's own surface height
-// sampled along the course (ObstacleDirectionCue_TerrainBelow). The side pair still reads
-// a terrain box as a box, and so over-reports a hill flown beside near its peak height.
-// The engine's poly range gate is applied to the terrain walk and nowhere else: a solid
-// mesh inside the side band is inside the gate anyway. Ground, water and lava are not
-// objects and stay out.
+// Scope (docs/accessibility-obstacle-direction-cues.md): on rails and in solo all-range,
+// where the three are quiet through a U-turn or somersault and skip the non-lockable
+// fighters (the wingmates and allied craft, left to the ahead cue). Terrain (a heightfield
+// poly box, whose box spans the whole hill) is refined for BELOW only: the box top is
+// replaced by the engine's own surface height sampled along the course
+// (ObstacleDirectionCue_TerrainBelow). The side pair still reads a terrain box as a box,
+// and so over-reports a hill flown beside near its peak height — Fortuna's mountains
+// included. The engine's poly range gate is applied to the terrain walk and nowhere else:
+// a solid mesh inside the side band is inside the gate anyway. Ground, water and lava are
+// not objects and stay out. Every box is axis-aligned in world space (obj.rot ignored,
+// ObstacleScan.h), which in a turned heading shifts the clearance of a yawed wall.
 static Cue* sSideCue = nullptr;
 static Cue* sAboveCue = nullptr;
 static Cue* sBelowCue = nullptr;
@@ -209,7 +217,169 @@ struct ObstacleDirectionWinner {
     bool found = false;
     ObstacleAxisAnswer answer; // answer.clear is INFINITY until a box wins
     ObstacleBox box{};
+    f32 gap = 0.0f; // the box's nearest course distance (question 1's nearT)
 };
+
+// The heading frame the rule reasons in: the ship's center, the course, and the two
+// directions the player can steer off it. On rails the fixed -z track with world +x
+// (right) and +y (up); in all-range the aim heading's frame (Player_AimBasis — bank
+// ignored, so "above" is toward the canopy and "beside" is what a turn would bring onto
+// the course). All three are unit vectors and mutually orthogonal.
+struct ObstacleCourseFrame {
+    Vec3f origin;
+    Vec3f fwd, right, up;
+};
+
+static f32 ObstacleDirectionCue_Dot(const Vec3f& a, const Vec3f& b) {
+    return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+
+// The range of offsets along `shift` over the part of a box that lies inside the
+// lookahead window along the course (0 <= t <= lookahead) and within `margin` of the
+// course on the OTHER steering axis (|q . other| <= margin), q being a point relative to
+// the ship. `found` false when no part of the box is in that slab. This is question 3's
+// geometry, exact for the axis-aligned box in any heading: an offset range entirely
+// above zero means the box is off to the + side (right / above) by `lo`, entirely below
+// zero off to the - side by `-hi`, and one containing zero means the course itself runs
+// through that slice of the box (the ahead cue's, or already inside it).
+//
+// On rails (fwd -z, right +x, up +y) the box's offsets decouple from the window and the
+// slab, and the range is exactly the rails rule's [dx - half.x, dx + half.x] — clearX
+// with its sign — gated by "clearY within the margin", so the rails numbers are
+// unchanged. In a turned heading the box is a rotated block in the frame and its
+// clearance must come from its corners and edges, not from world-axis extents: the
+// answer is a small linear program (extremes of a linear function over a convex
+// polytope), solved by evaluating every point that can be a vertex of that polytope —
+// the box corners inside the slab, the box edges crossing the four slab planes, and the
+// four slab-plane intersection lines (each runs along `shift`) clipped to the box. At
+// most 8 + 48 + 8 candidates, each a few multiplies; only boxes inside the window get here.
+struct ObstacleSliceRange {
+    bool found = false;
+    f32 lo = INFINITY;
+    f32 hi = -INFINITY;
+};
+
+static ObstacleSliceRange ObstacleDirectionCue_SliceRange(const ObstacleBox& box, const Vec3f& fwd, f32 lookahead,
+                                                          const Vec3f& other, f32 margin, const Vec3f& shift) {
+    // World-unit tolerance on every containment test, so a candidate computed on a face
+    // is not rejected by rounding (coordinates reach ~20000, where a float ulp is ~0.002).
+    constexpr f32 kEps = 0.05f;
+    constexpr f32 kParallelEps = 1e-6f; // direction-cosine floor for the unit vectors below
+    const f32 d[3] = { box.dx, box.dy, box.dz };
+    const f32 h[3] = { box.half.x, box.half.y, box.half.z };
+    ObstacleSliceRange out;
+    auto consider = [&](const Vec3f& q) {
+        const f32 qa[3] = { q.x, q.y, q.z };
+        for (int i = 0; i < 3; i++) {
+            if (!(fabsf(qa[i] - d[i]) <= h[i] + kEps)) {
+                return; // outside the box (or NaN)
+            }
+        }
+        const f32 t = ObstacleDirectionCue_Dot(q, fwd);
+        const f32 o = ObstacleDirectionCue_Dot(q, other);
+        if (!((t >= -kEps) && (t <= lookahead + kEps) && (fabsf(o) <= margin + kEps))) {
+            return; // outside the slab
+        }
+        const f32 s = ObstacleDirectionCue_Dot(q, shift);
+        out.found = true;
+        if (s < out.lo) {
+            out.lo = s;
+        }
+        if (s > out.hi) {
+            out.hi = s;
+        }
+    };
+    auto vertex = [&](int bits) -> Vec3f {
+        return { d[0] + ((bits & 1) ? h[0] : -h[0]), d[1] + ((bits & 2) ? h[1] : -h[1]),
+                 d[2] + ((bits & 4) ? h[2] : -h[2]) };
+    };
+    // The four slab planes, n . q = c.
+    const Vec3f* planeN[4] = { &fwd, &fwd, &other, &other };
+    const f32 planeC[4] = { 0.0f, lookahead, -margin, margin };
+
+    for (int bits = 0; bits < 8; bits++) {
+        consider(vertex(bits));
+    }
+    for (int axis = 0; axis < 3; axis++) {
+        for (int bits = 0; bits < 8; bits++) {
+            if (bits & (1 << axis)) {
+                continue; // each edge once, from its low end along `axis`
+            }
+            const Vec3f p0 = vertex(bits);
+            const Vec3f p1 = vertex(bits | (1 << axis));
+            const Vec3f e = { p1.x - p0.x, p1.y - p0.y, p1.z - p0.z };
+            for (int k = 0; k < 4; k++) {
+                const f32 denom = ObstacleDirectionCue_Dot(*planeN[k], e);
+                if (fabsf(denom) < kParallelEps) {
+                    continue; // the edge runs parallel to this plane
+                }
+                const f32 lambda = (planeC[k] - ObstacleDirectionCue_Dot(*planeN[k], p0)) / denom;
+                if ((lambda >= 0.0f) && (lambda <= 1.0f)) {
+                    consider({ p0.x + e.x * lambda, p0.y + e.y * lambda, p0.z + e.z * lambda });
+                }
+            }
+        }
+    }
+    const f32 sh[3] = { shift.x, shift.y, shift.z };
+    for (int ti = 0; ti < 2; ti++) {
+        for (int oi = 0; oi < 2; oi++) {
+            const f32 t0 = ti ? lookahead : 0.0f;
+            const f32 o0 = oi ? margin : -margin;
+            const f32 q0[3] = { fwd.x * t0 + other.x * o0, fwd.y * t0 + other.y * o0, fwd.z * t0 + other.z * o0 };
+            f32 lo = -INFINITY;
+            f32 hi = INFINITY;
+            bool hit = true;
+            for (int i = 0; (i < 3) && hit; i++) {
+                if (fabsf(sh[i]) < kParallelEps) {
+                    hit = fabsf(q0[i] - d[i]) <= h[i];
+                    continue;
+                }
+                f32 s1 = (d[i] - h[i] - q0[i]) / sh[i];
+                f32 s2 = (d[i] + h[i] - q0[i]) / sh[i];
+                if (s1 > s2) {
+                    const f32 tmp = s1;
+                    s1 = s2;
+                    s2 = tmp;
+                }
+                lo = (s1 > lo) ? s1 : lo;
+                hi = (s2 < hi) ? s2 : hi;
+            }
+            if (hit && (lo <= hi)) {
+                consider({ q0[0] + shift.x * lo, q0[1] + shift.y * lo, q0[2] + shift.z * lo });
+                consider({ q0[0] + shift.x * hi, q0[1] + shift.y * hi, q0[2] + shift.z * hi });
+            }
+        }
+    }
+    return out;
+}
+
+// A slice range, classified into one pair's answer: off to the + side by `lo`, to the -
+// side by `-hi`, or no answer when the range straddles zero or lies beyond `band`, the
+// pair's outer edge.
+static ObstacleAxisAnswer ObstacleDirectionCue_Classify(const ObstacleSliceRange& r, f32 band, ObstacleDirection plus,
+                                                        ObstacleDirection minus) {
+    ObstacleAxisAnswer out;
+    if (!r.found) {
+        return out;
+    }
+    f32 clear;
+    ObstacleDirection dir;
+    if (r.lo > 0.0f) {
+        clear = r.lo;
+        dir = plus;
+    } else if (r.hi < 0.0f) {
+        clear = -r.hi;
+        dir = minus;
+    } else {
+        return out;
+    }
+    if (clear < band) {
+        out.ok = true;
+        out.clear = clear;
+        out.dir = dir;
+    }
+    return out;
+}
 
 // The terrain walk samples on the family's shared grid (ObstacleCommon.h: kObstacleWalkStep
 // / kObstacleWalkMaxSteps, the same grid as the ahead cue's walk, which is what makes the
@@ -220,7 +390,7 @@ static_assert((f32) kObstacleWalkMaxSteps * kObstacleWalkStep >= kObstacleCueDir
 
 struct ObstacleTerrainBelow {
     bool found = false;   // a sample qualified; the fields below describe the closest one
-    f32 clear = INFINITY; // ship Y minus the surface height there
+    f32 clear = INFINITY; // the course's height above the surface there
     f32 surfaceY = 0.0f;
     f32 t = 0.0f;         // its course distance; 0 = beneath the ship
     bool claimed = false; // at least one upcoming sample was left to the ahead cue
@@ -232,62 +402,64 @@ struct ObstacleTerrainBelow {
 // ground under a ship over the outer slope, and the box rule droned over most of
 // Corneria. This asks the engine for the surface height instead
 // (Object_PolyHeightfieldSurfaceY, one read per point, the number its crash test
-// compares against) along the stretch of course the box rule's Z window covers: from
-// beneath the ship — or the box's near face, if that is still ahead — to the far face or
-// the lookahead, whichever is nearer, in kObstacleWalkStep steps. Each step reads the surface
-// under the course and `margin` to either side (the box rule's "within the margin on
-// the other axis", and the same three points the ahead cue's walk probes) and keeps the
-// highest; the clearance is the ship's Y above it.
+// compares against) along the stretch [tLo, tHi] of the course over the box, reading the
+// surface under each sample point and `margin` to either side along frame.right (the
+// box rule's "within the margin on the other axis", and the same three points the ahead
+// cue's walk probes) and keeping the highest; the clearance is the course's height above
+// it — on rails the ship's own Y, in all-range the course climbing or diving with the
+// aim. The clearance is measured straight down (world Y) whatever the heading: the
+// surface is hit from above, and gravity's "below" is what a height above ground means.
+//
+// The samples sit on the grid anchor + k * kObstacleWalkStep, plus the span's two ends.
+// The anchor is where the ahead cue's walk over this box starts, so where the two walks
+// overlap they read the same points; on rails it is tLo itself unless the engine's range
+// gate moves the ahead cue's start (the grid then shifts to match it).
 //
 // Ownership is decided per SAMPLE, not per box (one hill is both "ground 300 below me"
 // and "a slope rising into my course"): an upcoming sample whose surface is within the
 // margin of the course is the ahead cue's — the same threshold its walk hits at — and is
 // skipped, while the rest still compete, so a rising slope sounds as the buzz plus a
-// loud below chord: "the thing ahead is ground, climb". The sample beneath the ship is
-// the "alongside" case and pins at the band's near end however close. (The ahead cue's
-// walk starts beneath the ship too, so skimming within the margin sounds both — a known,
-// accepted overlap: the chord is what says the buzz is about the ground.) A sample at or
-// below the surface is the engine's.
+// loud below chord: "the thing ahead is ground, climb". The sample beneath the ship (t 0,
+// present when the ship is already over the box) is the "alongside" case and pins at the
+// band's near end however close. (The ahead cue's walk starts beneath the ship too, so
+// skimming within the margin sounds both — a known, accepted overlap: the chord is what
+// says the buzz is about the ground.) A sample at or below the surface is the engine's.
 //
 // A sample is dropped when the ship there would be outside the engine's XZ range gate
 // (box.polyRangeXZ): Player_CollisionCheck never tests the mesh from out there, and a
 // bump's box is deep enough for its far end to lie beyond the gate.
-static ObstacleTerrainBelow ObstacleDirectionCue_TerrainBelow(const ObstacleBox& box, const Player* player,
-                                                              bool alongside, f32 lookahead, f32 margin,
+static ObstacleTerrainBelow ObstacleDirectionCue_TerrainBelow(const ObstacleBox& box, const ObstacleCourseFrame& frame,
+                                                              f32 tLo, f32 tHi, f32 anchor, f32 margin,
                                                               int32_t* probes) {
     ObstacleTerrainBelow out;
     PolyHeightfield hf;
     if (!Object_ResolvePolyHeightfield(box.polyColId, &box.objPos, box.rotY, &hf)) {
         return out; // not a tabled mesh — unreachable for a scan-produced box
     }
-    const f32 tStart = alongside ? 0.0f : box.gapZ;
-    f32 tEnd = box.gapZ + 2.0f * box.half.z;
-    if (tEnd > lookahead) {
-        tEnd = lookahead;
-    }
     int steps;
-    if (!ObstacleCommon_WalkSteps(tEnd - tStart, &steps)) {
+    if (!ObstacleCommon_WalkSteps(tHi - tLo, &steps)) {
         return out; // NaN or a reversed span
+    }
+    if (!(fabsf(anchor - tLo) <= (f32) kObstacleWalkMaxSteps * kObstacleWalkStep)) {
+        anchor = tLo; // NaN, or so far off the span that the grid phase is meaningless
     }
     const s32 lateral = (margin > 0.0f) ? 1 : 0;
     const f32 rangeSq = box.polyRangeXZ * box.polyRangeXZ;
-    for (int i = 0; i <= steps; i++) {
-        f32 t = tStart + (f32) i * kObstacleWalkStep;
-        if (t > tEnd) {
-            t = tEnd;
-        }
-        const f32 z = player->trueZpos - t; // the rails course is -z
+    auto sample = [&](f32 t, bool beneath) {
+        const Vec3f p = { frame.origin.x + frame.fwd.x * t, frame.origin.y + frame.fwd.y * t,
+                          frame.origin.z + frame.fwd.z * t };
         if (box.polyRangeXZ > 0.0f) {
-            const f32 rx = player->pos.x - box.objPos.x;
-            const f32 rz = z - box.objPos.z;
+            const f32 rx = p.x - box.objPos.x;
+            const f32 rz = p.z - box.objPos.z;
             if ((rx * rx + rz * rz) > rangeSq) {
-                continue;
+                return;
             }
         }
         bool any = false;
         f32 top = 0.0f;
         for (s32 k = -lateral; k <= lateral; k++) {
-            const f32 x = player->pos.x + (f32) k * margin;
+            const f32 x = p.x + frame.right.x * (f32) k * margin;
+            const f32 z = p.z + frame.right.z * (f32) k * margin;
             f32 surfaceY;
             (*probes)++;
             if (Object_PolyHeightfieldSurfaceY(&hf, x, z, &surfaceY) && (!any || (surfaceY > top))) {
@@ -296,16 +468,15 @@ static ObstacleTerrainBelow ObstacleDirectionCue_TerrainBelow(const ObstacleBox&
             }
         }
         if (!any) {
-            continue; // no surface under this stretch (outside the mesh's outline)
+            return; // no surface under this stretch (outside the mesh's outline)
         }
-        const f32 clear = player->pos.y - top;
-        const bool beneath = alongside && (i == 0);
+        const f32 clear = p.y - top;
         if (!beneath && (clear < margin)) {
             out.claimed = true; // the ahead cue's walk hits here
-            continue;
+            return;
         }
         if (!(clear > 0.0f)) {
-            continue; // at or below the surface: the engine's
+            return; // at or below the surface: the engine's
         }
         if (clear < out.clear) {
             out.found = true;
@@ -313,8 +484,65 @@ static ObstacleTerrainBelow ObstacleDirectionCue_TerrainBelow(const ObstacleBox&
             out.surfaceY = top;
             out.t = t;
         }
+    };
+    // The span's ends are sampled exactly; grid points within a sliver of either end are
+    // skipped as duplicates. With the anchor at tLo this is exactly tLo, tLo + step, ...,
+    // tHi — the rails walk as first committed.
+    constexpr f32 kEndTol = 0.01f;
+    sample(tLo, !(tLo > 0.0f));
+    const f32 kFirst = ceilf((tLo - anchor) / kObstacleWalkStep);
+    for (int i = 0; i <= steps; i++) {
+        const f32 t = anchor + (kFirst + (f32) i) * kObstacleWalkStep;
+        if (t <= tLo + kEndTol) {
+            continue;
+        }
+        if (t >= tHi - kEndTol) {
+            break;
+        }
+        sample(t, false);
+    }
+    if (tHi > tLo + kEndTol) {
+        sample(tHi, false);
     }
     return out;
+}
+
+// All-range's terrain walk span: the stretch of the course whose horizontal position is
+// over the box's footprint widened by the margin on both world axes (the lateral probes
+// reach that far), clipped to [0, lookahead]. False when the course never passes over it.
+// Rails keeps its own span (the box's Z extent, the stretch the rails walk has always
+// covered), so its sampling is unchanged.
+static bool ObstacleDirectionCue_FootprintSpan(const ObstacleBox& box, const Vec3f& fwd, f32 margin, f32 lookahead,
+                                               f32* tLo, f32* tHi) {
+    constexpr f32 kParallelEps = 1e-6f;
+    const f32 d[2] = { box.dx, box.dz };
+    const f32 h[2] = { box.half.x + margin, box.half.z + margin };
+    const f32 f[2] = { fwd.x, fwd.z };
+    f32 lo = 0.0f;
+    f32 hi = lookahead;
+    for (int i = 0; i < 2; i++) {
+        if (fabsf(f[i]) < kParallelEps) {
+            if (!(fabsf(d[i]) <= h[i])) {
+                return false;
+            }
+            continue;
+        }
+        f32 t1 = (d[i] - h[i]) / f[i];
+        f32 t2 = (d[i] + h[i]) / f[i];
+        if (t1 > t2) {
+            const f32 tmp = t1;
+            t1 = t2;
+            t2 = tmp;
+        }
+        lo = (t1 > lo) ? t1 : lo;
+        hi = (t2 < hi) ? t2 : hi;
+    }
+    if (!(lo <= hi)) {
+        return false;
+    }
+    *tLo = lo;
+    *tHi = hi;
+    return true;
 }
 
 static void ObstacleDirectionCue_StopAll() {
@@ -335,7 +563,7 @@ static void ObstacleDirectionCue_FillTargetDebug(ObstacleDirectionTargetDebug& d
     d.sampleT = w.answer.sampleT;
     d.upcoming = w.answer.upcoming;
     d.clear = w.answer.clear;
-    d.gapZ = w.box.gapZ;
+    d.gap = w.gap;
     d.dx = w.box.dx;
     d.dy = w.box.dy;
     d.dz = w.box.dz;
@@ -359,17 +587,49 @@ static void ObstacleDirectionCue_OnPostUpdate(IEvent* event) {
     dbg.enabled = CueCommon_IsEnabled();
     dbg.obstacleEnabled = ObstacleCommon_IsEnabled();
     // Same gate set as the ahead cue (see its comment on why `control` is what makes the
-    // reads below safe), plus v1's rails-only scope: all-range needs the offsets rotated
-    // into the aim frame, which is the planned second step.
+    // reads below safe).
     bool allRange = false;
     dbg.modeOk = CueScan_ModeInScope(&allRange);
     dbg.allRange = allRange;
     dbg.control = Accessibility_PlayerHasControl();
     dbg.frame = (int32_t) gGameFrameCount;
-    if (!dbg.enabled || !dbg.obstacleEnabled || !dbg.modeOk || !dbg.control || allRange) {
+    if (!dbg.enabled || !dbg.obstacleEnabled || !dbg.modeOk || !dbg.control) {
         ObstacleDirectionCue_StopAll();
         return;
     }
+
+    Player* player = &gPlayer[0];
+
+    // The heading frame. On rails the course is the fixed -z track and the world axes
+    // are the player's left/right and up/down. In all-range it is the aim heading
+    // (Player_AimBasis), which only the Arwing / Blue Marine composition yields — every
+    // solo arena flies an Arwing, and the ahead cue stops on the same gate. A U-turn or
+    // somersault is a scripted maneuver: the player is not steering, "you would hit it by
+    // steering that way" does not apply, and the frame swings through (and upside down)
+    // faster than a chord can say anything, so all three go quiet until it ends. Rails
+    // keeps its world frame through a somersault loop and is unchanged.
+    ObstacleCourseFrame frame;
+    frame.origin = { player->pos.x, player->pos.y, player->trueZpos }; // trueZpos: the real world Z
+    if (allRange) {
+        if (!Player_AimAnglesValid(*player)) {
+            dbg.aimValid = false;
+            ObstacleDirectionCue_StopAll();
+            return;
+        }
+        if ((player->state == PLAYERSTATE_U_TURN) || player->somersault) {
+            dbg.noManeuver = false;
+            ObstacleDirectionCue_StopAll();
+            return;
+        }
+        Player_AimBasis(*player, &frame.fwd, &frame.right, &frame.up);
+    } else {
+        frame.fwd = { 0.0f, 0.0f, -1.0f };
+        frame.right = { 1.0f, 0.0f, 0.0f };
+        frame.up = { 0.0f, 1.0f, 0.0f };
+    }
+    dbg.fwdX = frame.fwd.x;
+    dbg.fwdY = frame.fwd.y;
+    dbg.fwdZ = frame.fwd.z;
 
     const f32 margin = ObstacleCommon_Margin();
     const f32 lookahead = CueCommon_ReadPositiveFloat(kObstacleCueDirLookaheadCVar, kObstacleCueDirLookaheadDefault,
@@ -397,74 +657,112 @@ static void ObstacleDirectionCue_OnPostUpdate(IEvent* event) {
     dbg.vertDist = vertDist;
     dbg.levelFloor = levelFloor;
 
-    Player* player = &gPlayer[0];
     // A heightfield is the floor, not a crash, for the ground vehicles (ObstacleCommon.h),
-    // so the terrain walk is skipped for them — a forward guard, no rails level pairs the
-    // two today.
+    // so the terrain walk is skipped for them — a forward guard, no level in scope pairs
+    // the two today.
     const bool terrainIsFloor = ObstacleCommon_TerrainIsFloor();
 
     ObstacleScanStats stats;
     ObstacleDirectionWinner winners[OBSTACLE_DIR_COUNT];
     ObstacleScan_ForEachBox(player, &stats, [&](const ObstacleBox& box) {
-        // Question 1: the Z window. gapZ is the near face (positive = still ahead); the
-        // far face is 2 * half.z further back.
-        const f32 farGap = box.gapZ + 2.0f * box.half.z;
-        const bool upcoming = (box.gapZ > 0.0f) && (box.gapZ < lookahead);
-        const bool alongside = !(box.gapZ > 0.0f) && (farGap > 0.0f);
+        // The non-lockable fighters — the all-range wingmates (Falco, Slippy, Peppy) and
+        // the allied craft — pass the obstacle predicate, but they fly: a wingmate beside
+        // you does not keep that space closed, and they are near you constantly. Left to
+        // the ahead cue, which still warns of one crossing your course. Lockable fighters
+        // are enemies and never reach the scan.
+        if ((box.array == OBSTACLE_ARRAY_ACTOR) && (box.objId == OBJ_ACTOR_ALLRANGE)) {
+            dbg.fightersSkipped++;
+            return;
+        }
+        // Question 1: the lookahead window along the course. The box's extent along it is
+        // [nearT, farT] (its center's course distance, plus or minus the projection of its
+        // half-extents); on rails nearT is gapZ, the near Z face.
+        const f32 centerT = ObstacleDirectionCue_Dot({ box.dx, box.dy, box.dz }, frame.fwd);
+        const f32 extentT =
+            fabsf(frame.fwd.x) * box.half.x + fabsf(frame.fwd.y) * box.half.y + fabsf(frame.fwd.z) * box.half.z;
+        const f32 nearT = centerT - extentT;
+        const f32 farT = centerT + extentT;
+        const bool upcoming = (nearT > 0.0f) && (nearT < lookahead);
+        const bool alongside = !(nearT > 0.0f) && (farT > 0.0f);
         if (!upcoming && !alongside) {
             return;
         }
         dbg.inWindow++;
-        // Question 2: the ahead cue's box — on course (within the margin on both lateral
-        // axes) AND still upcoming. The ahead cue drops a box at its near face, so an
-        // alongside box is ours however close (a NaN clearance fails every test below).
-        // A terrain box is never claimed whole: its claim is settled per sample inside
-        // the walk (ObstacleDirectionCue_TerrainBelow), so it goes on to question 3 with
-        // boxOnCourse still set — the side half honors it, the vertical half decides.
-        const bool withinX = box.clearX < margin;
-        const bool withinY = box.clearY < margin;
-        const bool boxOnCourse = withinX && withinY && upcoming;
+        // Question 2: the ahead cue's box — the course runs into it (ObstacleScan_CourseSpan,
+        // the ahead cue's own test) and its entry is still ahead. Once the ship is level
+        // with the entry the ahead cue lets the box go, so it is ours however close (a NaN
+        // fails every test below). A terrain box is never claimed whole: its claim is
+        // settled per sample inside the walk (ObstacleDirectionCue_TerrainBelow), so it
+        // goes on to question 3 with boxOnCourse still set — the side half honors it,
+        // the vertical half decides.
+        f32 spanNear = 0.0f;
+        f32 spanFar = 0.0f;
+        const bool courseHits = ObstacleScan_CourseSpan(box, allRange, frame.fwd, margin, &spanNear, &spanFar);
+        const bool boxOnCourse = courseHits && (spanNear > 0.0f);
         if (boxOnCourse && !box.polyHeightfield) {
             dbg.aheadClaimed++;
             return;
         }
-        // Question 3, vertical half: outside the footprint in Y, within the margin in X.
-        // For a terrain box "outside in Y" is the ship's height above the surface under
-        // the course, not the box top, and a heightfield is only ever hit from above, so
-        // its answer is always BELOW.
+        // Question 3: the part of the box inside the window and within the margin of the
+        // course on one steering axis, measured along the other (SliceRange).
+        const ObstacleSliceRange vertRange =
+            ObstacleDirectionCue_SliceRange(box, frame.fwd, lookahead, frame.right, margin, frame.up);
+        // Vertical half. For a terrain box "outside in Y" is the course's height above
+        // the surface under it, not the box top, and a heightfield is only ever hit from
+        // above, so its answer is always BELOW. It is walked when some of it lies within
+        // the margin of the course laterally (the vertical slice is non-empty).
         ObstacleAxisAnswer vert;
         if (box.polyHeightfield) {
-            if (withinX && !terrainIsFloor) {
-                dbg.terrainWalkTested++;
-                const ObstacleTerrainBelow terrain = ObstacleDirectionCue_TerrainBelow(
-                    box, player, alongside, lookahead, margin, &dbg.terrainWalkProbes);
-                if (terrain.claimed) {
-                    dbg.terrainWalkClaimed++;
+            if (vertRange.found && !terrainIsFloor) {
+                // The walk's span: rails keeps the box's Z extent, all-range the stretch of
+                // course over the footprint. Its grid is anchored where the ahead cue's walk
+                // over this box starts, when it walks it (see TerrainBelow).
+                f32 tLo;
+                f32 tHi;
+                bool walk;
+                if (allRange) {
+                    walk = ObstacleDirectionCue_FootprintSpan(box, frame.fwd, margin, lookahead, &tLo, &tHi);
+                } else {
+                    tLo = alongside ? 0.0f : nearT;
+                    tHi = (farT < lookahead) ? farT : lookahead;
+                    walk = true;
                 }
-                if (terrain.found && (terrain.clear < vertDist)) {
-                    vert.ok = true;
-                    vert.clear = terrain.clear;
-                    vert.dir = OBSTACLE_DIR_BELOW;
-                    vert.upcoming = terrain.t > 0.0f;
-                    vert.fromTerrainWalk = true;
-                    vert.surfaceY = terrain.surfaceY;
-                    vert.sampleT = terrain.t;
+                f32 anchor = tLo;
+                f32 aheadNear = spanNear;
+                f32 aheadFar = spanFar;
+                if (courseHits && ObstacleScan_ClipToPolyRange(box, frame.origin, frame.fwd, &aheadNear, &aheadFar) &&
+                    (aheadFar > 0.0f)) {
+                    anchor = (aheadNear > 0.0f) ? aheadNear : 0.0f;
+                }
+                if (walk) {
+                    dbg.terrainWalkTested++;
+                    const ObstacleTerrainBelow terrain =
+                        ObstacleDirectionCue_TerrainBelow(box, frame, tLo, tHi, anchor, margin, &dbg.terrainWalkProbes);
+                    if (terrain.claimed) {
+                        dbg.terrainWalkClaimed++;
+                    }
+                    if (terrain.found && (terrain.clear < vertDist)) {
+                        vert.ok = true;
+                        vert.clear = terrain.clear;
+                        vert.dir = OBSTACLE_DIR_BELOW;
+                        vert.upcoming = terrain.t > 0.0f;
+                        vert.fromTerrainWalk = true;
+                        vert.surfaceY = terrain.surfaceY;
+                        vert.sampleT = terrain.t;
+                    }
                 }
             }
-        } else if ((box.clearY > 0.0f) && withinX && (box.clearY < vertDist)) {
-            vert.ok = true;
-            vert.clear = box.clearY;
-            vert.dir = (box.dy > 0.0f) ? OBSTACLE_DIR_ABOVE : OBSTACLE_DIR_BELOW;
+        } else {
+            vert = ObstacleDirectionCue_Classify(vertRange, vertDist, OBSTACLE_DIR_ABOVE, OBSTACLE_DIR_BELOW);
             vert.upcoming = upcoming;
         }
-        // Question 3, side half: outside the footprint in X, within the margin in Y. The
-        // !boxOnCourse only bites for a terrain box (a solid one returned above): its box
-        // claim still holds here, so a hill on course never sounds beside.
+        // Side half. The !boxOnCourse only bites for a terrain box (a solid one returned
+        // above): its box claim still holds here, so a hill on course never sounds beside.
         ObstacleAxisAnswer side;
-        if ((box.clearX > 0.0f) && withinY && (box.clearX < sideDist) && !boxOnCourse) {
-            side.ok = true;
-            side.clear = box.clearX;
-            side.dir = (box.dx < 0.0f) ? OBSTACLE_DIR_LEFT : OBSTACLE_DIR_RIGHT;
+        if (!boxOnCourse) {
+            const ObstacleSliceRange sideRange =
+                ObstacleDirectionCue_SliceRange(box, frame.fwd, lookahead, frame.up, margin, frame.right);
+            side = ObstacleDirectionCue_Classify(sideRange, sideDist, OBSTACLE_DIR_RIGHT, OBSTACLE_DIR_LEFT);
             side.upcoming = upcoming;
         }
         // The nearer face wins the box. A corner beyond the margin on both axes, or a box
@@ -483,6 +781,7 @@ static void ObstacleDirectionCue_OnPostUpdate(IEvent* event) {
             w.found = true;
             w.answer = *pick;
             w.box = box;
+            w.gap = nearT;
         }
     });
     dbg.scanned = true;

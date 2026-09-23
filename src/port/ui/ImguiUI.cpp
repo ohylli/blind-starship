@@ -419,8 +419,8 @@ void DrawSettingsMenu(){
             UIWidgets::CVarCheckbox("Obstacle warning", kObstacleCueEnabledCVar, {
                 .tooltip = "Obstacle cues: a low buzz that beats faster as you close on something solid on your "
                            "course that you cannot shoot down, plus three chords that tell you the space beside, "
-                           "above or below you is closed. The buzz works on rails and in solo all-range battles; "
-                           "the chords on rails. Note: Minimal training removes Training's obstacles, so these "
+                           "above or below you is closed. All four work on rails and in solo all-range battles. "
+                           "Note: Minimal training removes Training's obstacles, so these "
                            "cues stay silent there.",
                 .defaultValue = true
             });

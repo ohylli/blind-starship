@@ -1,7 +1,7 @@
 # The directional obstacle cues: design record
 
 Status: v1 implemented 2026-09-15 (rails only); terrain surface walk for the below cue
-added 2026-09-17. Companion to
+added 2026-09-17; all-range support added 2026-09-23. Companion to
 `docs/accessibility-obstacle-cue.md` (the ahead cue, whose scan these cues share and whose
 catalogue of what is and is not an obstacle applies here unchanged) and
 `docs/accessibility-cues-tuning.md` (the knobs). This file records what the three cues
@@ -41,8 +41,10 @@ meaning; above and below stay drones, there is nothing to localize dead-center.
 
 Every game tick, each box the shared scan yields (`ObstacleScan_ForEachBox` — one box per
 solid hitbox record, poly-mesh bounding box, or boxed sphere collider of every
-warn-worthy obstacle) is asked three questions, on rails, in
-`ObstacleDirectionCue_OnPostUpdate`:
+warn-worthy obstacle) is asked three questions in `ObstacleDirectionCue_OnPostUpdate`.
+They are stated here in rails terms (the course is the −Z track, "beside" is world X,
+"above/below" world Y); all-range asks the same three in the heading's frame — see
+"All-range: the heading frame" below.
 
 1. **Is it alongside me now, or about to be?** The box's near Z face must be ahead within
    the **lookahead** (default 1200 units, about a second of cruise flight), or the ship
@@ -92,7 +94,11 @@ the surface itself (`ObstacleDirectionCue_TerrainBelow`):
   still ahead) to the far face or the lookahead, whichever is nearer, every 100 units —
   the family's shared grid (`kObstacleWalkStep` / `ObstacleCommon_WalkSteps` in
   `ObstacleCommon.h`), the same one the ahead cue's walk samples on, which is what makes
-  the per-sample claim below exactly the ahead cue's hit.
+  the per-sample claim below exactly the ahead cue's hit. The grid is anchored where the
+  ahead cue's own walk over the box starts. On rails that is the same starting point
+  except when the engine's range gate pushes the ahead cue's start further in, and the
+  grid then shifts to match it (an A/B trace on 2026-09-23 showed this as the only rails
+  difference: one extra sample and a few units of clearance, on a dive).
   Each step reads the surface under the course and one margin to either side and keeps
   the highest; the clearance is the ship's Y above it, and the smallest clearance over
   the walk is the box's candidate in the ordinary below contest. Samples the engine's XZ
@@ -110,6 +116,56 @@ the surface itself (`ObstacleDirectionCue_TerrainBelow`):
 - The lookahead makes the chord anticipate: it rises as a hill's peak comes within the
   lookahead, about a second before the ship is over it, exactly as an upcoming box does.
 - The side question still reads a terrain box as a box, box claim included.
+
+## All-range: the heading frame
+
+In all-range the ship flies in any direction, so "left" and "above" are relative to the
+heading. The three questions are asked in the **heading frame**: the aim heading
+(`Player_AimForward`), the horizontal vector to the craft's right, and the canopy
+direction, together `Player_AimBasis` in `src/port/PlayerAim.h`. Bank is ignored, as in
+the enemy cue's body frame. So "above" is toward the canopy (world up in level flight,
+tilted with the nose when climbing or diving), and "beside" is what a turn would bring
+onto the course. The chords and their mappings are unchanged.
+
+- **The boxes stay axis-aligned in the world, so the clearance is computed, not read
+  off.** Seen from a turned heading a box is a rotated block. Rotating its center into
+  the frame and reusing the per-axis extents would overstate its size (by up to about 40%
+  for a cube, far more for a long wall seen at 45 degrees), and that error would go
+  straight into the pan and loudness. `ObstacleDirectionCue_SliceRange` instead takes the
+  part of the box inside the lookahead window and within the margin of the course on one
+  steering axis, and finds its exact offset range along the other: the extremes of a
+  linear function over a convex polytope, evaluated at every candidate vertex (box
+  corners, box edges crossing the slab planes, slab-plane lines crossing the box). On
+  rails the same computation gives the rails rule's numbers back exactly, so one code
+  path serves both modes; a 300-frame A/B trace at `obstacle-scout` against the previous
+  build matched on every sample. Verified in all-range on 2026-09-23 against a
+  brute-force recomputation from the `cues` dump (16 winners on Sector Z in yawed and
+  pitched headings, all within 1.5 units, the sampling grid's resolution).
+- **Question 1** uses the box's extent along the course (its center's course distance
+  plus or minus the projection of its half-extents); on rails that is the near and far
+  Z faces.
+- **Question 2 is the ahead cue's own test.** A box is the ahead cue's when
+  `ObstacleScan_CourseSpan`, the function the ahead cue itself calls (the footprint test
+  on rails, the ray test in all-range), has the course running into it with the entry
+  still ahead. Sharing the function is what keeps "the two never claim the same box"
+  true in a turned heading.
+- **Terrain below** walks the tilted course: samples along the aim ray over the box's
+  footprint (widened by the margin), the clearance being the course's height above the
+  engine's surface there, measured straight down. Rails keeps its own span (the box's Z
+  extent) so its sampling is unchanged; the grid anchoring above applies to both.
+- **Silent during a U-turn or somersault** (`player->state == PLAYERSTATE_U_TURN` or
+  `player->somersault`). The player is not steering then, so "you would hit it by
+  steering that way" does not apply, and the frame swings round (and past 90 degrees of
+  pitch turns upside down) faster than a chord could say anything useful. Rails keeps
+  the world frame through a somersault and is unchanged. The ahead cue is not gated.
+- **Arwing only**, through `Player_AimAnglesValid`, the same gate as the ahead cue; every
+  solo arena flies an Arwing.
+- **The non-lockable fighters are skipped** (`OBJ_ACTOR_ALLRANGE` in `gActors`: the
+  all-range wingmates and the allied craft). They pass the obstacle predicate, but they
+  fly: a wingmate beside you does not keep that space closed, and they are near you
+  constantly. The ahead cue still warns of one crossing the course. On Katina, where the
+  allies are the only obstacles, the directional cues are therefore silent. The skip is
+  by object id, so it applies on rails too, where that id does not normally appear.
 
 ## The mappings
 
@@ -145,17 +201,24 @@ fork. Each still has its own registry id, volume slider, and preview. The debug 
 `cues` dump reports the shared decision under each of the three ids, with only the
 direction(s) that id renders.
 
-## v1 scope — deliberate, with attach points
+## Scope — deliberate, with attach points
 
-- **Rails only.** In all-range "left" is relative to the heading, not world X; the box
-  offsets need rotating into the aim frame before the same three questions apply. The
-  ahead cue took the same two-step path (`docs/accessibility-obstacle-cue.md`, its
-  all-range ray test). The listener stops all three cues in all-range mode; the `cues`
-  dump's `railsOnly` gate is the tell.
+- **Solid poly meshes are boxes too.** Fortuna's Mountain 3 is collided by the engine
+  as a solid triangle mesh (the CollisionHeader family), not a heightfield, so it gets
+  no surface walk and the below chord reads its bounding-box top (the peak) anywhere
+  over its footprint (seen live 2026-09-23 as a constant clearance of 286 while crossing
+  one). The ahead cue sees the same box. Refining it would need a surface probe for that
+  mesh family; deferred.
+- **Rotated objects.** The scan ignores `obj.rot` (`ObstacleScan.h`), and all-range
+  scenery is more often yawed. For the ahead cue's yes/no answer the margin absorbs it;
+  here it shifts a yawed wall's clearance, and so its pan or loudness. Accepted for now;
+  the fix belongs in the shared scan, where it would help every obstacle cue.
 - **Terrain is box-only for the beside pair.** A heightfield bump's box spans the whole
   hill, so a hill flown beside near its peak height reports the box face, not the slope at
-  the ship's altitude. Minor (hills are wide at the base); the refinement would be a
-  horizontal walk over `Object_PolyHeightfieldSurfaceY`. Below is refined — see "Terrain
+  the ship's altitude. Minor on rails (hills are wide at the base); more noticeable on
+  Fortuna, whose 24 Mountain 1 hills are roughly 2000 wide, 600 tall and 2150 deep. They are
+  kept in rather than dropped (the user's call, 2026-09-23); the refinement, a sideways
+  walk over `Object_PolyHeightfieldSurfaceY`, is planned as a later step. Below is refined — see "Terrain
   below" above.
 - **Ground vehicles get no terrain below.** For the Landmaster and on foot the engine
   seats the player on a heightfield rather than crashing them
@@ -207,11 +270,14 @@ direction(s) that id renders.
   goes to 1, and the below chord holds near full on the nearest unclaimed sample, then
   pins at 1.0 on the sample beneath the ship (clearance down to 24) until the climb-out.
 - The debug server's `cues` command reports, under each of the three ids, the gates
-  (`railsOnly` among them), the scan counters plus `inWindow` (boxes inside the Z window)
+  (`aimValid` and `noManeuver` among them, both always true on rails), the course
+  `forward` vector, `fightersSkipped`, the scan counters plus `inWindow` (boxes inside the
+  lookahead window)
   and `aheadClaimed` (solid boxes the ahead cue owns whole; a heightfield box is never
   claimed whole, its claim being per sample, so it never counts here), the effective
   knobs, and per direction the candidate count and the winner (array/slot/objId/record,
-  `upcoming`, the winning `clear`, `gapZ`, delta and half-extents, and the pushed `pan`
+  `upcoming`, the winning `clear`, `gap` (the box's nearest course distance: the near Z
+  face on rails, where it replaced the old `gapZ` key), delta and half-extents, and the pushed `pan`
   or `level`; a terrain walk winner adds `fromTerrainWalk`, `surfaceY` and `sampleT`, the
   winning sample's course distance), plus the terrain walk's
   `terrainWalk.tested/claimed/probes` counters. Join `slot` against `objects scenery` to

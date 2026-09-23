@@ -75,53 +75,6 @@ static f32 ObstacleAheadCue_Interval(f32 gap, f32 warnDist) {
     return fast * powf(slow / fast, t);
 }
 
-// All-range course test: the span [tNear, tFar] along the unit `fwd` ray from the
-// player through the box expanded by `margin` — tNear is the entry distance the policy
-// treats as the gap, tFar the exit the heightfield walk runs to. False when the ray
-// misses; either bound may be negative (entry behind or inside, the caller's call).
-// Standard ray-vs-AABB slab test, with an explicit near-parallel branch instead of the
-// branchless min/max form — IEEE 0 * inf would seed NaNs there, and this file's policy
-// is explicit guards over NaN-propagating arithmetic. The margin expands every axis
-// uniformly: in all-range "lateral" is not axis-aligned, and the extra ~150 units on
-// the ray axis against a 4000-unit warn band is noise.
-static bool ObstacleAheadCue_RaySpan(const ObstacleBox& box, const Vec3f& fwd, f32 margin, f32* tNearOut,
-                                     f32* tFarOut) {
-    const f32 d[3] = { box.dx, box.dy, box.dz };
-    const f32 h[3] = { box.half.x + margin, box.half.y + margin, box.half.z + margin };
-    const f32 f[3] = { fwd.x, fwd.y, fwd.z };
-    f32 tNear = -INFINITY; // fwd is unit-length, so at least one axis divides and both
-    f32 tFar = INFINITY;   // bounds end up finite
-    // fwd is unit-length, so this is a direction-cosine floor, not a distance.
-    constexpr f32 kRayParallelEps = 1e-6f;
-    for (int axis = 0; axis < 3; axis++) {
-        if (fabsf(f[axis]) < kRayParallelEps) {
-            if (fabsf(d[axis]) > h[axis]) {
-                return false; // parallel to this slab pair and outside it
-            }
-            continue;
-        }
-        f32 t1 = (d[axis] - h[axis]) / f[axis];
-        f32 t2 = (d[axis] + h[axis]) / f[axis];
-        if (t1 > t2) {
-            f32 tmp = t1;
-            t1 = t2;
-            t2 = tmp;
-        }
-        if (t1 > tNear) {
-            tNear = t1;
-        }
-        if (t2 < tFar) {
-            tFar = t2;
-        }
-    }
-    if (tNear > tFar) {
-        return false; // the ray misses the box
-    }
-    *tNearOut = tNear;
-    *tFarOut = tFar;
-    return true;
-}
-
 // The heightfield walk samples on the family's shared grid (ObstacleCommon.h:
 // kObstacleWalkStep / kObstacleWalkMaxSteps, the grid the below cue's terrain walk shares).
 // The walk never spans more than the warn distance, and warnDist is clamped to
@@ -129,47 +82,6 @@ static bool ObstacleAheadCue_RaySpan(const ObstacleBox& box, const Vec3f& fwd, f
 // a walk cut short would leave a slope past the cap unwarned.
 static_assert((f32) kObstacleWalkMaxSteps * kObstacleWalkStep >= kObstacleCueWarnDistMax,
               "the heightfield walk must reach the far end of the widest warn band");
-
-// The engine's XZ range gate (box.polyRangeXZ, Object_GetPolyCollisionRangeXZ) applied
-// along the course. Player_CollisionCheck tests a scenery mesh only while the SHIP is
-// within that distance of obj.pos, so along the course the mesh can only be hit on the
-// stretch where the ship will be inside that circle: this clips [tNear, tFar] (course
-// distances from the ship) to it — a ray/circle intersection in the XZ plane — and
-// returns false when nothing of the span survives. Ungated boxes pass through.
-// Gating along the course rather than at the ship's current position is what a
-// warning needs: a big mesh's far corners the engine never tests never warn, and a
-// solid mesh the ship enters outside the circle keeps warning until the ship reaches
-// the stretch where the engine's own test takes over.
-static bool ObstacleAheadCue_ClipToPolyRange(const ObstacleBox& box, const Vec3f& origin, const Vec3f& course,
-                                             f32* tNear, f32* tFar) {
-    if (!(box.polyRangeXZ > 0.0f)) {
-        return true;
-    }
-    const f32 ox = origin.x - box.objPos.x;
-    const f32 oz = origin.z - box.objPos.z;
-    // |o + d t|^2 = R^2 in XZ, i.e. a t^2 + 2 b t + c = 0.
-    const f32 a = course.x * course.x + course.z * course.z;
-    const f32 b = ox * course.x + oz * course.z;
-    const f32 c = ox * ox + oz * oz - box.polyRangeXZ * box.polyRangeXZ;
-    constexpr f32 kVerticalEps = 1e-6f; // course is unit-length: a is the squared horizontal cosine
-    if (a < kVerticalEps) {
-        return c < 0.0f; // straight up or down: the whole span is in or out with the ship
-    }
-    const f32 disc = b * b - a * c;
-    if (!(disc >= 0.0f)) {
-        return false; // the course never enters the circle (or NaN)
-    }
-    const f32 sq = sqrtf(disc);
-    const f32 tIn = (-b - sq) / a;
-    const f32 tOut = (-b + sq) / a;
-    if (tIn > *tNear) {
-        *tNear = tIn;
-    }
-    if (tOut < *tFar) {
-        *tFar = tOut;
-    }
-    return *tNear <= *tFar;
-}
 
 // Heightfield refinement of the course test, for a poly box of the CollisionHeader2
 // family (box.polyHeightfield — every terrain bump, the reefs, the island, Fortuna
@@ -179,7 +91,7 @@ static bool ObstacleAheadCue_ClipToPolyRange(const ObstacleBox& box, const Vec3f
 // is inside the footprint below the peak on a course that clears the slope. This
 // walks the course through the box in kHeightfieldStep steps from `tStart` to `tEnd`
 // (distances along the unit `course` ray from `origin`, the ship's center — already
-// clipped to the engine's range gate by ObstacleAheadCue_ClipToPolyRange) and asks the
+// clipped to the engine's range gate by ObstacleScan_ClipToPolyRange) and asks the
 // engine's own surface test at each step (Object_PolyHeightfieldHit over the same mesh
 // the engine would consult), so "would I hit it" is answered by the code that decides
 // it. The mesh is resolved once per box (Object_ResolvePolyHeightfield), not per probe.
@@ -314,28 +226,18 @@ static void ObstacleAheadCue_OnPostUpdate(IEvent* event) {
     ObstacleBox best{};
     f32 bestGap = INFINITY;
     ObstacleScan_ForEachBox(player, &stats, [&](const ObstacleBox& box) {
-        // The span [tNear, tFar] of the course through the margin-expanded box. In
-        // all-range the slab test yields both; on rails the lateral condition is the
-        // player's (x, y) inside the expanded footprint, the near face is gapZ and the
-        // far face 2 * half.z beyond it.
+        // The span [tNear, tFar] of the course through the margin-expanded box: the
+        // footprint test on rails, the ray test in all-range (ObstacleScan_CourseSpan,
+        // shared so the directional cues skip exactly the boxes this cue claims).
         f32 tNear;
         f32 tFar;
-        if (allRange) {
-            if (!ObstacleAheadCue_RaySpan(box, fwd, margin, &tNear, &tFar)) {
-                return;
-            }
-        } else {
-            if ((box.clearX >= margin) || (box.clearY >= margin)) {
-                return;
-            }
-            tNear = box.gapZ;
-            tFar = box.gapZ + 2.0f * box.half.z;
+        if (!ObstacleScan_CourseSpan(box, allRange, course, margin, &tNear, &tFar)) {
+            return;
         }
         // A poly mesh of either family is only ever tested by the engine while the ship
         // is inside its XZ range gate; clip the span to that stretch of the course, and
-        // drop the box when none of it is inside (ObstacleAheadCue_ClipToPolyRange).
-        if ((box.record == kObstaclePolyRecord) &&
-            !ObstacleAheadCue_ClipToPolyRange(box, origin, course, &tNear, &tFar)) {
+        // drop the box when none of it is inside (ObstacleScan_ClipToPolyRange).
+        if ((box.record == kObstaclePolyRecord) && !ObstacleScan_ClipToPolyRange(box, origin, course, &tNear, &tFar)) {
             return;
         }
         f32 gap;

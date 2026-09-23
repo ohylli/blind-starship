@@ -87,7 +87,7 @@ only tested by the engine while the *ship* is within an XZ radius of `obj.pos` (
 units in `Player_CollisionCheck`'s scenery loops, 4000 on Sector Y and Venom-Andross;
 `Object_GetPolyCollisionRangeXZ`), so both mesh families get their course span clipped
 to the stretch where the ship will be inside that circle — a ray/circle intersection in
-the XZ plane, `ObstacleAheadCue_ClipToPolyRange` — and a box with none of its span
+the XZ plane, `ObstacleScan_ClipToPolyRange` — and a box with none of its span
 inside is dropped. Gating along the course rather than at the ship's current position
 is what a warning needs: a big mesh's far corners the engine never tests never warn
 (Fortuna mountain 2's stored box reaches 1300 units out against an 1100 gate), and a
