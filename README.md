@@ -34,6 +34,37 @@ indicates left / right on the screen and pitch the height. The cue gets faster
 when your aim nears an enemy. You can preview all the cue sounds and change
 their volumes  (see configuration section).
 
+There are also obstacle audio cues. They warn you about solid things
+you cannot shoot down, such as buildings, rock walls, hills, mountains and
+large ships. They work in on-rails levels and all-range battles. There are
+four of them:
+
+- Obstacle warning: a low buzz from straight ahead that beats faster the
+  closer you get to an obstacle on your course. On rails "on your course"
+  means you would hit it if you kept your current position. In all-range it
+  means the direction you are flying.
+- Obstacle beside: a pulsing mid-pitched chord that tells you something is on
+  your left or right that you would hit if you steered that way. Stereo pan
+  tells the side, and how far it is panned tells the distance: the center is
+  you, so the closer the obstacle, the nearer the center the chord is, and an
+  obstacle further out is panned fully to its side.
+- Obstacle above: a high chord that sounds while something above you would
+  block you if you climbed. It gets louder the closer the obstacle is.
+- Obstacle below: a low chord that works the same way for something below you,
+  such as a hill you are flying over.
+
+An obstacle the buzz is already warning you about is not repeated by the
+beside, above and below chords. Unlike the ring and enemy cues, the obstacle
+cues are not 3D audio: the beside chord uses plain stereo pan and the others
+come from straight ahead.
+
+Please note that the obstacle cues are very much a work in progress. They do
+not claim to give you all the awareness you need to avoid every obstacle, and
+some things are not covered at all. For example the ground, water and lava are
+not warned about, nor are bosses. Shapes are also approximated, so a warning
+can come a bit early or late, or for a near miss. Feedback on how they work
+for you is very welcome (see the Discord section).
+
 There are also some spoken screen reader announcements during gameplay. The game
 mode: on-rails or all-range, is announced in the start of a level and when it
 changes in the middle of a level. In training the number of rings you have flown
@@ -52,18 +83,38 @@ Training has 2 phases. The first is on rails flying containing only rings,
 enemies and some item pick ups. So no obstacles. Second phase  is in all-range
 mode (you can freely fly around a small arena) with some enemies and no
 obstacles. And in case you are familiar with the game and are thinking "wait
-that is not what I remember." you are absolutely right. Currently training is
-simplified all obstacles are removed (see the configuration section how to bring
-them back). When more features are added like obstacle audio cues, these
-simplifications will be removed. The enemy and aiming audio cues work also in the main game
-though might not cover all enemies and do not include bosses.
+that is not what I remember." you are absolutely right. By default training is
+simplified: all obstacles are removed. This lets you get used to flying and
+the other cues without having to dodge obstacles at the same time. That also
+means the obstacle cues stay silent in training. Once you feel comfortable you
+can bring the obstacles back and try the obstacle cues on them (see the
+configuration section). The enemy, aiming and obstacle audio cues work also in
+the main game, though the enemy cue might not cover all enemies and does not
+include bosses.
+
+A good way to get used to the obstacle cues is at the very beginning of
+training, with minimal training turned off (f1 -> settings -> blind starship ->
+minimal training). There are some buildings on the left and right edge. If you
+fly in the center you will not hear anything since they are too far away for
+the cues to pick up. If you move a little left or right you hear the obstacle
+beside cue from them. If you move fully to the right or left you will start
+hearing the obstacle warning buzz. You would not actually hit anything, since
+the buildings are not quite tall enough, but the obstacle warning also warns
+about near misses. You will also briefly hear the obstacle below cue when you
+fly over a building, but that is soon replaced by the obstacle warning buzz
+for the next building. If you fly a bit higher you will only hear the obstacle
+below cue. And if you fly a bit lower you will start hitting the buildings and
+can hear how the obstacle warning buzz behaves then. You
+can quit training from the pause menu and return to it from the main menu so you
+can easily experiment with the obstacle cues.
 
 ## Road map
 
 In no particular order planned features or things to investigate include:
 
 - Refine audio cues for enemies e.g. include bosses.
-- Audio cues for obstacles.
+- Refine the obstacle audio cues based on feedback e.g. cover more kinds of
+  obstacles and give better awareness of the space around you.
 - Add an audio cue glossary with both general sound effects and blind starship
   audio cues.
 - Making more game menus and screens accessible.
@@ -167,12 +218,16 @@ As mentioned in current status by default the training mode is simplified. if
 you want the original training back you can do it from the settings menu (f1 ->
 settings -> blind starship -> minimal training). Or by editing the game's settings
 file `starship.cfg.json` created after first launch to the same folder where
-you have the game. Change the value of `AccessibilityTrainingMinimal` from 1 to
-0 i.e. change 1 to 0 on the line tthat looks like:
+you have the game. Change the value of `gAccessibilityTrainingMinimal` from 1 to
+0 i.e. change 1 to 0 on the line that looks like:
 
 ```
 "gAccessibilityTrainingMinimal": 1,
 ```
+
+With minimal training on there are no obstacles in training, so the obstacle
+cues stay silent there. Turn it off if you want to practice with the obstacle
+cues in training.
 
 ### Gameplay announcements
 
@@ -208,20 +263,25 @@ to 0 on the line that looks like:
 The ring and enemy audio cues are rendered as real 3D binaural (HRTF) audio via
 [Steam Audio](https://valvesoftware.github.io/steam-audio/), giving true left /
 right and front / back positioning through headphones. Wear headphones for the
-positioning to work.
+positioning to work. The aim guide and obstacle cues use plain stereo instead,
+but headphones help with them too.
 
 You can adjust how loud the cues are from the settings menu (f1 -> settings ->
 blind starship -> cue volumes). There you get an "all cues" slider that sets the
-overall cue loudness, a per-cue slider for each cue (ring guide, enemy locator),
+overall cue loudness, a per-cue slider for each cue (ring guide, enemy locator,
+aim guide, obstacle warning, obstacle beside, obstacle above, obstacle below),
 and a preview button beside each one that plays a short sample of that cue
-straight ahead so you can set the level by ear. The cues are also scaled by the
+so you can set the level by ear. The cues are also scaled by the
 game's own master volume, so turning the game down turns the cues down too.
 
 The volumes are saved in `starship.cfg.json` (created after first launch in the
 folder where you have the game) as `gAccessibilityCueMasterVolume` for the "all
 cues" slider and `gAccessibilityCueVolume.Ring` /
-`gAccessibilityCueVolume.Enemy` / `gAccessibilityCueVolume.Aim` for the per-cue
-sliders, if you would rather edit them there.
+`gAccessibilityCueVolume.Enemy` / `gAccessibilityCueVolume.Aim` /
+`gAccessibilityCueVolume.ObstacleAhead` / `gAccessibilityCueVolume.ObstacleSide`
+/ `gAccessibilityCueVolume.ObstacleAbove` /
+`gAccessibilityCueVolume.ObstacleBelow` for the per-cue sliders, if you would
+rather edit them there.
 
 ### Number of enemy locator cues
 
@@ -256,6 +316,24 @@ the game. Change the value of `gAccessibilityAimCue` from 1 to 0 i.e. change 1 t
 "gAccessibilityAimCue": 1,
 ```
 
+### Obstacle cues
+
+The obstacle cues (obstacle warning, beside, above and below, described in
+current status) share one toggle that is on by default. You can turn them all
+off without losing the other cues from the settings menu (f1 -> settings ->
+blind starship -> obstacle warning). Or by editing the game's settings file
+`starship.cfg.json` created after first launch to the same folder where you
+have the game. Change the value of `gAccessibilityObstacleCue` from 1 to 0 i.e.
+change 1 to 0 on the line that looks like:
+
+```
+"gAccessibilityObstacleCue": 1,
+```
+
+Remember that with minimal training on (the default) there are no obstacles in
+training, so to hear these cues there either turn minimal training off or play
+the main game.
+
 ### Developer options for audio cues
 
 Beyond the everyday settings above, the developer menu (f1 -> developer -> blind
@@ -266,7 +344,9 @@ are worth knowing about. Among them are a "Cue3D test bench" that plays a cue on
 demand so you can hear it in isolation and try out different positions, pitches
 and effects, and a set of sliders and toggles for how the cues sound — for
 example how a cue's pitch is produced and how sounds behind you are muffled to
-help tell front from back. These are live controls: changes take effect
+help tell front from back. There are also sliders for the obstacle cues, such as
+how far ahead an obstacle starts to sound, how fast the warning buzz beats and
+how close an obstacle must be to count as beside, above or below you. These are live controls: changes take effect
 immediately so you can compare options while listening. They are experimental
 and meant for tuning, so feel free to explore and set them back to their
 defaults if something sounds off.
