@@ -100,13 +100,14 @@ the cues to pick up. If you move a little left or right you hear the obstacle
 beside cue from them. If you move fully to the right or left you will start
 hearing the obstacle warning buzz. You would not actually hit anything, since
 the buildings are not quite tall enough, but the obstacle warning also warns
-about near misses. You will also briefly hear the obstacle below cue when you
-fly over a building, but that is soon replaced by the obstacle warning buzz
-for the next building. If you fly a bit higher you will only hear the obstacle
+about near misses. You will also briefly hear the obstacle below cue on top of
+the buzz as you fly over each building, and the buzz slows down as it switches
+to the next building. If you fly a bit higher you will only hear the obstacle
 below cue. And if you fly a bit lower you will start hitting the buildings and
-can hear how the obstacle warning buzz behaves then. You
-can quit training from the pause menu and return to it from the main menu so you
-can easily experiment with the obstacle cues.
+can hear how the obstacle warning buzz behaves then. A hit pushes you back
+towards the center, so the buzz stops and the obstacle beside cue takes over.
+You can quit training from the pause menu and return to it from the main menu
+so you can easily experiment with the obstacle cues.
 
 ## Road map
 
