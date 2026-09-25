@@ -37,20 +37,20 @@ inline constexpr float kObstacleCueDirLookaheadMax = 4000.0f;
 // one at sideDist is panned fully to its side. Must exceed the margin; the cue clamps.
 // The Max values are the sliders' ceilings, applied to whatever a config stored.
 inline constexpr const char* kObstacleCueDirSideDistCVar = "gAccessibilityObstacleCueDirSideDist";
-inline constexpr float kObstacleCueDirSideDistDefault = 800.0f;
+inline constexpr float kObstacleCueDirSideDistDefault = 1000.0f;
 inline constexpr float kObstacleCueDirSideDistMax = 2500.0f;
 // Pan magnitude (0 = center, 1 = hard) of a box AT the margin. Non-zero so the closest
 // possible wall never reaches dead center, where left and right would be
 // indistinguishable at exactly the moment they matter most.
 inline constexpr const char* kObstacleCueDirSidePanFloorCVar = "gAccessibilityObstacleCueDirSidePanFloor";
-inline constexpr float kObstacleCueDirSidePanFloorDefault = 0.2f;
+inline constexpr float kObstacleCueDirSidePanFloorDefault = 0.1f;
 
 // Vertical cue band: same shape on the vertical steering axis (world Y on rails, the
 // canopy direction in all-range). Loudness runs over [margin, vertDist]:
 // full at the margin, the level floor at vertDist. Rails corridors are shorter than
 // they are wide, so the default band is narrower than the side band.
 inline constexpr const char* kObstacleCueDirVertDistCVar = "gAccessibilityObstacleCueDirVertDist";
-inline constexpr float kObstacleCueDirVertDistDefault = 600.0f;
+inline constexpr float kObstacleCueDirVertDistDefault = 400.0f;
 inline constexpr float kObstacleCueDirVertDistMax = 2500.0f;
 // Level (0..1 of the slider) of a box AT vertDist, so the onset is audible rather than a
 // fade-in from silence the player cannot place.

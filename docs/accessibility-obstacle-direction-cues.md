@@ -47,7 +47,7 @@ They are stated here in rails terms (the course is the −Z track, "beside" is w
 "All-range: the heading frame" below.
 
 1. **Is it alongside me now, or about to be?** The box's near Z face must be ahead within
-   the **lookahead** (default 1200 units, about a second of cruise flight), or the ship
+   the **lookahead** (about a second of cruise flight at its default), or the ship
    must already be between the near and far faces. Past the far face the box is dropped.
    This deliberately differs from the ahead cue's "past the near face, the engine owns
    it" rule: a wall alongside still matters, since drifting into it is the whole risk.
@@ -70,8 +70,8 @@ They are stated here in rails terms (the course is the −Z track, "beside" is w
    axis and within the margin of it on the other. The outside axis names the pair (X for
    beside, Y for above/below); the sign of the box center's offset from the ship picks
    the member; the clearance beyond the box face on that axis is the signal, and it must
-   be under that pair's band distance (**side distance**, default 800; **vertical
-   distance**, default 600) to count. For an upcoming box that clearance is at least the
+   be under that pair's band distance (**side distance**; **vertical
+   distance**) to count. For an upcoming box that clearance is at least the
    margin (anything closer was question 2's); an alongside box can be closer and pins at
    the band's near end. A box outside on both axes beyond the margin is a corner and
    nobody's in v1; one within the margin on both (only possible alongside, hugging a
@@ -110,8 +110,8 @@ the surface itself (`ObstacleDirectionCue_TerrainBelow`):
   Each step reads the surface under the course and one margin to either side and keeps
   the highest; the clearance is the ship's Y above it, and the smallest clearance over
   the walk is the box's candidate in the ordinary below contest. Samples the engine's XZ
-  range gate would never test are dropped. At the default lookahead that is at most 39
-  reads per bump.
+  range gate would never test are dropped. The read count per bump is bounded by the lookahead over the
+  step length.
 - **Ownership is per sample, not per box.** One hill is both "ground 300 below me" and "a
   slope rising into my course", so the box rule's wholesale claim does not fit. An
   *upcoming* sample whose surface is within the margin of the course is the ahead cue's —
@@ -190,7 +190,7 @@ than the margin pins at the band's near end.
   the margin sits near the center. "The closer the sound is to center, the closer the
   obstacle is to you" was chosen by ear over the naive mapping; it stands on its own as a
   preference (the aim cue's pan encodes the player's own offset, not a target's distance,
-  so there is no convention being inherited). A **pan floor** (default 0.2 of full pan)
+  so there is no convention being inherited). A **pan floor** (a fraction of full pan)
   keeps the closest possible wall off dead center, where left and right would be
   indistinguishable at exactly the moment they matter most. Implementation note: the
   backend pans by the sine of the source's azimuth, so the voice is placed at
@@ -201,7 +201,7 @@ than the margin pins at the band's near end.
   second wall sounds and lifts the survivor back when one leaves the band. Accepted for
   now since the step is shared by both voices and pan carries the meaning; if it reads
   as "closer" by ear, opting the side cue out of the trim is the fix.
-- **Above / below: loudness.** Full at the margin, the **level floor** (default 0.15 of
+- **Above / below: loudness.** Full at the margin, the **level floor** (a fraction of
   the volume slider) at the band's edge, so the onset is audible rather than a fade-in the
   player cannot place. This uses the Cue layer's per-voice `CueTarget::level`, added for
   these cues: the slider keeps meaning "the loudest this cue ever gets".
@@ -258,7 +258,7 @@ direction(s) that id renders.
 
 - **Minimal training silences these cues in Training by design**, like the ahead cue.
   Tune on Corneria from the `obstacle-scout` debug checkpoint (`tools/checkpoints.json`).
-  Verified live 2026-09-16 (paused warp, one step, every knob at its default): the
+  Verified live 2026-09-16 (paused warp, one step, every knob at its default as of that date): the
   checkpoint sits *inside* the Z span of a rock-wall pair (`OBJ_SCENERY_CO_ROCKWALL`,
   hitbox half-extents 169/433/898) with a third wall coming up. The alongside left wall,
   47 units to the left (under the 150 margin), is the side cue's left winner pinned at
