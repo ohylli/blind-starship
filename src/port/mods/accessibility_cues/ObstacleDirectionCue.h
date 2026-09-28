@@ -81,12 +81,15 @@ struct ObstacleDirectionTargetDebug {
     int32_t candidates = 0; // boxes classified into this direction this tick
     int32_t array = -1;     // ObstacleArray; the debug server resolves the name
     int32_t slot = -1, objId = -1, record = -1;
-    bool heightfield = false;     // a heightfield mesh box (box-only for the side pair, which
-                                  // over-reports; see `fromTerrainWalk` for below)
-    bool fromTerrainWalk = false; // below only: `clear` is a surface clearance from the
-                                  // terrain walk (ObstacleDirectionCue_TerrainBelow), not
-                                  // the box top's
-    float surfaceY = 0;           // terrain walk: the winning sample's surface height (the
+    bool heightfield = false;     // a heightfield mesh box; its answer always comes from a
+                                  // terrain walk, and dx..halfZ describe its YAWED footprint
+                                  // box (ObstacleCourse_YawedPolyBox), not the scan's
+    bool fromTerrainWalk = false; // `clear` is from a terrain walk over the engine's surface:
+                                  // below, the course's height above it
+                                  // (ObstacleDirectionCue_TerrainBelow); beside, the
+                                  // horizontal distance to where it rises within the margin
+                                  // of the course (ObstacleDirectionCue_TerrainBeside)
+    float surfaceY = 0;           // terrain walk: the surface height at the winning point (the
                                   // engine's crash threshold, Object_PolyHeightfieldSurfaceY)
     float sampleT = 0;            // terrain walk: course distance of the winning sample
                                   // (0 = beneath the ship)
@@ -132,6 +135,10 @@ struct ObstacleDirectionCueDebug {
     // on them (the cost line), and boxes with at least one upcoming sample left to the
     // ahead cue (surface within the margin of the course).
     int32_t terrainWalkTested = 0, terrainWalkProbes = 0, terrainWalkClaimed = 0;
+    // The beside cue's sideways terrain walk: heightfield boxes walked and the engine
+    // surface reads spent on them; boxes skipped whole because the ahead cue is buzzing
+    // for the hill (ObstacleCourse_AheadHitsTerrain) and the probes that verdict cost.
+    int32_t terrainSideTested = 0, terrainSideProbes = 0, terrainSideAheadBuzzing = 0, terrainSideAheadProbes = 0;
     float lookahead = 0, margin = 0, sideDist = 0, panFloor = 0, vertDist = 0,
           levelFloor = 0; // effective (post-guard) knob values used this tick
     float warnDist = 0;   // the ahead cue's band its verdict was asked with (ObstacleAheadCue_WarnDist)

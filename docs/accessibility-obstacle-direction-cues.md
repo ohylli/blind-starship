@@ -1,7 +1,8 @@
 # The directional obstacle cues: design record
 
 Status: v1 implemented 2026-09-15 (rails only); terrain surface walk for the below cue
-added 2026-09-17; all-range support added 2026-09-23. Companion to
+added 2026-09-17; all-range support added 2026-09-23; sideways terrain walk for the
+beside cue added 2026-09-28. Companion to
 `docs/accessibility-obstacle-cue.md` (the ahead cue, whose scan these cues share and whose
 catalogue of what is and is not an obstacle applies here unchanged) and
 `docs/accessibility-cues-tuning.md` (the knobs). This file records what the three cues
@@ -78,7 +79,9 @@ They are stated here in rails terms (the course is the −Z track, "beside" is w
    corner) goes to the nearer face; one the ship is inside on both axes is the engine's.
 
 Per direction the box with the smallest clearance wins. Ties and multiple candidates are
-not blended: one box per direction per tick.
+not blended: one box per direction per tick. A solid box answers at most one direction
+(its nearer face); a terrain box is walked instead (below) and may answer below, left and
+right at once, since each answer comes from a different part of its surface.
 
 ## Terrain below
 
@@ -126,7 +129,59 @@ the surface itself (`ObstacleDirectionCue_TerrainBelow`):
   margin sounds both.
 - The lookahead makes the chord anticipate: it rises as a hill's peak comes within the
   lookahead, about a second before the ship is over it, exactly as an upcoming box does.
-- The side question still reads a terrain box as a box, box claim included.
+- The side question is walked too — see "Terrain beside" next.
+
+## Terrain beside
+
+The beside pair read a heightfield box as a box until 2026-09-28, which was wrong both
+ways. Flown beside a hill near its peak height, the box face is far closer than the slope
+at the ship's altitude (Fortuna's 2000-wide Mountain 1 hills read 822 where the slope was
+1700 away). Flown low over a hill's outer slope with the peak rising to one side, or down
+a valley the box surrounds, the box rule had no answer at all. The sideways walk
+(`ObstacleDirectionCue_TerrainBeside`) replaces it:
+
+- **The walk.** From each course sample (the below walk's grid, anchored the same way,
+  over the box's extent along the course inside the lookahead) it steps out to either
+  side along the frame's right vector — horizontal in both modes, so the line stays at
+  the course's height — every 100 units to the side band's edge, reading the engine's
+  surface under each point (`Object_PolyHeightfieldSurfaceY`, the below walk's probe).
+- **What counts as a wall.** A point where the surface comes within the margin of the
+  course height: the box rule's "within the margin on the other axis" restated for a
+  surface, and the height the ahead cue's walk hits at. The first such point on a side is
+  refined by four halvings between it and the last clear point, so the clearance — the
+  horizontal distance to it — is good to about 6 units and the pan does not jump a tenth
+  of its range per step as the ship drifts. Per side the smallest clearance over the
+  samples wins.
+- **A sample whose own course point is already that close to the surface is skipped:**
+  the ground under the course is the vertical question's (the below chord, or the buzz),
+  not a wall to steer around.
+- **The engine's range gate applies per point.** A scenery mesh is only ever tested while
+  the ship is within its XZ range (1100 on rails) of `obj.pos`, so a big hill's far flanks
+  cannot be crashed into and never sound. Verified 2026-09-28: flying low beside Corneria's
+  bump 15, whose center was about 2100 units off to the left, a trace with the band
+  widened to 2500 put the crossing at 1087 against a hand-computed 1086 from the gate
+  circle alone.
+- **Ownership is the ahead cue's whole verdict on the hill.** While the buzz is sounding
+  for the hill (`ObstacleCourse_AheadHitsTerrain`, the ahead cue's own terrain walk,
+  moved into `ObstacleCourse` for this so both cues run the same code), the beside walk is
+  silent for it: a hill whose slope the course runs into is the buzz's, and "that slope
+  is more to your left" would give the chord a second meaning. This replaces the old
+  box-level skip, which silenced the beside pair whenever the ahead cue merely walked the
+  hill, hit or no hit.
+- **Both sides from one hill.** A valley inside one mesh sounds as a corridor, and a hill
+  can sound below and beside together ("ground under you, rising to your right").
+- **Yawed footprints.** Most terrain meshes are turned (`obj.rot.y` on every Corneria bump
+  family, Fortuna's mountains, Zoness's islands, Aquas's reefs and bumps), while the scan's
+  box ignores the turn. The probes were always exact, but the spans that decide where to
+  probe came from the unrotated box and could leave a turned hill's corner out. Both
+  terrain walks and the lookahead window now use the yawed footprint's box
+  (`ObstacleCourse_YawedPolyBox`); the ahead cue's verdict is still asked with the scan's
+  box, as the ahead cue asks it. On the `obstacle-scout` straight run the below chord's
+  numbers did not change.
+- **Cost.** A point outside the mesh's outline costs only the engine's bounds check, and
+  each side's march stops at the side's best crossing so far. With the band widened to
+  its 2500 ceiling a Fortuna pass peaked at about 280 surface reads per tick, each a walk
+  over at most 36 triangles.
 
 ## All-range: the heading frame
 
@@ -225,14 +280,9 @@ direction(s) that id renders.
 - **Rotated objects.** The scan ignores `obj.rot` (`ObstacleScan.h`), and all-range
   scenery is more often yawed. For the ahead cue's yes/no answer the margin absorbs it;
   here it shifts a yawed wall's clearance, and so its pan or loudness. Accepted for now;
-  the fix belongs in the shared scan, where it would help every obstacle cue.
-- **Terrain is box-only for the beside pair.** A heightfield bump's box spans the whole
-  hill, so a hill flown beside near its peak height reports the box face, not the slope at
-  the ship's altitude. Minor on rails (hills are wide at the base); more noticeable on
-  Fortuna, whose 24 Mountain 1 hills are roughly 2000 wide, 600 tall and 2150 deep. They are
-  kept in rather than dropped (the user's call, 2026-09-23); the refinement, a sideways
-  walk over `Object_PolyHeightfieldSurfaceY`, is planned as a later step. Below is refined — see "Terrain
-  below" above.
+  the fix belongs in the shared scan, where it would help every obstacle cue. Terrain is
+  the exception: its walks probe the rotated mesh and plan on its yawed footprint (see
+  "Terrain beside"). The ahead cue still plans its own terrain walk on the unrotated box.
 - **Ground vehicles get no terrain below.** For the Landmaster and on foot the engine
   seats the player on a heightfield rather than crashing them
   (`Player_CheckPolyCollision`), so both terrain walks — this cue's and the ahead cue's —
@@ -240,7 +290,7 @@ direction(s) that id renders.
   (`ObstacleCommon_TerrainIsFloor`). A forward guard rather than an observed fix: no
   rails level pairs a ground form with a heightfield box today (Macbeth's terrain bump is
   outside the poly dispatch), and on foot exists only in Versus.
-- **The engine's poly range gate is applied only to the terrain walk** (the ahead cue
+- **The engine's poly range gate is applied only to the terrain walks** (the ahead cue
   clips its course to it). For the box tests a mesh inside the side or vertical band is
   inside the engine's XZ gate anyway, and the bands are far shorter than the gate radii.
 - **Ground, water, and lava stay out** — they are not objects (`docs/game-world.md` §8);
@@ -293,8 +343,22 @@ direction(s) that id renders.
   face on rails, where it replaced the old `gapZ` key), delta and half-extents, and the pushed `pan`
   or `level`; a terrain walk winner adds `fromTerrainWalk`, `surfaceY` and `sampleT`, the
   winning sample's course distance), plus the terrain walk's
-  `terrainWalk.tested/claimed/probes` counters. Join `slot` against `objects scenery` to
+  `terrainWalk.tested/claimed/probes` counters and the beside walk's
+  `terrainSideWalk.tested/probes` plus `aheadBuzzing` (heightfield boxes left silent because
+  the buzz is sounding for them) and `aheadProbes` (what asking that verdict cost). For a
+  terrain winner `delta` and `half` describe the yawed footprint box, not the scan's. Join `slot` against `objects scenery` to
   cross-check positions.
+- **Terrain beside** (verified live 2026-09-28, defaults, against traces recorded from the
+  previous build on the same inputs): the `obstacle-scout` straight run and every solid
+  wall reading were unchanged. Flying low to the left from the same checkpoint
+  (`input stick -25 25` per step), the constant 696 the box rule gave bump 15 is gone (the
+  gate puts the nearest tangible slope just beyond the band), and bump 12, which the ship
+  had just skimmed, sounds on the right at 94 then 312 from the sample beneath the ship.
+  On Fortuna (`warp fortuna --no-intro`, `input stick 20 0`), the box faces of Mountain 1
+  hills at 150-500 and 822-999 are gone, and over hill 31's slope, where the below chord
+  already sounded, the higher ground to the left now sounds at 156 opening to 400. Every
+  crossing's `surfaceY` read 520-522, the course height 670 less the margin: the
+  bisection lands on the slope even on yawed meshes.
 - The F1 volume-slider previews play each chord at reference loudness exactly as it
   sounds in play (the above/below drones, the pulsed beside chord): the previews are the
   timbre check.

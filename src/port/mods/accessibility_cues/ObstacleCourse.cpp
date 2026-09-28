@@ -1,4 +1,5 @@
 #include "ObstacleCourse.h"
+#include "ObstacleCommon.h" // the walk grid
 
 #include <math.h>
 
@@ -167,4 +168,112 @@ bool ObstacleCourse_HeightfieldWalkSpan(const ObstacleBox& box, const ObstacleCo
     *tStart = (tNear > 0.0f) ? tNear : 0.0f;
     *tEnd = (tFar < warnDist) ? tFar : warnDist;
     return true;
+}
+
+// Heightfield refinement of the course test, for a poly box of the CollisionHeader2
+// family (box.polyHeightfield — every terrain bump, the reefs, the island, Fortuna
+// mountain 1, Venom's mountain). The engine hits such a mesh only when one of the
+// ship's body points is at or below the surface under it (func_col2_800A36FC,
+// fox_col2.c), so the box — which spans the whole hill — over-warns whenever the ship
+// is inside the footprint below the peak on a course that clears the slope. This
+// walks the course through the box on the family's grid from `tStart` to `tEnd` (the
+// stretch ObstacleCourse_HeightfieldWalkSpan yields: course distances from the ship,
+// already clipped to the engine's range gate) and asks the engine's own surface test at
+// each step (Object_PolyHeightfieldHit over the same mesh the engine would consult), so
+// "would I hit it" is answered by the code that decides it. The mesh is resolved once
+// per box (Object_ResolvePolyHeightfield), not per probe. It lives here rather than in
+// the ahead cue because it is that cue's VERDICT, which the beside cue asks too
+// (ObstacleCourse_AheadHitsTerrain below).
+//
+// The probe is not the ship's center but the BOTTOM EDGE of the margin square around
+// it: the point `margin` below the course and its two lateral neighbors `margin` to
+// either side along frame.right. That is the slack the box test already grants (the
+// player inside the footprint expanded by margin) restated for a surface hit from above
+// — a slope that rises to within the margin of the course warns, one the course clears
+// by more stays silent. The below cue's terrain walk (ObstacleDirectionCue_TerrainBelow)
+// depends on exactly this geometry — it leaves a sample to the ahead cue when the surface
+// is within the margin under the course, and probes the same three points off the same
+// frame — so a change to the probe offsets here is a two-cue change.
+//
+// Returns the course distance of the first hit — 0 when the ship is already at or
+// below the surface — or a negative value when every probe clears. `probes` counts
+// the engine calls for the `cues` dump's cost line: at most (span / step + 1) * 3 per
+// box, each a bounds check plus a walk over the mesh's 13-36 triangles on the tables
+// resolved up front.
+static f32 ObstacleCourse_HeightfieldGap(const ObstacleBox& box, const ObstacleCourseFrame& frame, f32 tStart, f32 tEnd,
+                                         f32 margin, int32_t* probes) {
+    PolyHeightfield hf;
+    if (!Object_ResolvePolyHeightfield(box.polyColId, &box.objPos, box.rotY, &hf)) {
+        return -1.0f; // not a tabled mesh — unreachable for a scan-produced box
+    }
+    // The engine rejects a probe outside the mesh's own bounding box before it looks at
+    // the surface (the bounds check at the top of Col2_CheckSurface), so a probe the
+    // margin pushes BELOW the box floor would clear a hill it is plainly under. A
+    // surface cannot lie below that floor, so lifting the probe up to it asks the same
+    // question — "is the surface within margin below the course" — in terms the engine
+    // answers. (Verified live: with an 800 margin every bump cleared until this clamp.)
+    const f32 floorY = box.center.y - box.half.y;
+
+    int steps;
+    if (!ObstacleCommon_WalkSteps(tEnd - tStart, &steps)) {
+        return -1.0f; // NaN or a reversed span
+    }
+    for (int i = 0; i <= steps; i++) {
+        f32 t = tStart + (f32) i * kObstacleWalkStep;
+        if (t > tEnd) {
+            t = tEnd;
+        }
+        const Vec3f p = { frame.origin.x + frame.fwd.x * t, frame.origin.y + frame.fwd.y * t,
+                          frame.origin.z + frame.fwd.z * t };
+        f32 probeY = p.y - margin;
+        if (probeY < floorY) {
+            probeY = floorY;
+        }
+        for (s32 k = -1; k <= 1; k++) {
+            const Vec3f probe = { p.x + frame.right.x * (f32) k * margin, probeY,
+                                  p.z + frame.right.z * (f32) k * margin };
+            (*probes)++;
+            if (Object_PolyHeightfieldHit(&hf, &probe)) {
+                return t;
+            }
+        }
+    }
+    return -1.0f;
+}
+
+bool ObstacleCourse_AheadHitsTerrain(const ObstacleBox& box, const ObstacleCourseFrame& frame, bool allRange,
+                                     f32 margin, f32 warnDist, bool* walked, f32* gap, int32_t* probes) {
+    *walked = false;
+    f32 tStart;
+    f32 tEnd;
+    if (!ObstacleCourse_HeightfieldWalkSpan(box, frame, allRange, margin, warnDist, &tStart, &tEnd)) {
+        return false;
+    }
+    *walked = true;
+    const f32 hit = ObstacleCourse_HeightfieldGap(box, frame, tStart, tEnd, margin, probes);
+    if (!(hit >= 0.0f) || (hit >= warnDist)) {
+        return false;
+    }
+    *gap = hit;
+    return true;
+}
+
+ObstacleBox ObstacleCourse_YawedPolyBox(const ObstacleBox& box, const ObstacleCourseFrame& frame) {
+    // The inverse of the probes' world -> mesh rotation (Object_PolyHeightfieldHit: local =
+    // (cs * rx + sn * rz, -sn * rx + cs * rz) with sn/cs of -rot.y), applied to the box's
+    // center offset; the extents become those of the turned rectangle's bounding box.
+    const f32 sn = sinf(-box.rotY * M_DTOR);
+    const f32 cs = cosf(-box.rotY * M_DTOR);
+    const f32 lx = box.center.x - box.objPos.x;
+    const f32 lz = box.center.z - box.objPos.z;
+    ObstacleBox out = box;
+    out.center.x = box.objPos.x + cs * lx - sn * lz;
+    out.center.z = box.objPos.z + sn * lx + cs * lz;
+    out.half.x = fabsf(cs) * box.half.x + fabsf(sn) * box.half.z;
+    out.half.z = fabsf(sn) * box.half.x + fabsf(cs) * box.half.z;
+    out.dx = out.center.x - frame.origin.x;
+    out.dz = out.center.z - frame.origin.z;
+    out.clearX = fabsf(out.dx) - out.half.x;
+    out.gapZ = frame.origin.z - (out.center.z + out.half.z);
+    return out;
 }

@@ -1466,6 +1466,10 @@ static nlohmann::json CueObstacleDirectionCommonJson(const ObstacleDirectionCueD
         j["terrainWalk"] = { { "tested", d.terrainWalkTested },
                              { "claimed", d.terrainWalkClaimed },
                              { "probes", d.terrainWalkProbes } };
+        j["terrainSideWalk"] = { { "tested", d.terrainSideTested },
+                                 { "probes", d.terrainSideProbes },
+                                 { "aheadBuzzing", d.terrainSideAheadBuzzing },
+                                 { "aheadProbes", d.terrainSideAheadProbes } };
         j["lookahead"] = d.lookahead;
         j["margin"] = d.margin;
         j["warnDist"] = d.warnDist;

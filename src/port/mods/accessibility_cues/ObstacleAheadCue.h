@@ -88,7 +88,7 @@ struct ObstacleAheadCueDebug {
                                            // heading gate is what silenced the cue"
     int32_t scanActive = 0, scanObstacles = 0, scanBoxes = 0; // ObstacleScanStats
     int32_t onCourse = 0;                                     // boxes that passed the course test this tick
-    // Heightfield refinement (ObstacleAheadCue_HeightfieldGap): boxes whose course
+    // Heightfield refinement (ObstacleCourse_AheadHitsTerrain): boxes whose course
     // span was walked, how many of those the walk dropped (the course never meets the
     // surface, or meets it only at the warn band's far edge), and the engine
     // surface-test calls spent — the cost line.

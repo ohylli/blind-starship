@@ -73,3 +73,27 @@ bool ObstacleCourse_AheadClaimsSolid(const ObstacleBox& box, const ObstacleCours
 // its per-sample claim the ahead cue's own hit.
 bool ObstacleCourse_HeightfieldWalkSpan(const ObstacleBox& box, const ObstacleCourseFrame& frame, bool allRange,
                                         f32 margin, f32 warnDist, f32* tStart, f32* tEnd);
+
+// The ahead cue's verdict on a TERRAIN box (box.polyHeightfield): is it warning about it
+// this tick? The course is walked through the stretch ObstacleCourse_HeightfieldWalkSpan
+// yields and the engine's own surface test decides whether the course meets the slope
+// (probing the bottom edge of the margin square around the course; see the .cpp). True
+// with `*gap` the course distance of the first hit, inside the warn band. `*walked` says
+// whether there was a stretch to walk at all (the ahead cue's `heightfieldTested` count);
+// `*probes` accumulates the engine calls spent. The caller applies the ground-vehicle
+// gate (ObstacleCommon_TerrainIsFloor) first. Shared so the beside cue stays silent for
+// exactly the hills the buzz is sounding for (ObstacleDirectionCue_TerrainBeside).
+bool ObstacleCourse_AheadHitsTerrain(const ObstacleBox& box, const ObstacleCourseFrame& frame, bool allRange,
+                                     f32 margin, f32 warnDist, bool* walked, f32* gap, int32_t* probes);
+
+// A poly mesh's box with the object's yaw applied: the world-axis-aligned box around the
+// mesh's footprint turned by obj.rot.y about obj.pos, the rotation the engine undoes
+// before testing (Player_CheckPolyCollision; the probes in ObjectQuery.h apply the same
+// one). The scan's box (ObstacleScan.h) ignores the yaw, and most terrain meshes are
+// yawed (every Corneria bump family, Fortuna's mountains, Zoness's islands, Aquas's reefs
+// and bumps), so the unrotated box can leave out a corner of the real footprint. Only the
+// XZ extents grow; Y, the mesh identity and obj.pos/rot.y are kept, and the
+// player-relative fields (dx, dz, clearX, gapZ) are recomputed. Used by the directional
+// cues' terrain walks to decide where to probe — the probes themselves are exact either
+// way.
+ObstacleBox ObstacleCourse_YawedPolyBox(const ObstacleBox& box, const ObstacleCourseFrame& frame);

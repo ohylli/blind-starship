@@ -78,15 +78,15 @@
 // Scope (docs/accessibility-obstacle-direction-cues.md): on rails and in solo all-range,
 // where the three are quiet through a U-turn or somersault and skip the non-lockable
 // fighters (the wingmates and allied craft, left to the ahead cue). Terrain (a heightfield
-// poly box, whose box spans the whole hill) is refined for BELOW only: the box top is
-// replaced by the engine's own surface height sampled along the course
-// (ObstacleDirectionCue_TerrainBelow). The side pair still reads a terrain box as a box,
-// and so over-reports a hill flown beside near its peak height — Fortuna's mountains
-// included. The engine's poly range gate enters only through the ahead cue's verdict and
-// the terrain walk: a solid mesh inside the side band is inside the gate anyway. Ground,
-// water and lava are not objects and stay out. Every box is axis-aligned in world space
-// (obj.rot ignored, ObstacleScan.h), which in a turned heading shifts the clearance of a
-// yawed wall.
+// poly box, whose box spans the whole hill) is never read as a box: below reads the
+// engine's own surface height along the course (ObstacleDirectionCue_TerrainBelow) and
+// beside walks sideways from the course to where the surface rises within the margin of
+// it (ObstacleDirectionCue_TerrainBeside), both over the mesh's yawed footprint, and one
+// hill may answer below, left and right at once. The engine's poly range gate enters only
+// through the ahead cue's verdict and the terrain walks: a solid mesh inside the side band
+// is inside the gate anyway. Ground, water and lava are not objects and stay out. Every
+// solid box is axis-aligned in world space (obj.rot ignored, ObstacleScan.h), which in a
+// turned heading shifts the clearance of a yawed wall.
 static Cue* sSideCue = nullptr;
 static Cue* sAboveCue = nullptr;
 static Cue* sBelowCue = nullptr;
@@ -430,6 +430,56 @@ struct ObstacleAheadWalk {
     f32 warnDist = 0.0f;
 };
 
+// The course samples a terrain walk reads over [tLo, tHi]: the span's two ends exactly,
+// and between them the grid points anchor + k * kObstacleWalkStep. The anchor is where
+// the ahead cue's walk over the box starts (`grid.start` when `grid.walks`, else tLo), so
+// the walks read the same points wherever they overlap; on rails it is tLo itself unless
+// the engine's range gate moves the ahead cue's start (the grid then shifts to match it).
+// Grid points within a sliver of either end are skipped as duplicates, so with the anchor
+// at tLo this is exactly tLo, tLo + step, ..., tHi. Calls fn(t, beneath), `beneath`
+// marking the sample under the ship (t 0, present when the ship is already level with
+// the box). False, and no samples, for a NaN or reversed span.
+template <typename Fn>
+static bool ObstacleDirectionCue_ForEachWalkSample(f32 tLo, f32 tHi, const ObstacleAheadWalk& grid, Fn&& fn) {
+    int steps;
+    if (!ObstacleCommon_WalkSteps(tHi - tLo, &steps)) {
+        return false;
+    }
+    f32 anchor = grid.walks ? grid.start : tLo;
+    if (!(fabsf(anchor - tLo) <= (f32) kObstacleWalkMaxSteps * kObstacleWalkStep)) {
+        anchor = tLo; // NaN, or so far off the span that the grid phase is meaningless
+    }
+    constexpr f32 kEndTol = 0.01f;
+    fn(tLo, !(tLo > 0.0f));
+    const f32 firstStep = ceilf((tLo - anchor) / kObstacleWalkStep); // grid index of the first point past tLo
+    for (int i = 0; i <= steps; i++) {
+        const f32 t = anchor + (firstStep + (f32) i) * kObstacleWalkStep;
+        if (t <= tLo + kEndTol) {
+            continue;
+        }
+        if (t >= tHi - kEndTol) {
+            break;
+        }
+        fn(t, false);
+    }
+    if (tHi > tLo + kEndTol) {
+        fn(tHi, false);
+    }
+    return true;
+}
+
+// The engine's XZ range gate (box.polyRangeXZ) at a world point: Player_CollisionCheck
+// never tests the mesh while the ship is farther than that from obj.pos, so a surface out
+// there cannot be hit. True for an ungated box.
+static bool ObstacleDirectionCue_InPolyRange(const ObstacleBox& box, f32 x, f32 z) {
+    if (!(box.polyRangeXZ > 0.0f)) {
+        return true;
+    }
+    const f32 rx = x - box.objPos.x;
+    const f32 rz = z - box.objPos.z;
+    return (rx * rx + rz * rz) <= box.polyRangeXZ * box.polyRangeXZ;
+}
+
 // "Below" for a heightfield poly box (box.polyHeightfield — the terrain bumps, reefs,
 // the island, the mountains). The engine hits such a mesh only when the ship is at or
 // below the surface under it, so the box top — the hill's PEAK — says nothing about the
@@ -444,11 +494,9 @@ struct ObstacleAheadWalk {
 // aim. The clearance is measured straight down (world Y) whatever the heading: the
 // surface is hit from above, and gravity's "below" is what a height above ground means.
 //
-// The samples sit on the grid anchor + k * kObstacleWalkStep, plus the span's two ends.
-// The anchor is where the ahead cue's walk over this box starts
-// (ObstacleCourse_HeightfieldWalkSpan), so where the two walks overlap they read the same
-// points; on rails it is tLo itself unless the engine's range gate moves the ahead cue's
-// start (the grid then shifts to match it).
+// The samples sit on the family grid anchored where the ahead cue's walk over this box
+// starts, plus the span's two ends (ObstacleDirectionCue_ForEachWalkSample), so where
+// the two walks overlap they read the same points.
 //
 // Ownership is decided per SAMPLE, not per box (one hill is both "ground 300 below me"
 // and "a slope rising into my course"): an upcoming sample whose surface is within the
@@ -465,8 +513,8 @@ struct ObstacleAheadWalk {
 // says the buzz is about the ground.) A sample at or below the surface is the engine's.
 //
 // A sample is dropped when the ship there would be outside the engine's XZ range gate
-// (box.polyRangeXZ): Player_CollisionCheck never tests the mesh from out there, and a
-// bump's box is deep enough for its far end to lie beyond the gate.
+// (ObstacleDirectionCue_InPolyRange): a bump's box is deep enough for its far end to lie
+// beyond it.
 static ObstacleTerrainBelow ObstacleDirectionCue_TerrainBelow(const ObstacleBox& box, const ObstacleCourseFrame& frame,
                                                               f32 tLo, f32 tHi, const ObstacleAheadWalk& claim,
                                                               f32 margin, int32_t* probes) {
@@ -475,25 +523,12 @@ static ObstacleTerrainBelow ObstacleDirectionCue_TerrainBelow(const ObstacleBox&
     if (!Object_ResolvePolyHeightfield(box.polyColId, &box.objPos, box.rotY, &hf)) {
         return out; // not a tabled mesh — unreachable for a scan-produced box
     }
-    int steps;
-    if (!ObstacleCommon_WalkSteps(tHi - tLo, &steps)) {
-        return out; // NaN or a reversed span
-    }
-    f32 anchor = claim.walks ? claim.start : tLo;
-    if (!(fabsf(anchor - tLo) <= (f32) kObstacleWalkMaxSteps * kObstacleWalkStep)) {
-        anchor = tLo; // NaN, or so far off the span that the grid phase is meaningless
-    }
     const s32 lateral = (margin > 0.0f) ? 1 : 0;
-    const f32 rangeSq = box.polyRangeXZ * box.polyRangeXZ;
-    auto sample = [&](f32 t, bool beneath) {
+    ObstacleDirectionCue_ForEachWalkSample(tLo, tHi, claim, [&](f32 t, bool beneath) {
         const Vec3f p = { frame.origin.x + frame.fwd.x * t, frame.origin.y + frame.fwd.y * t,
                           frame.origin.z + frame.fwd.z * t };
-        if (box.polyRangeXZ > 0.0f) {
-            const f32 rx = p.x - box.objPos.x;
-            const f32 rz = p.z - box.objPos.z;
-            if ((rx * rx + rz * rz) > rangeSq) {
-                return;
-            }
+        if (!ObstacleDirectionCue_InPolyRange(box, p.x, p.z)) {
+            return;
         }
         bool any = false;
         f32 top = 0.0f;
@@ -525,26 +560,7 @@ static ObstacleTerrainBelow ObstacleDirectionCue_TerrainBelow(const ObstacleBox&
             out.surfaceY = top;
             out.t = t;
         }
-    };
-    // The span's ends are sampled exactly; grid points within a sliver of either end are
-    // skipped as duplicates. With the anchor at tLo this is exactly tLo, tLo + step, ...,
-    // tHi — the rails walk as first committed.
-    constexpr f32 kEndTol = 0.01f;
-    sample(tLo, !(tLo > 0.0f));
-    const f32 firstStep = ceilf((tLo - anchor) / kObstacleWalkStep); // grid index of the first point past tLo
-    for (int i = 0; i <= steps; i++) {
-        const f32 t = anchor + (firstStep + (f32) i) * kObstacleWalkStep;
-        if (t <= tLo + kEndTol) {
-            continue;
-        }
-        if (t >= tHi - kEndTol) {
-            break;
-        }
-        sample(t, false);
-    }
-    if (tHi > tLo + kEndTol) {
-        sample(tHi, false);
-    }
+    });
     return out;
 }
 
@@ -569,7 +585,9 @@ static bool ObstacleDirectionCue_FootprintSpan(const ObstacleBox& box, const Vec
 // laterally (`vertRange` non-empty) and terrain is a crash for the current vehicle. The
 // walk's span is this cue's own — rails the box's Z extent inside the window, all-range
 // the stretch of course over the footprint — but its grid is anchored where the ahead
-// cue's walk starts (`ahead.start`, valid when `ahead.walks`), see TerrainBelow.
+// cue's walk starts (`ahead.start`, valid when `ahead.walks`), see TerrainBelow. `box`
+// is the yawed footprint box (ObstacleCourse_YawedPolyBox), so both spans cover a turned
+// hill's corners.
 static ObstacleAxisAnswer ObstacleDirectionCue_TerrainVertical(const ObstacleBox& box, const ObstacleCourseFrame& frame,
                                                                bool allRange, const ObstacleDirectionKnobs& knobs,
                                                                const ObstacleSliceRange& vertRange, f32 nearT, f32 farT,
@@ -605,6 +623,188 @@ static ObstacleAxisAnswer ObstacleDirectionCue_TerrainVertical(const ObstacleBox
         vert.sampleT = terrain.t;
     }
     return vert;
+}
+
+// The sideways walk's lateral grid: the family step (a mesh triangle is hundreds of
+// units across, so it cannot step over a slope), then a few halvings between the last
+// clear point and the first blocked one, so the clearance — which goes straight into the
+// pan — is good to step / 2^bisections (about 6 units) instead of jumping a tenth of the
+// pan range per step as the ship drifts.
+static constexpr int kSideWalkMaxSteps = (int) (kObstacleCueDirSideDistMax / kObstacleWalkStep) + 1;
+static constexpr int kSideWalkBisections = 4;
+
+struct ObstacleTerrainSide {
+    bool found = false;   // a crossing within reach; the fields below describe the closest
+    f32 clear = INFINITY; // horizontal distance from the course to the crossing
+    f32 surfaceY = 0.0f;  // the surface height at the crossing's blocked end
+    f32 t = 0.0f;         // course distance of the sample it was found from; 0 = beneath the ship
+};
+
+// "Beside" for a heightfield poly box, the sideways counterpart of TerrainBelow. The box
+// spans the whole hill, so its side face says nothing about the slope at the ship's
+// altitude: flown beside a hill near its peak height the face is far closer than the
+// slope, and flown low over its outer slope with the peak rising to one side the box
+// surrounds the ship and the box rule has no answer at all. This walks sideways instead:
+// from each course sample on [tLo, tHi] (the grid of ForEachWalkSample), out along
+// frame.right to either side — horizontal in both modes, so the line stays at the
+// course's height — and asks the engine for the surface under each point
+// (Object_PolyHeightfieldSurfaceY). A point is BLOCKED when the surface there comes
+// within `margin` of the course height: the box rule's "within the margin on the other
+// axis" restated for a surface hit from above, and the threshold the ahead cue's walk
+// hits at. The first blocked point on a side, refined by bisection, is the crossing; its
+// horizontal distance is the clearance the pan maps. Per side the smallest over the
+// samples wins.
+//
+// A sample whose own course point is already blocked is skipped: the surface under the
+// course is the vertical question's (the below chord, or the ahead cue's buzz), not a
+// wall to steer around. Points outside the engine's range gate (InPolyRange) are clear —
+// the engine never tests the mesh from there, which trims the far flanks of Fortuna's
+// 2000-wide mountains. Each side's march stops at `reach[side]` (the side band, cut to
+// where the box's footprint ends) and at the side's best crossing so far, since only a
+// closer one can win; a point outside the mesh's outline costs only the bounds check.
+static void ObstacleDirectionCue_TerrainBeside(const ObstacleBox& box, const ObstacleCourseFrame& frame, f32 tLo,
+                                               f32 tHi, const ObstacleAheadWalk& grid, f32 margin, const f32* reach,
+                                               ObstacleTerrainSide* out, int32_t* probes) {
+    PolyHeightfield hf;
+    if (!Object_ResolvePolyHeightfield(box.polyColId, &box.objPos, box.rotY, &hf)) {
+        return; // not a tabled mesh — unreachable for a scan-produced box
+    }
+    ObstacleDirectionCue_ForEachWalkSample(tLo, tHi, grid, [&](f32 t, bool beneath) {
+        const Vec3f p = { frame.origin.x + frame.fwd.x * t, frame.origin.y + frame.fwd.y * t,
+                          frame.origin.z + frame.fwd.z * t };
+        const f32 threshold = p.y - margin;
+        // Is the point `s` along `sign * right` blocked? `surfaceY` is written when it is.
+        auto blocked = [&](f32 sign, f32 s, f32* surfaceY) {
+            const f32 x = p.x + frame.right.x * sign * s;
+            const f32 z = p.z + frame.right.z * sign * s;
+            if (!ObstacleDirectionCue_InPolyRange(box, x, z)) {
+                return false;
+            }
+            (*probes)++;
+            f32 y;
+            if (!Object_PolyHeightfieldSurfaceY(&hf, x, z, &y) || !(y >= threshold)) {
+                return false; // no surface there, or it clears (a NaN course height clears too)
+            }
+            *surfaceY = y;
+            return true;
+        };
+        f32 unused;
+        if (blocked(1.0f, 0.0f, &unused)) {
+            return; // the course itself is over the surface's margin: the vertical question's
+        }
+        for (int side = 0; side < 2; side++) {
+            const f32 sign = (side == 0) ? -1.0f : 1.0f; // 0 = left, 1 = right
+            const f32 limit = (reach[side] < out[side].clear) ? reach[side] : out[side].clear;
+            if (!(limit > 0.0f)) {
+                continue;
+            }
+            f32 prev = 0.0f;
+            for (int i = 1; i <= kSideWalkMaxSteps; i++) {
+                f32 s = (f32) i * kObstacleWalkStep;
+                const bool last = !(s < limit);
+                if (last) {
+                    s = limit;
+                }
+                f32 surfaceY;
+                if (blocked(sign, s, &surfaceY)) {
+                    f32 lo = prev;
+                    f32 hi = s;
+                    for (int b = 0; b < kSideWalkBisections; b++) {
+                        const f32 mid = 0.5f * (lo + hi);
+                        f32 midY;
+                        if (blocked(sign, mid, &midY)) {
+                            hi = mid;
+                            surfaceY = midY;
+                        } else {
+                            lo = mid;
+                        }
+                    }
+                    if (hi < out[side].clear) {
+                        out[side].found = true;
+                        out[side].clear = hi;
+                        out[side].surfaceY = surfaceY;
+                        out[side].t = beneath ? 0.0f : t;
+                    }
+                    break;
+                }
+                prev = s;
+                if (last) {
+                    break;
+                }
+            }
+        }
+    });
+}
+
+// The side half of question 3 for a terrain box: the sideways walk, both sides, each
+// answered independently (a valley inside one mesh sounds as a corridor). `tbox` is the
+// yawed footprint box (ObstacleCourse_YawedPolyBox), `box` the scan's, which the ahead
+// cue's verdict is asked with. Silent for the whole box while the ahead cue is buzzing
+// for it (ObstacleCourse_AheadHitsTerrain): a hill whose slope the course runs into is
+// the buzz's, and "that slope is more to your left" would give the chord a second
+// meaning. Skipped, like every terrain walk, for the ground vehicles.
+static void ObstacleDirectionCue_TerrainSide(const ObstacleBox& box, const ObstacleBox& tbox,
+                                             const ObstacleCourseFrame& frame, bool allRange,
+                                             const ObstacleDirectionKnobs& knobs, f32 nearT, f32 farT,
+                                             const ObstacleAheadWalk& ahead, ObstacleAxisAnswer* answers,
+                                             ObstacleDirectionCueDebug& dbg) {
+    if (knobs.terrainIsFloor) {
+        return;
+    }
+    const f32 tLo = (nearT > 0.0f) ? nearT : 0.0f;
+    const f32 tHi = (farT < knobs.lookahead) ? farT : knobs.lookahead;
+    if (!(tHi >= tLo)) {
+        return;
+    }
+    // Cheap pre-filters on the yawed box, both supersets of what the walk could find: the
+    // hill's top must reach within the margin of the course's lowest point on the span,
+    // and the footprint must lie within the side band on a side (its corners' offsets
+    // along frame.right, which is horizontal).
+    const f32 lowestCourseY = (frame.fwd.y * tLo < frame.fwd.y * tHi) ? frame.fwd.y * tLo : frame.fwd.y * tHi;
+    if (!(tbox.dy + tbox.half.y >= lowestCourseY - knobs.margin)) {
+        return;
+    }
+    const f32 centerR = tbox.dx * frame.right.x + tbox.dz * frame.right.z;
+    const f32 extentR = fabsf(frame.right.x) * tbox.half.x + fabsf(frame.right.z) * tbox.half.z;
+    f32 reach[2];
+    reach[0] = -(centerR - extentR); // left: how far the footprint extends to that side
+    reach[1] = centerR + extentR;
+    bool any = false;
+    for (int side = 0; side < 2; side++) {
+        if (reach[side] > knobs.sideDist) {
+            reach[side] = knobs.sideDist;
+        }
+        if (reach[side] > 0.0f) {
+            any = true;
+        }
+    }
+    if (!any) {
+        return;
+    }
+    bool walked;
+    f32 gap;
+    if (ObstacleCourse_AheadHitsTerrain(box, frame, allRange, knobs.margin, knobs.warnDist, &walked, &gap,
+                                        &dbg.terrainSideAheadProbes)) {
+        dbg.terrainSideAheadBuzzing++;
+        return;
+    }
+    dbg.terrainSideTested++;
+    ObstacleTerrainSide found[2];
+    ObstacleDirectionCue_TerrainBeside(box, frame, tLo, tHi, ahead, knobs.margin, reach, found, &dbg.terrainSideProbes);
+    static const ObstacleDirection kDirs[2] = { OBSTACLE_DIR_LEFT, OBSTACLE_DIR_RIGHT };
+    for (int side = 0; side < 2; side++) {
+        if (!found[side].found || !(found[side].clear < knobs.sideDist)) {
+            continue;
+        }
+        ObstacleAxisAnswer& a = answers[side];
+        a.ok = true;
+        a.clear = found[side].clear;
+        a.dir = kDirs[side];
+        a.upcoming = found[side].t > 0.0f;
+        a.fromTerrainWalk = true;
+        a.surfaceY = found[side].surfaceY;
+        a.sampleT = found[side].t;
+    }
 }
 
 static void ObstacleDirectionCue_StopAll() {
@@ -653,6 +853,20 @@ static bool ObstacleDirectionCue_Gate(ObstacleDirectionCueDebug& dbg, bool* allR
     return true;
 }
 
+// One answer from one box, offered to its direction's contest: the smallest clearance
+// wins. `gap` is the box's nearest course distance (question 1's nearT).
+static void ObstacleDirectionCue_Offer(ObstacleDirectionWinner* winners, const ObstacleAxisAnswer& answer,
+                                       const ObstacleBox& box, f32 gap, ObstacleDirectionCueDebug& dbg) {
+    ObstacleDirectionWinner& w = winners[answer.dir];
+    dbg.dir[answer.dir].candidates++;
+    if (answer.clear < w.answer.clear) {
+        w.found = true;
+        w.answer = answer;
+        w.box = box;
+        w.gap = gap;
+    }
+}
+
 // The three questions, asked of one box; records the box in `winners` when it answers.
 static void ObstacleDirectionCue_ClassifyBox(const ObstacleBox& box, const ObstacleCourseFrame& frame, bool allRange,
                                              const ObstacleDirectionKnobs& knobs, ObstacleDirectionWinner* winners,
@@ -666,12 +880,17 @@ static void ObstacleDirectionCue_ClassifyBox(const ObstacleBox& box, const Obsta
         dbg.fightersSkipped++;
         return;
     }
+    // A terrain mesh is reasoned about on its YAWED footprint box (the scan's box ignores
+    // obj.rot.y, and most terrain meshes are turned), so a turned hill's corners are not
+    // left out of the window or the walks' spans; the walks' probes are exact either way.
+    // The ahead cue's verdict is still asked with the scan's box, as the ahead cue asks it.
+    const ObstacleBox tbox = box.polyHeightfield ? ObstacleCourse_YawedPolyBox(box, frame) : box;
     // Question 1: the lookahead window along the course. The box's extent along it is
     // [nearT, farT] (its center's course distance, plus or minus the projection of its
     // half-extents); on rails nearT is gapZ, the near Z face.
-    const f32 centerT = ObstacleCourse_Dot({ box.dx, box.dy, box.dz }, frame.fwd);
+    const f32 centerT = ObstacleCourse_Dot({ tbox.dx, tbox.dy, tbox.dz }, frame.fwd);
     const f32 extentT =
-        fabsf(frame.fwd.x) * box.half.x + fabsf(frame.fwd.y) * box.half.y + fabsf(frame.fwd.z) * box.half.z;
+        fabsf(frame.fwd.x) * tbox.half.x + fabsf(frame.fwd.y) * tbox.half.y + fabsf(frame.fwd.z) * tbox.half.z;
     const f32 nearT = centerT - extentT;
     const f32 farT = centerT + extentT;
     const bool upcoming = (nearT > 0.0f) && (nearT < knobs.lookahead);
@@ -680,61 +899,56 @@ static void ObstacleDirectionCue_ClassifyBox(const ObstacleBox& box, const Obsta
         return;
     }
     dbg.inWindow++;
-    // Question 2: the ahead cue's box, by the ahead cue's own verdict (ObstacleCourse.h;
-    // a NaN fails every test below). A solid box it is warning about is skipped whole. A
-    // terrain box is never claimed whole: its claim is settled per sample inside the walk
-    // (ObstacleDirectionCue_TerrainBelow), so it goes on to question 3 — the vertical half
-    // decides, and the side half honors "the ahead cue walks it from ahead" as the box's
-    // claim, so a hill on course never sounds beside.
-    bool boxOnCourse = false;
-    ObstacleAheadWalk ahead;
-    ahead.warnDist = knobs.warnDist;
+    // Question 3's slice for the vertical pair: the part of the box inside the window and
+    // within the margin of the course laterally, measured vertically (SliceRange).
+    const ObstacleSliceRange vertRange =
+        ObstacleDirectionCue_SliceRange(tbox, frame.fwd, knobs.lookahead, frame.right, knobs.margin, frame.up);
+
     if (box.polyHeightfield) {
+        // Terrain: question 2 is never settled for the whole box. The below walk leaves
+        // the ahead cue its samples one by one, and the beside walk stays silent while
+        // the ahead cue is buzzing for the hill (TerrainBelow, TerrainSide). One hill can
+        // honestly be ground below, a slope rising to the right and another to the left
+        // at once, and each answer comes from a different part of its surface, so each
+        // competes in its own direction rather than the nearest taking the box.
+        ObstacleAheadWalk ahead;
+        ahead.warnDist = knobs.warnDist;
         ahead.walks = ObstacleCourse_HeightfieldWalkSpan(box, frame, allRange, knobs.margin, knobs.warnDist,
                                                          &ahead.start, &ahead.end);
-        boxOnCourse = ahead.walks && (ahead.start > 0.0f);
-    } else {
-        f32 gap;
-        if (ObstacleCourse_AheadClaimsSolid(box, frame, allRange, knobs.margin, knobs.warnDist, &gap)) {
-            dbg.aheadClaimed++;
-            return;
+        ObstacleAxisAnswer answers[3];
+        answers[2] =
+            ObstacleDirectionCue_TerrainVertical(tbox, frame, allRange, knobs, vertRange, nearT, farT, ahead, dbg);
+        ObstacleDirectionCue_TerrainSide(box, tbox, frame, allRange, knobs, nearT, farT, ahead, answers, dbg);
+        for (const ObstacleAxisAnswer& a : answers) {
+            if (a.ok) {
+                ObstacleDirectionCue_Offer(winners, a, tbox, nearT, dbg);
+            }
         }
-    }
-    // Question 3: the part of the box inside the window and within the margin of the
-    // course on one steering axis, measured along the other (SliceRange).
-    const ObstacleSliceRange vertRange =
-        ObstacleDirectionCue_SliceRange(box, frame.fwd, knobs.lookahead, frame.right, knobs.margin, frame.up);
-    ObstacleAxisAnswer vert;
-    if (box.polyHeightfield) {
-        vert = ObstacleDirectionCue_TerrainVertical(box, frame, allRange, knobs, vertRange, nearT, farT, ahead, dbg);
-    } else {
-        vert = ObstacleDirectionCue_Classify(vertRange, knobs.vertDist, OBSTACLE_DIR_ABOVE, OBSTACLE_DIR_BELOW);
-        vert.upcoming = upcoming;
-    }
-    ObstacleAxisAnswer side;
-    if (!boxOnCourse) {
-        const ObstacleSliceRange sideRange =
-            ObstacleDirectionCue_SliceRange(box, frame.fwd, knobs.lookahead, frame.up, knobs.margin, frame.right);
-        side = ObstacleDirectionCue_Classify(sideRange, knobs.sideDist, OBSTACLE_DIR_RIGHT, OBSTACLE_DIR_LEFT);
-        side.upcoming = upcoming;
-    }
-    // The nearer face wins the box. A corner beyond the margin on both axes, or a box
-    // the ship is inside on both, answers neither.
-    const ObstacleAxisAnswer* pick;
-    if (side.ok && (!vert.ok || (side.clear <= vert.clear))) {
-        pick = &side;
-    } else if (vert.ok) {
-        pick = &vert;
-    } else {
         return;
     }
-    ObstacleDirectionWinner& w = winners[pick->dir];
-    dbg.dir[pick->dir].candidates++;
-    if (pick->clear < w.answer.clear) {
-        w.found = true;
-        w.answer = *pick;
-        w.box = box;
-        w.gap = nearT;
+
+    // Question 2: the ahead cue's box, by the ahead cue's own verdict (ObstacleCourse.h;
+    // a NaN fails every test below). A solid box it is warning about is skipped whole.
+    f32 gap;
+    if (ObstacleCourse_AheadClaimsSolid(box, frame, allRange, knobs.margin, knobs.warnDist, &gap)) {
+        dbg.aheadClaimed++;
+        return;
+    }
+    // Question 3: which steering axis the box is off to, and how far.
+    ObstacleAxisAnswer vert =
+        ObstacleDirectionCue_Classify(vertRange, knobs.vertDist, OBSTACLE_DIR_ABOVE, OBSTACLE_DIR_BELOW);
+    vert.upcoming = upcoming;
+    const ObstacleSliceRange sideRange =
+        ObstacleDirectionCue_SliceRange(box, frame.fwd, knobs.lookahead, frame.up, knobs.margin, frame.right);
+    ObstacleAxisAnswer side =
+        ObstacleDirectionCue_Classify(sideRange, knobs.sideDist, OBSTACLE_DIR_RIGHT, OBSTACLE_DIR_LEFT);
+    side.upcoming = upcoming;
+    // The nearer face wins a solid box. A corner beyond the margin on both axes, or a box
+    // the ship is inside on both, answers neither.
+    if (side.ok && (!vert.ok || (side.clear <= vert.clear))) {
+        ObstacleDirectionCue_Offer(winners, side, box, nearT, dbg);
+    } else if (vert.ok) {
+        ObstacleDirectionCue_Offer(winners, vert, box, nearT, dbg);
     }
 }
 

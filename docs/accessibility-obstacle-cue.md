@@ -107,7 +107,8 @@ the ship's body points is at or below the surface under it. So the cue walks the
 clipped course span through the box in 100-unit steps and asks the engine's own surface
 test at each step (`Object_PolyHeightfieldHit` over `Col2_CheckSurface`, the body of
 the `func_col2_800A36FC` the collision pass calls, on the same mesh;
-`ObstacleAheadCue_HeightfieldGap`). The mesh's asset tables are resolved once per box
+`ObstacleCourse_AheadHitsTerrain`, shared with the beside cue, which stays silent for a
+hill this walk hits). The mesh's asset tables are resolved once per box
 (`Object_ResolvePolyHeightfield` over `Col2_ResolveMesh`), not per probe — each resolve
 is a resource-manager round trip, and a walk is a few hundred probes per tick. The
 probe is the *bottom edge of the margin square* around the ship — the point one margin

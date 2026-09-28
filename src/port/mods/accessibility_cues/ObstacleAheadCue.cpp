@@ -22,7 +22,7 @@
 // exactly the boxes this cue claims. A heightfield mesh's box (the terrain bumps and
 // their kin, ObstacleScan.h) is refined further: the course is walked through the box
 // and the engine's own surface test decides whether it actually meets the slope
-// (ObstacleAheadCue_HeightfieldGap). Rendered CUE3D_MODE_DIRECT (dead center, no
+// (ObstacleCourse_AheadHitsTerrain). Rendered CUE3D_MODE_DIRECT (dead center, no
 // spatialization, no distance attenuation): a warning is not a navigation target — it
 // must not occupy the spatial channel the ring/enemy cues use, and "how soon" is the
 // only actionable dimension for something you steer away from. The pulse interval is
@@ -77,82 +77,14 @@ static f32 ObstacleAheadCue_Interval(f32 gap, f32 warnDist) {
     return fast * powf(slow / fast, t);
 }
 
-// The heightfield walk samples on the family's shared grid (ObstacleCommon.h:
-// kObstacleWalkStep / kObstacleWalkMaxSteps, the grid the below cue's terrain walk shares).
-// The walk never spans more than the warn distance, and warnDist is clamped to
+// This cue's heightfield walk (ObstacleCourse_AheadHitsTerrain) samples on the family's
+// shared grid (ObstacleCommon.h: kObstacleWalkStep / kObstacleWalkMaxSteps, the grid the
+// below cue's terrain walk shares). The walk never spans more than the warn distance, and
+// warnDist is clamped to
 // kObstacleCueWarnDistMax, so no real span reaches the cap — the assert keeps it so, since
 // a walk cut short would leave a slope past the cap unwarned.
 static_assert((f32) kObstacleWalkMaxSteps * kObstacleWalkStep >= kObstacleCueWarnDistMax,
               "the heightfield walk must reach the far end of the widest warn band");
-
-// Heightfield refinement of the course test, for a poly box of the CollisionHeader2
-// family (box.polyHeightfield — every terrain bump, the reefs, the island, Fortuna
-// mountain 1, Venom's mountain). The engine hits such a mesh only when one of the
-// ship's body points is at or below the surface under it (func_col2_800A36FC,
-// fox_col2.c), so the box — which spans the whole hill — over-warns whenever the ship
-// is inside the footprint below the peak on a course that clears the slope. This
-// walks the course through the box on the family's grid from `tStart` to `tEnd` (the
-// stretch ObstacleCourse_HeightfieldWalkSpan yields: course distances from the ship,
-// already clipped to the engine's range gate) and asks the engine's own surface test at
-// each step (Object_PolyHeightfieldHit over the same mesh the engine would consult), so
-// "would I hit it" is answered by the code that decides it. The mesh is resolved once
-// per box (Object_ResolvePolyHeightfield), not per probe.
-//
-// The probe is not the ship's center but the BOTTOM EDGE of the margin square around
-// it: the point `margin` below the course and its two lateral neighbors `margin` to
-// either side along frame.right. That is the slack the box test already grants (the
-// player inside the footprint expanded by margin) restated for a surface hit from above
-// — a slope that rises to within the margin of the course warns, one the course clears
-// by more stays silent. The below cue's terrain walk (ObstacleDirectionCue_TerrainBelow)
-// depends on exactly this geometry — it leaves a sample to this cue when the surface is
-// within the margin under the course, and probes the same three points off the same
-// frame — so a change to the probe offsets here is a two-cue change.
-//
-// Returns the course distance of the first hit — 0 when the ship is already at or
-// below the surface — or a negative value when every probe clears. `probes` counts
-// the engine calls for the `cues` dump's cost line: at most (span / step + 1) * 3 per
-// box, each a bounds check plus a walk over the mesh's 13-36 triangles on the tables
-// resolved up front.
-static f32 ObstacleAheadCue_HeightfieldGap(const ObstacleBox& box, const ObstacleCourseFrame& frame, f32 tStart,
-                                           f32 tEnd, f32 margin, int32_t* probes) {
-    PolyHeightfield hf;
-    if (!Object_ResolvePolyHeightfield(box.polyColId, &box.objPos, box.rotY, &hf)) {
-        return -1.0f; // not a tabled mesh — unreachable for a scan-produced box
-    }
-    // The engine rejects a probe outside the mesh's own bounding box before it looks at
-    // the surface (the bounds check at the top of Col2_CheckSurface), so a probe the
-    // margin pushes BELOW the box floor would clear a hill it is plainly under. A
-    // surface cannot lie below that floor, so lifting the probe up to it asks the same
-    // question — "is the surface within margin below the course" — in terms the engine
-    // answers. (Verified live: with an 800 margin every bump cleared until this clamp.)
-    const f32 floorY = box.center.y - box.half.y;
-
-    int steps;
-    if (!ObstacleCommon_WalkSteps(tEnd - tStart, &steps)) {
-        return -1.0f; // NaN or a reversed span
-    }
-    for (int i = 0; i <= steps; i++) {
-        f32 t = tStart + (f32) i * kObstacleWalkStep;
-        if (t > tEnd) {
-            t = tEnd;
-        }
-        const Vec3f p = { frame.origin.x + frame.fwd.x * t, frame.origin.y + frame.fwd.y * t,
-                          frame.origin.z + frame.fwd.z * t };
-        f32 probeY = p.y - margin;
-        if (probeY < floorY) {
-            probeY = floorY;
-        }
-        for (s32 k = -1; k <= 1; k++) {
-            const Vec3f probe = { p.x + frame.right.x * (f32) k * margin, probeY,
-                                  p.z + frame.right.z * (f32) k * margin };
-            (*probes)++;
-            if (Object_PolyHeightfieldHit(&hf, &probe)) {
-                return t;
-            }
-        }
-    }
-    return -1.0f;
-}
 
 f32 ObstacleAheadCue_WarnDist() {
     // Capped at the slider's ceiling: the heightfield walks' step cap is sized to it (see
@@ -216,19 +148,22 @@ static void ObstacleAheadCue_OnPostUpdate(IEvent* event) {
     ObstacleScan_ForEachBox(player, &stats, [&](const ObstacleBox& box) {
         f32 gap;
         if (box.polyHeightfield) {
-            // A heightfield box is a candidate, not a verdict: walk the course through
-            // it (ObstacleCourse_HeightfieldWalkSpan owns which stretch) and let the
-            // engine's surface test decide (ObstacleAheadCue_HeightfieldGap).
-            f32 tStart;
-            f32 tEnd;
-            if (terrainIsFloor ||
-                !ObstacleCourse_HeightfieldWalkSpan(box, frame, allRange, margin, warnDist, &tStart, &tEnd)) {
+            // A heightfield box is a candidate, not a verdict: the course is walked
+            // through it and the engine's surface test decides
+            // (ObstacleCourse_AheadHitsTerrain, shared with the directional cues).
+            if (terrainIsFloor) {
                 return;
             }
-            dbg.heightfieldTested++;
-            gap = ObstacleAheadCue_HeightfieldGap(box, frame, tStart, tEnd, margin, &dbg.heightfieldProbes);
-            if (!(gap >= 0.0f) || (gap >= warnDist)) {
-                dbg.heightfieldCleared++;
+            bool walked;
+            const bool hit = ObstacleCourse_AheadHitsTerrain(box, frame, allRange, margin, warnDist, &walked, &gap,
+                                                             &dbg.heightfieldProbes);
+            if (walked) {
+                dbg.heightfieldTested++;
+            }
+            if (!hit) {
+                if (walked) {
+                    dbg.heightfieldCleared++;
+                }
                 return;
             }
         } else if (!ObstacleCourse_AheadClaimsSolid(box, frame, allRange, margin, warnDist, &gap)) {

@@ -50,8 +50,10 @@
 //     Refining that is the consumer's job — the scan stays box-only so every consumer
 //     shares one shape, and carries the mesh identity, obj.pos/rot.y and the engine's
 //     range gate on the box (the poly* fields) so a consumer can replay the engine's own
-//     surface test along its course, as the ahead cue does
-//     (ObstacleAheadCue_HeightfieldGap over Object_PolyHeightfieldHit).
+//     surface test, as the ahead cue does along its course
+//     (ObstacleCourse_AheadHitsTerrain over Object_PolyHeightfieldHit) and the
+//     directional cues do below and beside it (ObstacleDirectionCue_TerrainBelow /
+//     _TerrainBeside over Object_PolyHeightfieldSurfaceY).
 //   - Sphere-collided objects (Object_GetSphereCollider — today only Meteo's big meteor,
 //     which carries gNoHitbox and is collided by a hand-written 900-unit sphere) are
 //     boxed the same way: one synthesized record centered on obj.pos with half-extents

@@ -27,18 +27,22 @@ inline constexpr const char* kObstacleCueEnabledCVar = "gAccessibilityObstacleCu
 // (ObstacleCourse_AheadClaimsSolid); a box outside the margin on exactly one steering
 // axis is a directional cue's, and its clearance beyond the margin is that cue's
 // signal. For heightfield terrain the ahead cue reads the same value as the
-// vertical clearance that counts as a hit (ObstacleAheadCue_HeightfieldGap), and the
+// vertical clearance that counts as a hit (ObstacleCourse_AheadHitsTerrain), and the
 // below cue's terrain walk (ObstacleDirectionCue_TerrainBelow) uses it twice over: as the
 // clearance under which a sample is the ahead cue's rather than its own, and as the
 // offset of its lateral probes. Raising it therefore hands more of an approaching slope
-// to the buzz and takes it from the below chord.
+// to the buzz and takes it from the below chord. The beside cue's sideways terrain walk
+// (ObstacleDirectionCue_TerrainBeside) reads it as the height under the course at which
+// a slope to the side counts as a wall, so raising it also moves the beside chord's
+// crossing further down a hill's flank, closer to the ship.
 inline constexpr const char* kObstacleCueMarginCVar = "gAccessibilityObstacleCueMarginXY";
 inline constexpr float kObstacleCueMarginDefault = 150.0f;
 
 // The heightfield walks' sampling step and step cap, shared by the ahead cue's
-// ObstacleAheadCue_HeightfieldGap and the below cue's ObstacleDirectionCue_TerrainBelow so
-// the two sample one hill on the same grid — the below cue's per-sample claim is the ahead
-// cue's own hit only while the samples coincide. Step: world units along the course, two
+// ObstacleCourse_AheadHitsTerrain and the directional cues' terrain walks
+// (ObstacleDirectionCue_TerrainBelow / _TerrainBeside) so they sample one hill on the same
+// grid — the below cue's per-sample claim is the ahead cue's own hit only while the
+// samples coincide. The beside walk also steps sideways by the same step. Step: world units along the course, two
 // to three play frames at cruise speed; a mesh triangle is hundreds of units across, so a
 // finer step buys nothing while a much coarser one could step over a narrow ridge. Cap:
 // steps per box per tick; each walk's static_assert keeps its longest real span under it,
