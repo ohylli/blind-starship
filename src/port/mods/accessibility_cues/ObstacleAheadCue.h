@@ -70,7 +70,9 @@ struct ObstacleAheadCueTargetDebug {
     float gap = 0;                // the course gap driving the interval: gapZ on rails,
                                   // the ray's near-face distance in all-range, or for a
                                   // heightfield box the first sampled surface hit
-    float gapZ = 0;               // raw distance to the near z face, world units
+    float gapZ = 0;               // raw distance to the near z face, world units; this
+                                  // and the fields below describe the yawed footprint box
+                                  // for a heightfield (ObstacleCourse_YawedPolyBox)
     float clearX = 0, clearY = 0; // footprint clearance (negative = inside)
     float dx = 0, dy = 0, dz = 0; // signed center offsets
     float halfX = 0, halfY = 0, halfZ = 0;

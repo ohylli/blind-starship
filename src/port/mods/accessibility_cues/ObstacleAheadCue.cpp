@@ -196,6 +196,11 @@ static void ObstacleAheadCue_OnPostUpdate(IEvent* event) {
 
     dbg.active = true;
     dbg.intervalSec = target.intervalSec;
+    // A terrain winner is reported on the yawed footprint box its walk was planned on
+    // (ObstacleCourse_HeightfieldWalkSpan), as the directional cues report theirs.
+    if (best.polyHeightfield) {
+        best = ObstacleCourse_YawedPolyBox(best, frame);
+    }
     dbg.target.array = (int32_t) best.array;
     dbg.target.slot = best.slot;
     dbg.target.objId = best.objId;

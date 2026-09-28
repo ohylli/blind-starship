@@ -175,9 +175,14 @@ a valley the box surrounds, the box rule had no answer at all. The sideways walk
   box ignores the turn. The probes were always exact, but the spans that decide where to
   probe came from the unrotated box and could leave a turned hill's corner out. Both
   terrain walks and the lookahead window now use the yawed footprint's box
-  (`ObstacleCourse_YawedPolyBox`); the ahead cue's verdict is still asked with the scan's
-  box, as the ahead cue asks it. On the `obstacle-scout` straight run the below chord's
-  numbers did not change.
+  (`ObstacleCourse_YawedPolyBox`). On the `obstacle-scout` straight run the below chord's
+  numbers did not change. The ahead cue's walk followed the same day: its span
+  (`ObstacleCourse_HeightfieldWalkSpan`) yaws the scan's box itself, so the below walk's
+  grid anchor and the beside walk's "is the buzz sounding" question move with it. On the
+  three recorded runs (the `obstacle-scout` straight and low-left passes and the Fortuna
+  pass) a side-by-side log of both plans gave identical spans and hits on all 2161 walks:
+  the engine's 1100-unit range circle, not the box, bounds the walk on those hills. The
+  yaw matters for a long, narrow mesh turned across the course.
 - **Cost.** A point outside the mesh's outline costs only the engine's bounds check, and
   each side's march stops at the side's best crossing so far. With the band widened to
   its 2500 ceiling a Fortuna pass peaked at about 280 surface reads per tick, each a walk
@@ -282,7 +287,7 @@ direction(s) that id renders.
   here it shifts a yawed wall's clearance, and so its pan or loudness. Accepted for now;
   the fix belongs in the shared scan, where it would help every obstacle cue. Terrain is
   the exception: its walks probe the rotated mesh and plan on its yawed footprint (see
-  "Terrain beside"). The ahead cue still plans its own terrain walk on the unrotated box.
+  "Terrain beside"), and so does the ahead cue's terrain walk.
 - **Ground vehicles get no terrain below.** For the Landmaster and on foot the engine
   seats the player on a heightfield rather than crashing them
   (`Player_CheckPolyCollision`), so both terrain walks — this cue's and the ahead cue's —

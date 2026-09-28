@@ -1,7 +1,8 @@
 # The obstacle-ahead cue: design record
 
 Status: v1 implemented 2026-08-11; all-range support added 2026-08-18; poly-mesh
-coverage added 2026-09-11 (bounding boxes, then heightfield sampling). Companion to
+coverage added 2026-09-11 (bounding boxes, then heightfield sampling); heightfield walk
+planned on the yawed footprint 2026-09-28. Companion to
 `docs/accessibility-cues-tuning.md`
 (which documents the knobs); this file records what the cue covers, *why* it is shaped
 this way, and the catalogue of intentional misses — read this before "fixing" a silence.
@@ -117,7 +118,11 @@ box test's slack ("inside the footprint expanded by the margin") restated for a 
 hit from above: a slope that rises to within the margin of the course warns, one the
 course clears by more stays silent. Each probe is rotated into the mesh's frame exactly
 as `Player_CheckPolyCollision` does (`obj.rot.y`, multiplied out so the walk never
-touches the engine's scratch matrix). The first hit's course distance replaces the
+touches the engine's scratch matrix). The span walked is planned on the same turn: the
+box it is clipped from is the yawed footprint's (`ObstacleCourse_YawedPolyBox`, applied
+inside `ObstacleCourse_HeightfieldWalkSpan`), since the scan's box ignores `obj.rot.y`
+and nearly every terrain mesh is turned, so the unrotated box could leave a hill's corner
+out of the walk. The first hit's course distance replaces the
 near-face gap; no hit drops the box. Two rules differ from the solid case on purpose:
 the walk starts *at the ship* when the ship is already inside the box (a bump's box is
 up to 2600 units deep and the slope may still rise ahead — being past the near face
@@ -233,7 +238,9 @@ Each of these is a deliberate v1 decision with a known attach point, not an over
 
 - **Poly meshes are boxes, and rotated meshes use the unrotated box.** Covered since
   2026-09-11 (see "What is included"); what remains deliberate is the shape: one
-  axis-aligned bounding box per mesh, `obj.rot` ignored like every other box. The
+  axis-aligned bounding box per mesh, `obj.rot` ignored like every other box. Heightfield
+  meshes are the exception: their walk is planned on the yawed footprint and probes the
+  rotated mesh (see "The collision-course test"). The
   earlier version of this entry listed Corneria's highways and Aquas's coral among the
   invisible objects; that was wrong — highways 1, 2 and 5–9 have real hitboxes and were
   always covered, highways 3 and 4 collide with nothing at all, and both coral reefs
@@ -396,7 +403,9 @@ None open at the moment.
   effective knobs, the unit `forward` heading (all-range only), and the winning record
   (array/slot/objId/record with `recordKind` naming the record sentinels — `hitbox`,
   `sphere` or `poly` — plus `heightfield` for a walked poly box, the course `gap` plus
-  the raw `gapZ`, per-axis clearance/delta/half-extents, the pushed `intervalSec`).
+  the raw `gapZ`, per-axis clearance/delta/half-extents, the pushed `intervalSec`). For a
+  heightfield winner the box fields describe the yawed footprint box the walk was
+  planned on, not the scan's.
   Join `target.slot` against `objects scenery` to cross-check positions.
 - The F1 volume-slider Preview plays the buzz as a seamless drone (previews force
   interval 0 — pre-existing behavior shared with the aim cue): it checks timbre and

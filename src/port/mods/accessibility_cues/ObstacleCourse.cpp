@@ -157,9 +157,12 @@ bool ObstacleCourse_AheadClaimsSolid(const ObstacleBox& box, const ObstacleCours
 
 bool ObstacleCourse_HeightfieldWalkSpan(const ObstacleBox& box, const ObstacleCourseFrame& frame, bool allRange,
                                         f32 margin, f32 warnDist, f32* tStart, f32* tEnd) {
+    // Planned on the yawed footprint, so a turned hill's corners are inside the stretch
+    // walked; the probes rotate into the mesh themselves either way.
+    const ObstacleBox yawed = ObstacleCourse_YawedPolyBox(box, frame);
     f32 tNear;
     f32 tFar;
-    if (!ObstacleCourse_AheadSpan(box, frame, allRange, margin, &tNear, &tFar)) {
+    if (!ObstacleCourse_AheadSpan(yawed, frame, allRange, margin, &tNear, &tFar)) {
         return false;
     }
     if (!(tFar > 0.0f) || !(tNear < warnDist)) {

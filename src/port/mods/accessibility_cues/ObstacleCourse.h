@@ -62,8 +62,10 @@ bool ObstacleCourse_AheadClaimsSolid(const ObstacleBox& box, const ObstacleCours
                                      f32 margin, f32 warnDist, f32* gap);
 
 // The stretch of the course the ahead cue's heightfield walk covers over a terrain box
-// (box.polyHeightfield): the course span through the margin-widened box, clipped to the
-// engine's range gate, started AT THE SHIP when the ship is already inside (a bump's box
+// (box.polyHeightfield): the course span through the margin-widened box — the yawed
+// footprint box (ObstacleCourse_YawedPolyBox), so a turned hill's corners are walked;
+// callers pass the scan's box and the yaw is applied here — clipped to the engine's
+// range gate, started AT THE SHIP when the ship is already inside (a bump's box
 // is up to 2600 units deep and the slope may still rise ahead — unlike a solid box, being
 // past the near face does not hand the encounter to the engine) and stopped at the warn
 // band's edge. False when the ahead cue does not walk the box at all: the course misses
@@ -93,7 +95,8 @@ bool ObstacleCourse_AheadHitsTerrain(const ObstacleBox& box, const ObstacleCours
 // yawed (every Corneria bump family, Fortuna's mountains, Zoness's islands, Aquas's reefs
 // and bumps), so the unrotated box can leave out a corner of the real footprint. Only the
 // XZ extents grow; Y, the mesh identity and obj.pos/rot.y are kept, and the
-// player-relative fields (dx, dz, clearX, gapZ) are recomputed. Used by the directional
-// cues' terrain walks to decide where to probe — the probes themselves are exact either
-// way.
+// player-relative fields (dx, dz, clearX, gapZ) are recomputed. Used by every terrain
+// walk, the ahead cue's (ObstacleCourse_HeightfieldWalkSpan) and the directional cues',
+// to decide where to probe — the probes themselves are exact either way. Takes the
+// scan's box: the yaw is not idempotent, so a yawed box must not be passed back in.
 ObstacleBox ObstacleCourse_YawedPolyBox(const ObstacleBox& box, const ObstacleCourseFrame& frame);

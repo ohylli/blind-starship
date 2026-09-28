@@ -739,7 +739,7 @@ static void ObstacleDirectionCue_TerrainBeside(const ObstacleBox& box, const Obs
 // The side half of question 3 for a terrain box: the sideways walk, both sides, each
 // answered independently (a valley inside one mesh sounds as a corridor). `tbox` is the
 // yawed footprint box (ObstacleCourse_YawedPolyBox), `box` the scan's, which the ahead
-// cue's verdict is asked with. Silent for the whole box while the ahead cue is buzzing
+// cue's verdict is asked with (it applies the yaw itself). Silent for the whole box while the ahead cue is buzzing
 // for it (ObstacleCourse_AheadHitsTerrain): a hill whose slope the course runs into is
 // the buzz's, and "that slope is more to your left" would give the chord a second
 // meaning. Skipped, like every terrain walk, for the ground vehicles.
@@ -883,7 +883,8 @@ static void ObstacleDirectionCue_ClassifyBox(const ObstacleBox& box, const Obsta
     // A terrain mesh is reasoned about on its YAWED footprint box (the scan's box ignores
     // obj.rot.y, and most terrain meshes are turned), so a turned hill's corners are not
     // left out of the window or the walks' spans; the walks' probes are exact either way.
-    // The ahead cue's verdict is still asked with the scan's box, as the ahead cue asks it.
+    // The ahead cue's verdict takes the scan's box and yaws it itself
+    // (ObstacleCourse_HeightfieldWalkSpan), so `box` is what it is asked with.
     const ObstacleBox tbox = box.polyHeightfield ? ObstacleCourse_YawedPolyBox(box, frame) : box;
     // Question 1: the lookahead window along the course. The box's extent along it is
     // [nearT, farT] (its center's course distance, plus or minus the projection of its
