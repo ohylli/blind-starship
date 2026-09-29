@@ -53,6 +53,8 @@ Exit codes are trustworthy for scripting: 0 success (a warp that answered but di
 
 - `set` infers the CVar type from the value text: anything not starting with a digit — **including negative numbers like -1** — becomes a *string* CVar.
 - `get` on a nonexistent CVar reports status ok with "Could not find variable" text; test the text, not the status.
+- The `frame` field in replies is the game's tick counter (`gGameFrameCount`), which keeps advancing while debug-paused (e.g. 1 right after a paused warp, 153 a few seconds later with nothing stepped). It timestamps the reply; it does not mean the simulation ran. To count simulated frames, use `framesRun` from `step`.
+- N64 mode (`gLowResMode`) is normally unset, so `get gLowResMode` reports "Could not find variable" both before and after a `screenshot`. That is the expected, restored state, not a wrong CVar name.
 - There is no quit command. Stop the game with `Stop-Process -Name Starship`.
 - **CVar changes made with `set` can persist.** Stopping the process skips the exit-time save, but other code calls `CVarSave()` mid-run (controller setup, the resolution editor, ...), and that writes the whole CVar table, test values included, to `starship.cfg.json`. Changing CVars for a test is fine, but `get` each one first, note its current value, and `set` it back to that value before stopping the game. If the game is already stopped, restore the original values in the config file by hand. Either way, tell the user which CVars were changed and that they were restored.
 
