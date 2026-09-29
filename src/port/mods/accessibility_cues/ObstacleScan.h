@@ -66,7 +66,10 @@
 // Deliberate non-features, so a future session doesn't "fix" them by accident: obj.rot
 // is ignored (the box is axis-aligned in world space even for a yawed wall or a
 // rotated mesh), and HITBOX_ROTATED's rotation floats are skipped with its box used
-// as-is — both absorbed by the caller's safety margin; shadow and whoosh records are
+// as-is — both absorbed by the caller's safety margin. The one exception is opt-in: a
+// consumer planning a terrain walk asks for the heightfield's yawed footprint
+// (ObstacleScan_YawedFootprint), because a walk that never visits a turned hill's
+// corner cannot be saved by any margin. Shadow and whoosh records are
 // dropped entirely (Object_ReadSolidHitboxes). gSprites[] is not scanned in either mode
 // (accepted miss — docs/accessibility-obstacle-cue.md): sprites do collide (Fortuna's
 // poles, Corneria's trees — a harmless stagger, fox_play.c's sprite loop), but warning
@@ -103,8 +106,9 @@ struct ObstacleBox {
                   // kObstacleSphereRecord / kObstaclePolyRecord for a box synthesized from
                   // a sphere collider / a poly mesh's bounds
     Vec3f center; // obj.pos + the record's offsets; with `half`, the full box in world
-                  // space. Consumed here to derive dx/dy/dz; kept public for debug joins
-                  // — no course test reads it today.
+                  // space. Consumed to derive dx/dy/dz (ObstacleScan_DeriveRelative) and
+                  // by the footprint yaw (ObstacleScan_YawedFootprint), which turns it
+                  // about obj.pos.
     Vec3f half;   // record half-extents, non-negative
     f32 dx, dy;   // center minus player (pos.x / pos.y); their signs pick the directional cues' side
     f32 dz;       // center minus player trueZpos — with dx/dy the full 3D center delta
@@ -131,7 +135,38 @@ struct ObstacleBox {
     s32 polyColId;
     bool polyHeightfield;
     f32 polyRangeXZ;
+    // True once the XZ half of the box is the yawed footprint (ObstacleScan_YawedFootprint)
+    // rather than the scan's unrotated one; the scan always yields false.
+    bool footprintYawed;
 };
+
+// Derives the player-relative fields (dx, dy, dz, clearX, clearY, gapZ) from the box's
+// center and half-extents. `origin` is the ship's real world position: pos.x, pos.y and
+// trueZpos (pos.z is the rails path scroll — sf64player.h). The one derivation, shared by
+// the scan and the footprint yaw, so a box they produce can never disagree on it.
+inline void ObstacleScan_DeriveRelative(ObstacleBox& box, const Vec3f& origin) {
+    box.dx = box.center.x - origin.x;
+    box.dy = box.center.y - origin.y;
+    box.dz = box.center.z - origin.z;
+    box.clearX = fabsf(box.dx) - box.half.x;
+    box.clearY = fabsf(box.dy) - box.half.y;
+    box.gapZ = origin.z - (box.center.z + box.half.z);
+}
+
+// A poly mesh's box with the object's yaw applied: the world-axis-aligned box around the
+// mesh's footprint turned by obj.rot.y about obj.pos, the rotation the engine undoes
+// before testing (Player_CheckPolyCollision; the probes in ObjectQuery.h apply the same
+// one). The scan's box ignores the yaw (see the header comment), and most terrain meshes
+// are yawed (every Corneria bump family, Fortuna's mountains, Zoness's islands, Aquas's
+// reefs and bumps), so the unrotated box can leave out a corner of the real footprint.
+// The XZ extents become the turned footprint's bounding box — one can shrink as well as
+// grow (at 90 degrees they swap) — while Y, the mesh identity and obj.pos/rot.y are kept
+// and the player-relative fields are re-derived against `origin`
+// (ObstacleScan_DeriveRelative). Used to plan every terrain walk, the ahead cue's and the
+// directional cues', so they decide where to probe on the real footprint — the probes
+// themselves are exact either way. Idempotent (footprintYawed): a box already yawed is
+// returned as is.
+ObstacleBox ObstacleScan_YawedFootprint(const ObstacleBox& box, const Vec3f& origin);
 
 // `record` values of a box synthesized from a sphere collider / a poly mesh's bounds
 // (see the header comment). Negative so they can never collide with a real record index
@@ -234,13 +269,7 @@ inline void EmitBoxes(ObjectEventType type, T* entry, ObstacleArray array, s32 s
         box.half.x = records[r].xHalf;
         box.half.y = records[r].yHalf;
         box.half.z = records[r].zHalf;
-        box.dx = box.center.x - player->pos.x;
-        box.dy = box.center.y - player->pos.y;
-        // trueZpos is the player's real world Z; pos.z is the path scroll (sf64player.h).
-        box.dz = box.center.z - player->trueZpos;
-        box.clearX = fabsf(box.dx) - box.half.x;
-        box.clearY = fabsf(box.dy) - box.half.y;
-        box.gapZ = player->trueZpos - (box.center.z + box.half.z);
+        ObstacleScan_DeriveRelative(box, { player->pos.x, player->pos.y, player->trueZpos });
         box.objPos = entry->obj.pos;
         box.rotY = entry->obj.rot.y;
         if (records[r].record == kObstaclePolyRecord) {
@@ -252,6 +281,7 @@ inline void EmitBoxes(ObjectEventType type, T* entry, ObstacleArray array, s32 s
             box.polyHeightfield = false;
             box.polyRangeXZ = 0.0f;
         }
+        box.footprintYawed = false;
         if (stats != nullptr) {
             stats->boxes++;
         }

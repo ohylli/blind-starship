@@ -155,22 +155,25 @@ bool ObstacleCourse_AheadClaimsSolid(const ObstacleBox& box, const ObstacleCours
     return true;
 }
 
-bool ObstacleCourse_HeightfieldWalkSpan(const ObstacleBox& box, const ObstacleCourseFrame& frame, bool allRange,
-                                        f32 margin, f32 warnDist, f32* tStart, f32* tEnd) {
+ObstacleAheadWalk ObstacleCourse_PlanAheadWalk(const ObstacleBox& box, const ObstacleCourseFrame& frame, bool allRange,
+                                               f32 margin, f32 warnDist) {
+    ObstacleAheadWalk plan;
+    plan.warnDist = warnDist;
     // Planned on the yawed footprint, so a turned hill's corners are inside the stretch
     // walked; the probes rotate into the mesh themselves either way.
-    const ObstacleBox yawed = ObstacleCourse_YawedPolyBox(box, frame);
+    const ObstacleBox yawed = ObstacleScan_YawedFootprint(box, frame.origin);
     f32 tNear;
     f32 tFar;
     if (!ObstacleCourse_AheadSpan(yawed, frame, allRange, margin, &tNear, &tFar)) {
-        return false;
+        return plan;
     }
     if (!(tFar > 0.0f) || !(tNear < warnDist)) {
-        return false;
+        return plan;
     }
-    *tStart = (tNear > 0.0f) ? tNear : 0.0f;
-    *tEnd = (tFar < warnDist) ? tFar : warnDist;
-    return true;
+    plan.walks = true;
+    plan.start = (tNear > 0.0f) ? tNear : 0.0f;
+    plan.end = (tFar < warnDist) ? tFar : warnDist;
+    return plan;
 }
 
 // Heightfield refinement of the course test, for a poly box of the CollisionHeader2
@@ -180,7 +183,7 @@ bool ObstacleCourse_HeightfieldWalkSpan(const ObstacleBox& box, const ObstacleCo
 // fox_col2.c), so the box — which spans the whole hill — over-warns whenever the ship
 // is inside the footprint below the peak on a course that clears the slope. This
 // walks the course through the box on the family's grid from `tStart` to `tEnd` (the
-// stretch ObstacleCourse_HeightfieldWalkSpan yields: course distances from the ship,
+// stretch ObstacleCourse_PlanAheadWalk yields: course distances from the ship,
 // already clipped to the engine's range gate) and asks the engine's own surface test at
 // each step (Object_PolyHeightfieldHit over the same mesh the engine would consult), so
 // "would I hit it" is answered by the code that decides it. The mesh is resolved once
@@ -193,10 +196,12 @@ bool ObstacleCourse_HeightfieldWalkSpan(const ObstacleBox& box, const ObstacleCo
 // either side along frame.right. That is the slack the box test already grants (the
 // player inside the footprint expanded by margin) restated for a surface hit from above
 // — a slope that rises to within the margin of the course warns, one the course clears
-// by more stays silent. The below cue's terrain walk (ObstacleDirectionCue_TerrainBelow)
-// depends on exactly this geometry — it leaves a sample to the ahead cue when the surface
-// is within the margin under the course, and probes the same three points off the same
-// frame — so a change to the probe offsets here is a two-cue change.
+// by more stays silent. Both directional terrain walks depend on exactly this geometry:
+// the below walk (ObstacleDirectionCue_TerrainBelow) leaves a sample to the ahead cue when
+// the surface is within the margin under the course, and probes the same three points off
+// the same frame; the beside walk (ObstacleDirectionCue_TerrainBeside) calls a point
+// blocked at the same "surface within the margin of the course" threshold. A change to
+// the probe offsets or the threshold here is a three-cue change.
 //
 // Returns the course distance of the first hit — 0 when the ship is already at or
 // below the surface — or a negative value when every probe clears. `probes` counts
@@ -244,39 +249,15 @@ static f32 ObstacleCourse_HeightfieldGap(const ObstacleBox& box, const ObstacleC
     return -1.0f;
 }
 
-bool ObstacleCourse_AheadHitsTerrain(const ObstacleBox& box, const ObstacleCourseFrame& frame, bool allRange,
-                                     f32 margin, f32 warnDist, bool* walked, f32* gap, int32_t* probes) {
-    *walked = false;
-    f32 tStart;
-    f32 tEnd;
-    if (!ObstacleCourse_HeightfieldWalkSpan(box, frame, allRange, margin, warnDist, &tStart, &tEnd)) {
+bool ObstacleCourse_AheadHitsTerrain(const ObstacleBox& box, const ObstacleCourseFrame& frame,
+                                     const ObstacleAheadWalk& plan, f32 margin, f32* gap, int32_t* probes) {
+    if (!plan.walks) {
         return false;
     }
-    *walked = true;
-    const f32 hit = ObstacleCourse_HeightfieldGap(box, frame, tStart, tEnd, margin, probes);
-    if (!(hit >= 0.0f) || (hit >= warnDist)) {
+    const f32 hit = ObstacleCourse_HeightfieldGap(box, frame, plan.start, plan.end, margin, probes);
+    if (!(hit >= 0.0f) || (hit >= plan.warnDist)) {
         return false;
     }
     *gap = hit;
     return true;
-}
-
-ObstacleBox ObstacleCourse_YawedPolyBox(const ObstacleBox& box, const ObstacleCourseFrame& frame) {
-    // The inverse of the probes' world -> mesh rotation (Object_PolyHeightfieldHit: local =
-    // (cs * rx + sn * rz, -sn * rx + cs * rz) with sn/cs of -rot.y), applied to the box's
-    // center offset; the extents become those of the turned rectangle's bounding box.
-    const f32 sn = sinf(-box.rotY * M_DTOR);
-    const f32 cs = cosf(-box.rotY * M_DTOR);
-    const f32 lx = box.center.x - box.objPos.x;
-    const f32 lz = box.center.z - box.objPos.z;
-    ObstacleBox out = box;
-    out.center.x = box.objPos.x + cs * lx - sn * lz;
-    out.center.z = box.objPos.z + sn * lx + cs * lz;
-    out.half.x = fabsf(cs) * box.half.x + fabsf(sn) * box.half.z;
-    out.half.z = fabsf(sn) * box.half.x + fabsf(cs) * box.half.z;
-    out.dx = out.center.x - frame.origin.x;
-    out.dz = out.center.z - frame.origin.z;
-    out.clearX = fabsf(out.dx) - out.half.x;
-    out.gapZ = frame.origin.z - (out.center.z + out.half.z);
-    return out;
 }

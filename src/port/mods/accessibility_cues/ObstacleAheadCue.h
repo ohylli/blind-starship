@@ -72,7 +72,7 @@ struct ObstacleAheadCueTargetDebug {
                                   // heightfield box the first sampled surface hit
     float gapZ = 0;               // raw distance to the near z face, world units; this
                                   // and the fields below describe the yawed footprint box
-                                  // for a heightfield (ObstacleCourse_YawedPolyBox)
+                                  // for a heightfield (ObstacleScan_YawedFootprint)
     float clearX = 0, clearY = 0; // footprint clearance (negative = inside)
     float dx = 0, dy = 0, dz = 0; // signed center offsets
     float halfX = 0, halfY = 0, halfZ = 0;
@@ -106,7 +106,7 @@ const ObstacleAheadCueDebug& ObstacleAheadCue_DebugState();
 
 // The warn distance CVar, sanitized and capped at kObstacleCueWarnDistMax. The directional
 // cues read it through here too: the ahead cue's verdict on a box
-// (ObstacleCourse_AheadClaimsSolid / ObstacleCourse_HeightfieldWalkSpan) takes it as an
+// (ObstacleCourse_AheadClaimsSolid / ObstacleCourse_PlanAheadWalk) takes it as an
 // argument, and both halves of the family must feed it the same value.
 float ObstacleAheadCue_WarnDist();
 

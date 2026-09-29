@@ -105,8 +105,8 @@ the surface itself (`ObstacleDirectionCue_TerrainBelow`):
   the family's shared grid (`kObstacleWalkStep` / `ObstacleCommon_WalkSteps` in
   `ObstacleCommon.h`), the same one the ahead cue's walk samples on, which is what makes
   the per-sample claim below exactly the ahead cue's hit. The grid is anchored where the
-  ahead cue's own walk over the box starts (`ObstacleCourse_HeightfieldWalkSpan`, the
-  one function both walks take that answer from). On rails that is the same starting point
+  ahead cue's own walk over the box starts (`ObstacleCourse_PlanAheadWalk`, the
+  one plan both walks take that answer from). On rails that is the same starting point
   except when the engine's range gate pushes the ahead cue's start further in, and the
   grid then shifts to match it (an A/B trace on 2026-09-23 showed this as the only rails
   difference: one extra sample and a few units of clearance, on a dive).
@@ -119,7 +119,7 @@ the surface itself (`ObstacleDirectionCue_TerrainBelow`):
   slope rising into my course", so the box rule's wholesale claim does not fit. An
   *upcoming* sample whose surface is within the margin of the course is the ahead cue's —
   the same threshold its heightfield walk hits at — and is skipped, but only inside the
-  stretch that walk covers (its span from `ObstacleCourse_HeightfieldWalkSpan`, short of
+  stretch that walk covers (its plan from `ObstacleCourse_PlanAheadWalk`, short of
   the warn distance). Past it — the warn distance set below the lookahead — the sample
   competes as an ordinary below answer instead of going silent in both cues. The rest
   still compete. A rising slope therefore sounds as the buzz plus a near-full below chord:
@@ -175,9 +175,9 @@ a valley the box surrounds, the box rule had no answer at all. The sideways walk
   box ignores the turn. The probes were always exact, but the spans that decide where to
   probe came from the unrotated box and could leave a turned hill's corner out. Both
   terrain walks and the lookahead window now use the yawed footprint's box
-  (`ObstacleCourse_YawedPolyBox`). On the `obstacle-scout` straight run the below chord's
+  (`ObstacleScan_YawedFootprint`). On the `obstacle-scout` straight run the below chord's
   numbers did not change. The ahead cue's walk followed the same day: its span
-  (`ObstacleCourse_HeightfieldWalkSpan`) yaws the scan's box itself, so the below walk's
+  (`ObstacleCourse_PlanAheadWalk`) is planned on the yawed box too, so the below walk's
   grid anchor and the beside walk's "is the buzz sounding" question move with it. On the
   three recorded runs (the `obstacle-scout` straight and low-left passes and the Fortuna
   pass) a side-by-side log of both plans gave identical spans and hits on all 2161 walks:
@@ -220,8 +220,9 @@ onto the course. The chords and their mappings are unchanged.
   footprint test on rails, the ray test in all-range, then the range gate and the warn
   band), says it is warning about it. Sharing the whole verdict, not just the course
   test, is what keeps "the two never both claim a box or both drop it" true in a turned
-  heading. For a terrain box the same module's `ObstacleCourse_HeightfieldWalkSpan` says
-  whether the ahead cue walks it and from where.
+  heading. For a terrain box the same module's `ObstacleCourse_PlanAheadWalk` says
+  whether the ahead cue walks it and from where, and `ObstacleCourse_AheadHitsTerrain`
+  whether that walk hits.
 - **Terrain below** walks the tilted course: samples along the aim ray over the box's
   footprint (widened by the margin), the clearance being the course's height above the
   engine's surface there, measured straight down. Rails keeps its own span (the box's Z

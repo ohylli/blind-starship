@@ -61,42 +61,40 @@ bool ObstacleCourse_ClipToBox(const f32* d, const f32* h, const f32* dir, int n,
 bool ObstacleCourse_AheadClaimsSolid(const ObstacleBox& box, const ObstacleCourseFrame& frame, bool allRange,
                                      f32 margin, f32 warnDist, f32* gap);
 
-// The stretch of the course the ahead cue's heightfield walk covers over a terrain box
-// (box.polyHeightfield): the course span through the margin-widened box — the yawed
-// footprint box (ObstacleCourse_YawedPolyBox), so a turned hill's corners are walked;
-// callers pass the scan's box and the yaw is applied here — clipped to the engine's
-// range gate, started AT THE SHIP when the ship is already inside (a bump's box
-// is up to 2600 units deep and the slope may still rise ahead — unlike a solid box, being
-// past the near face does not hand the encounter to the engine) and stopped at the warn
-// band's edge. False when the ahead cue does not walk the box at all: the course misses
-// it, its far face is behind the ship, or its near face is beyond the band. The below
-// cue anchors its own walk's sampling grid at `*tStart` so the two walks read the same
-// points wherever they overlap (ObstacleDirectionCue_TerrainBelow), which is what makes
-// its per-sample claim the ahead cue's own hit.
-bool ObstacleCourse_HeightfieldWalkSpan(const ObstacleBox& box, const ObstacleCourseFrame& frame, bool allRange,
-                                        f32 margin, f32 warnDist, f32* tStart, f32* tEnd);
+// The ahead cue's walk over a terrain box (box.polyHeightfield), planned: the stretch
+// [start, end] of the course it samples when `walks`, and the warn distance at which it
+// drops a hit. One plan per box per tick, shared by the ahead cue's verdict
+// (ObstacleCourse_AheadHitsTerrain), the below walk's per-sample claim and grid anchor,
+// and the beside walk's grid (ObstacleDirectionCue_TerrainBelow / _TerrainBeside).
+struct ObstacleAheadWalk {
+    bool walks = false;
+    f32 start = 0.0f;
+    f32 end = 0.0f;
+    f32 warnDist = 0.0f;
+};
+
+// Plans the ahead cue's walk over a terrain box: the course span through the
+// margin-widened YAWED footprint box (ObstacleScan_YawedFootprint — applied here, and a
+// no-op for a box the caller already yawed), so a turned hill's corners are walked;
+// clipped to the engine's range gate, started AT THE SHIP when the ship is already inside
+// (a bump's box is up to 2600 units deep and the slope may still rise ahead — unlike a
+// solid box, being past the near face does not hand the encounter to the engine) and
+// stopped at the warn band's edge. `walks` false when the ahead cue does not walk the box
+// at all: the course misses it, its far face is behind the ship, or its near face is
+// beyond the band. The below cue anchors its own walk's sampling grid at `start` so the
+// two walks read the same points wherever they overlap, which is what makes its
+// per-sample claim the ahead cue's own hit.
+ObstacleAheadWalk ObstacleCourse_PlanAheadWalk(const ObstacleBox& box, const ObstacleCourseFrame& frame, bool allRange,
+                                               f32 margin, f32 warnDist);
 
 // The ahead cue's verdict on a TERRAIN box (box.polyHeightfield): is it warning about it
-// this tick? The course is walked through the stretch ObstacleCourse_HeightfieldWalkSpan
-// yields and the engine's own surface test decides whether the course meets the slope
-// (probing the bottom edge of the margin square around the course; see the .cpp). True
-// with `*gap` the course distance of the first hit, inside the warn band. `*walked` says
-// whether there was a stretch to walk at all (the ahead cue's `heightfieldTested` count);
-// `*probes` accumulates the engine calls spent. The caller applies the ground-vehicle
-// gate (ObstacleCommon_TerrainIsFloor) first. Shared so the beside cue stays silent for
-// exactly the hills the buzz is sounding for (ObstacleDirectionCue_TerrainBeside).
-bool ObstacleCourse_AheadHitsTerrain(const ObstacleBox& box, const ObstacleCourseFrame& frame, bool allRange,
-                                     f32 margin, f32 warnDist, bool* walked, f32* gap, int32_t* probes);
-
-// A poly mesh's box with the object's yaw applied: the world-axis-aligned box around the
-// mesh's footprint turned by obj.rot.y about obj.pos, the rotation the engine undoes
-// before testing (Player_CheckPolyCollision; the probes in ObjectQuery.h apply the same
-// one). The scan's box (ObstacleScan.h) ignores the yaw, and most terrain meshes are
-// yawed (every Corneria bump family, Fortuna's mountains, Zoness's islands, Aquas's reefs
-// and bumps), so the unrotated box can leave out a corner of the real footprint. Only the
-// XZ extents grow; Y, the mesh identity and obj.pos/rot.y are kept, and the
-// player-relative fields (dx, dz, clearX, gapZ) are recomputed. Used by every terrain
-// walk, the ahead cue's (ObstacleCourse_HeightfieldWalkSpan) and the directional cues',
-// to decide where to probe — the probes themselves are exact either way. Takes the
-// scan's box: the yaw is not idempotent, so a yawed box must not be passed back in.
-ObstacleBox ObstacleCourse_YawedPolyBox(const ObstacleBox& box, const ObstacleCourseFrame& frame);
+// this tick? The course is walked through the planned stretch (ObstacleCourse_PlanAheadWalk
+// over the same box, frame and margin) and the engine's own surface test decides whether
+// the course meets the slope (probing the bottom edge of the margin square around the
+// course; see the .cpp). True with `*gap` the course distance of the first hit, inside the
+// warn band; false without walking when the plan does not walk. `*probes` accumulates the
+// engine calls spent. The caller applies the ground-vehicle gate
+// (ObstacleCommon_TerrainIsFloor) first. Shared so the beside cue stays silent for exactly
+// the hills the buzz is sounding for (ObstacleDirectionCue_TerrainSide).
+bool ObstacleCourse_AheadHitsTerrain(const ObstacleBox& box, const ObstacleCourseFrame& frame,
+                                     const ObstacleAheadWalk& plan, f32 margin, f32* gap, int32_t* probes);

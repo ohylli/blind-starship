@@ -83,7 +83,7 @@ struct ObstacleDirectionTargetDebug {
     int32_t slot = -1, objId = -1, record = -1;
     bool heightfield = false;     // a heightfield mesh box; its answer always comes from a
                                   // terrain walk, and dx..halfZ describe its YAWED footprint
-                                  // box (ObstacleCourse_YawedPolyBox), not the scan's
+                                  // box (ObstacleScan_YawedFootprint), not the scan's
     bool fromTerrainWalk = false; // `clear` is from a terrain walk over the engine's surface:
                                   // below, the course's height above it
                                   // (ObstacleDirectionCue_TerrainBelow); beside, the

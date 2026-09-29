@@ -96,7 +96,7 @@ solid mesh the ship enters outside the circle keeps warning until the ship reach
 stretch where the engine's own test takes over.
 
 The whole verdict on a box (course test, range gate, warn band) is
-`ObstacleCourse_AheadClaimsSolid` / `ObstacleCourse_HeightfieldWalkSpan` in
+`ObstacleCourse_AheadClaimsSolid` / `ObstacleCourse_PlanAheadWalk` in
 `src/port/mods/accessibility_cues/ObstacleCourse.h`, which the directional cues call
 too, so the two halves of the family never both claim a box or both drop it.
 
@@ -119,8 +119,8 @@ hit from above: a slope that rises to within the margin of the course warns, one
 course clears by more stays silent. Each probe is rotated into the mesh's frame exactly
 as `Player_CheckPolyCollision` does (`obj.rot.y`, multiplied out so the walk never
 touches the engine's scratch matrix). The span walked is planned on the same turn: the
-box it is clipped from is the yawed footprint's (`ObstacleCourse_YawedPolyBox`, applied
-inside `ObstacleCourse_HeightfieldWalkSpan`), since the scan's box ignores `obj.rot.y`
+box it is clipped from is the yawed footprint's (`ObstacleScan_YawedFootprint`, applied
+by `ObstacleCourse_PlanAheadWalk`), since the scan's box ignores `obj.rot.y`
 and nearly every terrain mesh is turned, so the unrotated box could leave a hill's corner
 out of the walk. The first hit's course distance replaces the
 near-face gap; no hit drops the box. Two rules differ from the solid case on purpose:

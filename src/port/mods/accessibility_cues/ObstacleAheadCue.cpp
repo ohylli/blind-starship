@@ -17,12 +17,12 @@
 // non-lockable object on their course. What "on course" means is per mode: on rails the
 // ship always travels down -z, so the test is the player's (x, y) inside the hitbox
 // footprint; in all-range the course is a ray cast along the aim heading through the
-// same boxes. That verdict lives in ObstacleCourse.h (ObstacleCourse_AheadClaimsSolid,
-// ObstacleCourse_HeightfieldWalkSpan), shared with the directional cues so they skip
-// exactly the boxes this cue claims. A heightfield mesh's box (the terrain bumps and
-// their kin, ObstacleScan.h) is refined further: the course is walked through the box
-// and the engine's own surface test decides whether it actually meets the slope
-// (ObstacleCourse_AheadHitsTerrain). Rendered CUE3D_MODE_DIRECT (dead center, no
+// same boxes. That verdict lives in ObstacleCourse.h, shared with the directional cues so
+// they skip exactly the boxes this cue claims: ObstacleCourse_AheadClaimsSolid for a solid
+// box, and for a heightfield mesh's box (the terrain bumps and their kin, ObstacleScan.h)
+// a refinement — the course is walked through the box's yawed footprint
+// (ObstacleCourse_PlanAheadWalk) and the engine's own surface test decides whether it
+// actually meets the slope (ObstacleCourse_AheadHitsTerrain). Rendered CUE3D_MODE_DIRECT (dead center, no
 // spatialization, no distance attenuation): a warning is not a navigation target — it
 // must not occupy the spatial channel the ring/enemy cues use, and "how soon" is the
 // only actionable dimension for something you steer away from. The pulse interval is
@@ -79,9 +79,9 @@ static f32 ObstacleAheadCue_Interval(f32 gap, f32 warnDist) {
 
 // This cue's heightfield walk (ObstacleCourse_AheadHitsTerrain) samples on the family's
 // shared grid (ObstacleCommon.h: kObstacleWalkStep / kObstacleWalkMaxSteps, the grid the
-// below cue's terrain walk shares). The walk never spans more than the warn distance, and
-// warnDist is clamped to
-// kObstacleCueWarnDistMax, so no real span reaches the cap — the assert keeps it so, since
+// directional cues' terrain walks share). The walk never spans more than the warn
+// distance, and warnDist is clamped to kObstacleCueWarnDistMax, so no real span reaches
+// the cap — the assert keeps it so, since
 // a walk cut short would leave a slope past the cap unwarned.
 static_assert((f32) kObstacleWalkMaxSteps * kObstacleWalkStep >= kObstacleCueWarnDistMax,
               "the heightfield walk must reach the far end of the widest warn band");
@@ -145,25 +145,26 @@ static void ObstacleAheadCue_OnPostUpdate(IEvent* event) {
     ObstacleScanStats stats;
     ObstacleBox best{};
     f32 bestGap = INFINITY;
-    ObstacleScan_ForEachBox(player, &stats, [&](const ObstacleBox& box) {
+    ObstacleScan_ForEachBox(player, &stats, [&](const ObstacleBox& scanned) {
+        ObstacleBox box = scanned;
         f32 gap;
-        if (box.polyHeightfield) {
+        if (scanned.polyHeightfield) {
             // A heightfield box is a candidate, not a verdict: the course is walked
             // through it and the engine's surface test decides
-            // (ObstacleCourse_AheadHitsTerrain, shared with the directional cues).
+            // (ObstacleCourse_AheadHitsTerrain, shared with the directional cues). It is
+            // reasoned about — and reported — on its yawed footprint, as the directional
+            // cues' walks are.
             if (terrainIsFloor) {
                 return;
             }
-            bool walked;
-            const bool hit = ObstacleCourse_AheadHitsTerrain(box, frame, allRange, margin, warnDist, &walked, &gap,
-                                                             &dbg.heightfieldProbes);
-            if (walked) {
-                dbg.heightfieldTested++;
+            box = ObstacleScan_YawedFootprint(scanned, frame.origin);
+            const ObstacleAheadWalk plan = ObstacleCourse_PlanAheadWalk(box, frame, allRange, margin, warnDist);
+            if (!plan.walks) {
+                return;
             }
-            if (!hit) {
-                if (walked) {
-                    dbg.heightfieldCleared++;
-                }
+            dbg.heightfieldTested++;
+            if (!ObstacleCourse_AheadHitsTerrain(box, frame, plan, margin, &gap, &dbg.heightfieldProbes)) {
+                dbg.heightfieldCleared++;
                 return;
             }
         } else if (!ObstacleCourse_AheadClaimsSolid(box, frame, allRange, margin, warnDist, &gap)) {
@@ -196,11 +197,6 @@ static void ObstacleAheadCue_OnPostUpdate(IEvent* event) {
 
     dbg.active = true;
     dbg.intervalSec = target.intervalSec;
-    // A terrain winner is reported on the yawed footprint box its walk was planned on
-    // (ObstacleCourse_HeightfieldWalkSpan), as the directional cues report theirs.
-    if (best.polyHeightfield) {
-        best = ObstacleCourse_YawedPolyBox(best, frame);
-    }
     dbg.target.array = (int32_t) best.array;
     dbg.target.slot = best.slot;
     dbg.target.objId = best.objId;
