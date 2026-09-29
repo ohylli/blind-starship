@@ -50,6 +50,9 @@ class GameEngine {
 };
 
 Fast::Interpreter* GameEngine_GetInterpreter();
+// Frames actually drawn by the renderer since launch (dropped frames excluded; with frame
+// interpolation, several per game tick).
+uint64_t GameEngine_DrawnFrameCount();
 #define memallocn(type, n) (type*) GameEngine_Malloc(sizeof(type) * n)
 #define memalloc(type) memallocn(type, 1)
 

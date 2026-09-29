@@ -17,6 +17,7 @@ Usage:
     python tools/debug_client.py checkpoint-list
     python tools/debug_client.py input stick -60 0 30 # full-left bank for 30 play frames
     python tools/debug_client.py input hold a b       # hold buttons until `input clear`
+    python tools/debug_client.py screenshot shot.png  # save the current game frame
     python tools/debug_client.py --wait 30            # poll until the game answers
     python tools/debug_client.py --repl               # one command per stdin line
 
@@ -28,6 +29,11 @@ id; `warp --checkpoint <id>` expands the id into the stored level plus explicit
 plain committed-friendly JSON — a shared vocabulary of documented test spots ("test in
 meteo at big-asteroids"). --repl lines get the same warp expansion; the
 checkpoint-save/list/delete client commands are one-shot only.
+
+Screenshots: `screenshot <file.png>` asks the server for a freshly drawn game frame (always
+320x240: the server switches N64 mode on for a moment, since the minimized window has no
+readable picture otherwise) and writes it as a PNG here, printing the metadata. After a
+`warp --paused` the frame is black: levels start faded out, so `step` ~40 frames first.
 
 Exit codes: 0 ok, 1 command error — including a warp that answered but did not complete
 (server-side timeout) and a step that ended early, so scripts can trust exit 0 —
@@ -44,11 +50,14 @@ Quirks of the stock libultraship set/get commands (documented, not fixed):
 """
 
 import argparse
+import base64
 import json
 import os
 import socket
+import struct
 import sys
 import time
+import zlib
 
 DEFAULT_PORT = 7764
 DEFAULT_CHECKPOINT_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "checkpoints.json")
@@ -128,6 +137,46 @@ def run_command(conn, tokens, raw=False):
             print(note, file=sys.stderr)
             code = 1
     return code
+
+
+def write_png(path, width, height, rgb):
+    """Minimal stdlib PNG encoder: 8-bit RGB, no filtering."""
+    stride = width * 3
+    raw = b"".join(b"\x00" + rgb[y * stride:(y + 1) * stride] for y in range(height))
+
+    def chunk(kind, data):
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
+
+    png = (b"\x89PNG\r\n\x1a\n"
+           + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+           + chunk(b"IDAT", zlib.compress(raw, 9))
+           + chunk(b"IEND", b""))
+    tmp = path + ".tmp"
+    with open(tmp, "wb") as f:
+        f.write(png)
+    os.replace(tmp, path)
+
+
+def cmd_screenshot(conn, tokens, raw=False):
+    if len(tokens) != 2 or tokens[1].startswith("--"):
+        raise ValueError("usage: screenshot <file.png>")
+    path = tokens[1]
+    envelope = conn.request(["screenshot"])
+    if envelope.get("status") != "ok":
+        return print_response(envelope, raw=raw)
+    data = json.loads(envelope["output"])
+    if not data.get("captured"):
+        print("screenshot not captured: %s" % data.get("note", "no reason reported"), file=sys.stderr)
+        return 1
+    width, height = data["width"], data["height"]
+    rgb = base64.b64decode(data.pop("rgb"))
+    if len(rgb) != width * height * 3:
+        print("screenshot payload is %d bytes, expected %d" % (len(rgb), width * height * 3), file=sys.stderr)
+        return 1
+    write_png(path, width, height, rgb)
+    data["file"] = os.path.abspath(path)
+    print(json.dumps(data, indent=2))
+    return 0
 
 
 def load_checkpoints(path):
@@ -354,6 +403,10 @@ def main():
                 try:
                     if tokens[0] == "warp":
                         tokens = expand_warp_command(tokens, args.checkpoints_file)
+                    elif tokens[0] == "screenshot":
+                        conn.sock.settimeout(10.0)
+                        code = cmd_screenshot(conn, tokens, raw=args.raw)
+                        continue
                 except ValueError as e:
                     print(str(e), file=sys.stderr)
                     code = 1
@@ -365,6 +418,12 @@ def main():
             return code
         if command[0] in ("warp", "step"):
             conn.sock.settimeout(120.0)
+        if command[0] == "screenshot":
+            try:
+                return cmd_screenshot(conn, command, raw=args.raw)
+            except ValueError as e:
+                print(str(e), file=sys.stderr)
+                return 1
         if command[0] == "checkpoint-save":
             try:
                 return cmd_checkpoint_save(conn, command, args.checkpoints_file, raw=args.raw)

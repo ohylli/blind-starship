@@ -100,8 +100,8 @@ Rationale for this shape:
 - **Semi-automated tests** (later): warp + frame-step + injected input + state dump =
   scripted scenario checks for a codebase that otherwise has no test suite ("load
   Training, fly 300 frames, assert the ring streak announced").
-- **Agent as eyes** (later): a screenshot-to-PNG command would let the agent describe
-  actual on-screen state when audio and expectation disagree.
+- **Agent as eyes**: a screenshot-to-PNG command lets the agent describe actual on-screen
+  state when audio and expectation disagree (implemented as `screenshot`, below).
 
 ## Capability phases (scope outline, not a spec)
 
@@ -444,8 +444,51 @@ Decisions of record:
   needs (an injected `hold start` would wedge the pause menu shut). The countdown pauses
   with it and resumes once a live frame consumes the injection again.
 - **Scope**: single channel set for `gMainController` (player 1); VS/multi-pad injection
-  deliberately out. Screenshots (the other half of the old phase-3 outline) remain
-  unimplemented.
+  deliberately out. Screenshots, the other half of the old phase-3 outline, followed
+  (below).
+
+## Resolved by implementation, phase 3: screenshots (2026-09-29)
+
+`screenshot` (DebugScreenshot.cpp) answers with a freshly drawn game frame as JSON —
+`width`, `height`, `frame`, `paused`, and the pixels as base64 RGB, rows top first — and
+`debug_client.py screenshot <file.png>` writes it as a PNG with a stdlib encoder, so an
+agent can open the image and see the game (the "agent as eyes" scenario). Socket only:
+from the in-game ImGui console it errors, since the pixels would have nowhere to go.
+
+Decisions of record:
+
+- **In-engine readback, not OS window capture.** `launch.ps1` keeps the window
+  minimized, and Windows does not draw minimized windows, so capture from outside (Win32
+  `PrintWindow`, Windows Graphics Capture) would return nothing without moving the window
+  around. The readback uses libultraship's own `ReadFramebufferToCPU` through the
+  interpreter's public members, so there's no submodule change, and a capture composes
+  with `pause`/`step`/`warp`.
+- **N64 mode for the duration of a capture.** Measured on DirectX 11: minimized, the game
+  keeps drawing, but at ImGui's 32x32 minimum and straight into the zero-sized window —
+  there is no readable render target. `gLowResMode` 1 makes the renderer draw a native
+  320x240 frame offscreen whatever the window does. A capture therefore switches it on
+  when it is off, and puts it back exactly as it found it (cleared again if it did not
+  exist, so no config entry is left behind). Every picture is 320x240 at 4:3; a visible
+  window flickers to the low-res look for a couple of ticks.
+- **Wait for two drawn ticks when N64 mode had to be switched on.** The first draw at the
+  new size ran a display list built against the old aspect ratio, which misplaces the
+  edge-anchored HUD; the second is built and drawn at 320x240. Ticks count only when the
+  renderer actually drew (`GameEngine_DrawnFrameCount`), and the read happens right after
+  such a tick's draw, when the render target still holds its final, non-interpolated
+  frame. With N64 mode already on, one drawn tick suffices.
+- **The tick enforces, the poll observes** (step/warp's rule). `DebugScreenshot_FrameTick`
+  runs every tick from `GameEngine::StartFrame`, ahead of the transport, and captures and
+  restores the CVar even if the client vanished or the server stopped mid-capture; it
+  gives up after ~3 s without a drawn frame. `DebugScreenshot_Exit` restores the CVar if
+  the game quits mid-capture, before the exit-time config save.
+- **Colour depth**: the readback is RGBA5551 — the N64's own depth — expanded to 8 bits
+  per channel. Widths that aren't a multiple of 64 are refused: the DX11 readback copies
+  whole padded driver rows into a tightly packed buffer and would overrun it (320 is
+  safe). Verified on DirectX 11 only; OpenGL/Metal row order is untested.
+- **Paused frames are real frames.** While debug-paused the game still redraws the frozen
+  moment every tick, so a paused capture shows exactly the paused state. But a
+  `warp --paused` arrival is black: every level starts faded out and the fade runs on
+  play frames, so step ~40 frames before capturing a level start or checkpoint.
 
 ## Open questions for refinement
 

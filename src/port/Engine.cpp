@@ -44,6 +44,7 @@
 #include "port/mods/accessibility_screens/ImGuiMenu.h"
 #include "port/mods/debugserver/DebugServer.h"
 #include "port/mods/debugserver/DebugCommands.h"
+#include "port/mods/debugserver/DebugScreenshot.h"
 #include "port/accessibility/Tts.h"
 
 #include <Fast3D/interpreter.h>
@@ -320,6 +321,7 @@ void GameEngine::Create() {
 void GameEngine::Destroy() {
     // First: a pending debug command may touch state the other Exits tear down.
     DebugServer_Exit();
+    DebugScreenshot_Exit(); // before the exit-time config save, which follows Destroy
     Accessibility_Exit();
     Tts_Shutdown();
     PortEnhancements_Exit();
@@ -335,6 +337,7 @@ void GameEngine::Destroy() {
 
 void GameEngine::StartFrame() const {
     AccessibilityImGuiMenu_FrameTick();
+    DebugScreenshot_FrameTick(); // after this tick's draw, before the transport polls it
     DebugServer_FrameTick();
 
     using Ship::KbScancode;
@@ -467,6 +470,12 @@ void GameEngine::AudioExit() {
     audio.thread.join();
 }
 
+static uint64_t sDrawnFrames = 0;
+
+uint64_t GameEngine_DrawnFrameCount() {
+    return sDrawnFrames;
+}
+
 void GameEngine::RunCommands(Gfx* Commands, const std::vector<std::unordered_map<Mtx*, MtxF>>& mtx_replacements) {
     auto wnd = std::dynamic_pointer_cast<Fast::Fast3dWindow>(Ship::Context::GetInstance()->GetWindow());
 
@@ -482,7 +491,9 @@ void GameEngine::RunCommands(Gfx* Commands, const std::vector<std::unordered_map
     interpreter->mInterpolationIndex = 0;
 
     for (const auto& m : mtx_replacements) {
-        wnd->DrawAndRunGraphicsCommands(Commands, m);
+        if (wnd->DrawAndRunGraphicsCommands(Commands, m)) {
+            sDrawnFrames++;
+        }
         interpreter->mInterpolationIndex++;
     }
 

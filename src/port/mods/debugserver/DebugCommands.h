@@ -1,7 +1,7 @@
 #pragma once
 
 // Registers the debug server's commands (health, pause/resume/step, warp, checkpoint,
-// player, objects, input) with the Ship::Console registry, plus the game-thread event listeners
+// player, objects, input, screenshot) with the Ship::Console registry, plus the game-thread event listeners
 // that drive `step`'s frame counting and `warp`'s staged level transition. Called from
 // GameEngine::Create on every platform — including Switch, where the socket transport is
 // compiled out — so the in-game ImGui console can use the commands even when the server
