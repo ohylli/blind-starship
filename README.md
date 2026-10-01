@@ -10,7 +10,7 @@ development so how feasible most of this is is anybody's guess.
 
 ## Current status
 
-There is a early proof-of-concept [alpha
+There is a early [alpha
 release](https://github.com/ohylli/blind-starship/releases/tag/alpha) that is
 kept up to date with the latest publicly released code. It has a screen reader
 integration via [PRISM](https://github.com/ethindp/prism). Currently used to
@@ -108,6 +108,12 @@ can hear how the obstacle warning buzz behaves then. A hit pushes you back
 towards the center, so the buzz stops and the obstacle beside cue takes over.
 You can quit training from the pause menu and return to it from the main menu
 so you can easily experiment with the obstacle cues.
+
+When dealing with enemies in addition to just shooting them by tapping your fire
+button you can also use the game's charged lock-on shots. Hold down your fire
+button to charge a shot and keep holding it down. When your aim gets near enough
+to an enemy you will lock-on that enemy and you will hear a beep sound. Release
+your fire button and tap it again to fire your charged shot at the locked-on enemy.
 
 ## Road map
 
